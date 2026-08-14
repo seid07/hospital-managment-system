@@ -5,6 +5,9 @@ import { AuthProvider } from "./context/AuthContext";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import ProtectedRoute from "./routes/ProtectedRoute";
+import AdminStaff from "./pages/AdminStaff";
+import DoctorSchedules from "./pages/DoctorSchedules";
+import AppointmentAvailability from "./pages/AppointmentAvailability";
 
 function App() {
   return (
@@ -15,6 +18,12 @@ function App() {
 
           <Route element={<ProtectedRoute />}>
             <Route path="/dashboard/:role" element={<Dashboard />} />
+            <Route path="/admin/staff" element={<AdminStaff />} />
+            <Route path="/admin/schedules" element={<DoctorSchedules />} />
+            <Route
+              path="/appointments/availability"
+              element={<AppointmentAvailability />}
+            />
           </Route>
 
           <Route path="*" element={<Navigate to="/login" replace />} />
