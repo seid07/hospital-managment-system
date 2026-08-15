@@ -1,4 +1,4 @@
-import { useAuth } from "../context/AuthContext";
+import { useAuth } from "../context/useAuth";
 
 function Dashboard() {
   const { user, logout } = useAuth();
@@ -11,21 +11,16 @@ function Dashboard() {
         <h2>Dashboard</h2>
 
         <p>
-          Welcome, {user?.first_name}{" "}
-          {user?.last_name}
+          Welcome, {user?.first_name} {user?.last_name}
         </p>
 
         <p>
           Role: <strong>{user?.role}</strong>
         </p>
 
-        <p>
-          Username: {user?.username}
-        </p>
+        <p>Username: {user?.username}</p>
 
-        <button onClick={logout}>
-          Logout
-        </button>
+        <button onClick={logout}>Logout</button>
       </section>
     </main>
   );

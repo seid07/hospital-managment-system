@@ -1,192 +1,326 @@
 import { useEffect, useState } from "react";
 
-const API_URL =
-  import.meta.env.VITE_API_URL ||
-  "http://localhost:5000/api";
+import PatientSearch from "../components/appointments/PatientSearch";
+import DoctorSelector from "../components/appointments/DoctorSelector";
+import SlotGrid from "../components/appointments/SlotGrid";
+import AppointmentForm from "../components/appointments/AppointmentForm";
+
+import { getDoctors } from "../services/scheduleService";
+
+import {
+  getAvailability,
+  createAppointment,
+} from "../services/appointmentService";
 
 function AppointmentAvailability() {
-  const token =
-    localStorage.getItem("hospital_token");
-
   const [doctors, setDoctors] = useState([]);
 
-  const [selectedDoctor, setSelectedDoctor] =
-    useState("");
+  const [doctorsLoading, setDoctorsLoading] = useState(true);
+
+  const [patient, setPatient] = useState(null);
+
+  const [doctorId, setDoctorId] = useState("");
 
   const [date, setDate] = useState("");
 
   const [slots, setSlots] = useState([]);
 
-  const [loading, setLoading] = useState(false);
+  const [selectedSlotKey, setSelectedSlotKey] = useState("");
+
+  const [availabilityLoading, setAvailabilityLoading] = useState(false);
+
+  const [reason, setReason] = useState("");
+
+  const [notes, setNotes] = useState("");
+
+  const [submitting, setSubmitting] = useState(false);
 
   const [error, setError] = useState("");
 
+  const [success, setSuccess] = useState(null);
+
   useEffect(() => {
+    let cancelled = false;
+
     async function loadDoctors() {
       try {
-        const response = await fetch(
-          `${API_URL}/schedules/doctors`,
-          {
-            headers: {
-              Authorization: `Bearer ${token}`,
-            },
-          }
-        );
+        setDoctorsLoading(true);
+        setError("");
 
-        const data =
-          await response.json();
+        const response = await getDoctors();
 
-        if (!response.ok) {
-          throw new Error(
-            data.message ||
-              "Unable to load doctors."
-          );
+        if (cancelled) {
+          return;
         }
 
-        setDoctors(data.data);
+        const doctorList = response.data || [];
 
-        if (data.data.length > 0) {
-          setSelectedDoctor(
-            data.data[0].id
-          );
-        }
+        setDoctors(doctorList);
       } catch (error) {
-        setError(error.message);
+        if (!cancelled) {
+          setError(error.message || "Unable to load doctors.");
+        }
+      } finally {
+        if (!cancelled) {
+          setDoctorsLoading(false);
+        }
       }
     }
 
     loadDoctors();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  async function loadAvailability() {
-    if (!selectedDoctor || !date) {
-      setSlots([]);
+  useEffect(() => {
+    if (!doctorId || !date) {
+      return undefined;
+    }
+
+    let cancelled = false;
+
+    async function loadAvailability() {
+      try {
+        setAvailabilityLoading(true);
+        setError("");
+
+        const response = await getAvailability(doctorId, date);
+
+        if (cancelled) {
+          return;
+        }
+
+        setSlots(response.data || []);
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+
+        setError(error.message || "Unable to load availability.");
+
+        setSlots([]);
+      } finally {
+        if (!cancelled) {
+          setAvailabilityLoading(false);
+        }
+      }
+    }
+
+    loadAvailability();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [doctorId, date]);
+
+  const selectedSlot =
+    slots.find(
+      (slot) => `${slot.startTime}-${slot.endTime}` === selectedSlotKey,
+    ) || null;
+
+  function handleDoctorChange(value) {
+    setDoctorId(value);
+    setSelectedSlotKey("");
+    setSlots([]);
+  }
+
+  function handleDateChange(value) {
+    setDate(value);
+    setSelectedSlotKey("");
+    setSlots([]);
+  }
+
+  function handleSlotSelect(slot) {
+    if (!slot?.available) {
+      return;
+    }
+
+    setSelectedSlotKey(`${slot.startTime}-${slot.endTime}`);
+  }
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+
+    setError("");
+    setSuccess(null);
+
+    if (!patient) {
+      setError("Please select a patient.");
+      return;
+    }
+
+    if (!doctorId) {
+      setError("Please select a doctor.");
+      return;
+    }
+
+    if (!date) {
+      setError("Please select an appointment date.");
+      return;
+    }
+
+    if (!selectedSlot) {
+      setError("Please select an available time.");
       return;
     }
 
     try {
-      setLoading(true);
-      setError("");
+      setSubmitting(true);
 
-      const params = new URLSearchParams({
-        doctorId: selectedDoctor,
-        date,
+      const response = await createAppointment({
+        patientId: patient.id,
+        doctorId,
+        appointmentDate: date,
+        startTime: selectedSlot.startTime,
+        endTime: selectedSlot.endTime,
+        reason: reason.trim() || null,
+        notes: notes.trim() || null,
       });
 
-      const response = await fetch(
-        `${API_URL}/appointments/availability?${params}`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }
-      );
+      setSuccess(response.data);
 
-      const data =
-        await response.json();
+      const availability = await getAvailability(doctorId, date);
 
-      if (!response.ok) {
-        throw new Error(
-          data.message ||
-            "Unable to load availability."
-        );
-      }
+      setSlots(availability.data || []);
 
-      setSlots(data.data);
+      setSelectedSlotKey("");
+      setReason("");
+      setNotes("");
     } catch (error) {
-      setError(error.message);
-      setSlots([]);
+      setError(error.message || "Unable to create appointment.");
     } finally {
-      setLoading(false);
+      setSubmitting(false);
     }
   }
 
-  useEffect(() => {
-    loadAvailability();
-  }, [selectedDoctor, date]);
+  const today = new Date().toISOString().split("T")[0];
 
   return (
-    <main>
-      <h1>Appointment Availability</h1>
+    <main className="page">
+      <div className="page-header">
+        <div>
+          <p className="page-eyebrow">Appointments</p>
+
+          <h1>New Appointment</h1>
+
+          <p className="page-description">
+            Schedule an appointment for an existing patient.
+          </p>
+        </div>
+      </div>
 
       {error && (
-        <p role="alert">{error}</p>
+        <div className="alert alert-error" role="alert">
+          {error}
+        </div>
       )}
 
-      <section>
-        <label>
-          Doctor
-        </label>
+      {success && (
+        <div className="alert alert-success" role="status">
+          <strong>Appointment booked successfully.</strong>
 
-        <select
-          value={selectedDoctor}
-          onChange={(event) =>
-            setSelectedDoctor(
-              event.target.value
-            )
-          }
-        >
-          {doctors.map((doctor) => (
-            <option
-              key={doctor.id}
-              value={doctor.id}
-            >
-              Dr. {doctor.first_name}{" "}
-              {doctor.last_name}
-              {doctor.specialty
-                ? ` — ${doctor.specialty}`
-                : ""}
-            </option>
-          ))}
-        </select>
-      </section>
-
-      <section>
-        <label>
-          Appointment Date
-        </label>
-
-        <input
-          type="date"
-          value={date}
-          onChange={(event) =>
-            setDate(event.target.value)
-          }
-        />
-      </section>
-
-      <section>
-        <h2>Available Times</h2>
-
-        {loading && (
-          <p>Loading availability...</p>
-        )}
-
-        {!loading &&
-          date &&
-          slots.length === 0 && (
-            <p>
-              No appointments are available
-              for this date.
-            </p>
-          )}
-
-        <div>
-          {slots.map((slot) => (
-            <button
-              key={`${slot.startTime}-${slot.endTime}`}
-              disabled={!slot.available}
-              type="button"
-            >
-              {slot.startTime} –{" "}
-              {slot.endTime}
-
-              {!slot.available &&
-                " — Booked"}
-            </button>
-          ))}
+          <span>Appointment number: {success.appointment_number}</span>
         </div>
-      </section>
+      )}
+
+      <form className="appointment-layout" onSubmit={handleSubmit}>
+        <section className="card">
+          <div className="card-header">
+            <h2>Patient</h2>
+
+            <p>Search for an existing patient.</p>
+          </div>
+
+          <PatientSearch selectedPatient={patient} onSelect={setPatient} />
+        </section>
+
+        <section className="card">
+          <div className="card-header">
+            <h2>Doctor & Date</h2>
+
+            <p>Select the doctor and appointment date.</p>
+          </div>
+
+          <div className="form-grid">
+            <DoctorSelector
+              doctors={doctors}
+              value={doctorId}
+              onChange={handleDoctorChange}
+              loading={doctorsLoading}
+            />
+
+            <div className="form-field">
+              <label htmlFor="date">Appointment Date</label>
+
+              <input
+                id="date"
+                type="date"
+                value={date}
+                min={today}
+                onChange={(event) => handleDateChange(event.target.value)}
+                required
+              />
+            </div>
+          </div>
+        </section>
+
+        <section className="card">
+          <div className="card-header">
+            <h2>Available Times</h2>
+
+            <p>Availability is calculated by the hospital server.</p>
+          </div>
+
+          <SlotGrid
+            slots={slots}
+            selectedSlot={selectedSlot}
+            onSelect={handleSlotSelect}
+            loading={availabilityLoading}
+            hasDate={Boolean(doctorId && date)}
+          />
+        </section>
+
+        <section className="card">
+          <div className="card-header">
+            <h2>Appointment Details</h2>
+
+            <p>Add information about the visit.</p>
+          </div>
+
+          <AppointmentForm
+            reason={reason}
+            notes={notes}
+            onReasonChange={setReason}
+            onNotesChange={setNotes}
+          />
+        </section>
+
+        <section className="appointment-submit">
+          <div>
+            {selectedSlot && (
+              <p>
+                Selected:
+                <strong>
+                  {" "}
+                  {selectedSlot.startTime}
+                  {" – "}
+                  {selectedSlot.endTime}
+                </strong>
+              </p>
+            )}
+          </div>
+
+          <button
+            className="button button-primary button-large"
+            type="submit"
+            disabled={submitting}
+          >
+            {submitting ? "Booking..." : "Book Appointment"}
+          </button>
+        </section>
+      </form>
     </main>
   );
 }

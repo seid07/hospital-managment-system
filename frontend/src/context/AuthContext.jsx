@@ -1,54 +1,52 @@
-import {
-  createContext,
-  useContext,
-  useMemo,
-  useState,
-} from "react";
+import { useCallback, useMemo, useState } from "react";
 
 import { login as loginRequest } from "../services/api";
 
-const AuthContext = createContext(null);
+import { AuthContext } from "./auth-context";
 
 export function AuthProvider({ children }) {
-  const [token, setToken] = useState(
-    () => localStorage.getItem("hospital_token")
+  const [token, setToken] = useState(() =>
+    localStorage.getItem("hospital_token"),
   );
 
   const [user, setUser] = useState(() => {
     const storedUser = localStorage.getItem("hospital_user");
 
-    return storedUser
-      ? JSON.parse(storedUser)
-      : null;
+    if (!storedUser) {
+      return null;
+    }
+
+    try {
+      return JSON.parse(storedUser);
+    } catch {
+      localStorage.removeItem("hospital_user");
+      return null;
+    }
   });
 
-  async function login(username, password) {
-    const response = await loginRequest(
-      username,
-      password
-    );
+  const login = useCallback(async (username, password) => {
+    const response = await loginRequest(username, password);
 
-    const { token, user } = response.data;
+    const { token: newToken, user: newUser } = response.data;
 
-    localStorage.setItem("hospital_token", token);
-    localStorage.setItem(
-      "hospital_user",
-      JSON.stringify(user)
-    );
+    localStorage.setItem("hospital_token", newToken);
 
-    setToken(token);
-    setUser(user);
+    localStorage.setItem("hospital_user", JSON.stringify(newUser));
 
-    return user;
-  }
+    setToken(newToken);
+    setUser(newUser);
 
-  function logout() {
+    return newUser;
+  }, []);
+
+  const logout = useCallback(() => {
     localStorage.removeItem("hospital_token");
+
     localStorage.removeItem("hospital_user");
 
     setToken(null);
     setUser(null);
-  }
+  }, []);
 
   const value = useMemo(
     () => ({
@@ -58,24 +56,8 @@ export function AuthProvider({ children }) {
       login,
       logout,
     }),
-    [token, user]
+    [token, user, login, logout],
   );
 
-  return (
-    <AuthContext.Provider value={value}>
-      {children}
-    </AuthContext.Provider>
-  );
-}
-
-export function useAuth() {
-  const context = useContext(AuthContext);
-
-  if (!context) {
-    throw new Error(
-      "useAuth must be used inside AuthProvider."
-    );
-  }
-
-  return context;
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

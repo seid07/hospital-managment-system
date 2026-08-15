@@ -1,5 +1,4 @@
-const API_URL =
-  import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
 async function request(endpoint, options = {}) {
   const token = localStorage.getItem("hospital_token");
@@ -18,25 +17,66 @@ async function request(endpoint, options = {}) {
     headers,
   });
 
-  const data = await response.json();
+  let data = null;
+
+  const contentType = response.headers.get("content-type");
+
+  if (contentType && contentType.includes("application/json")) {
+    data = await response.json();
+  }
 
   if (!response.ok) {
-    throw new Error(data.message || "Request failed.");
+    throw new Error(data?.message || "Request failed.");
   }
 
   return data;
 }
 
-export async function login(username, password) {
-  return request("/auth/login", {
+export function get(endpoint, options = {}) {
+  return request(endpoint, {
+    ...options,
+    method: "GET",
+  });
+}
+
+export function post(endpoint, body, options = {}) {
+  return request(endpoint, {
+    ...options,
     method: "POST",
-    body: JSON.stringify({
-      username,
-      password,
-    }),
+    body: JSON.stringify(body),
+  });
+}
+
+export function put(endpoint, body, options = {}) {
+  return request(endpoint, {
+    ...options,
+    method: "PUT",
+    body: JSON.stringify(body),
+  });
+}
+
+export function patch(endpoint, body, options = {}) {
+  return request(endpoint, {
+    ...options,
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+
+export function del(endpoint, options = {}) {
+  return request(endpoint, {
+    ...options,
+    method: "DELETE",
+  });
+}
+
+export async function login(username, password) {
+  return post("/auth/login", {
+    username,
+    password,
   });
 }
 
 export async function getProtectedData() {
-  return request("/test/protected");
+  return get("/test/protected");
 }
