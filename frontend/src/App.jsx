@@ -1,13 +1,27 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
-
 import { AuthProvider } from "./context/AuthContext";
+import ProtectedRoute from "./routes/ProtectedRoute";
 
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
-import ProtectedRoute from "./routes/ProtectedRoute";
+import Patients from "./pages/Patients";
+import PatientNew from "./pages/PatientNew";
+import PatientDetail from "./pages/PatientDetail";
+import AppointmentsList from "./pages/AppointmentsList";
+import AppointmentAvailability from "./pages/AppointmentAvailability";
+import ReceptionQueue from "./pages/ReceptionQueue";
+import NurseTriage from "./pages/NurseTriage";
+import DoctorQueue from "./pages/DoctorQueue";
+import ClinicalEncounter from "./pages/ClinicalEncounter";
+import PrescriptionsList from "./pages/PrescriptionsList";
+import PharmacyInventory from "./pages/PharmacyInventory";
+import LaboratoryOrders from "./pages/LaboratoryOrders";
+import LaboratoryCatalog from "./pages/LaboratoryCatalog";
+import BillingInvoices from "./pages/BillingInvoices";
 import AdminStaff from "./pages/AdminStaff";
 import DoctorSchedules from "./pages/DoctorSchedules";
-import AppointmentAvailability from "./pages/AppointmentAvailability";
+import AdminAuditLogs from "./pages/AdminAuditLogs";
+import Reports from "./pages/Reports";
 
 function App() {
   return (
@@ -17,13 +31,45 @@ function App() {
           <Route path="/login" element={<Login />} />
 
           <Route element={<ProtectedRoute />}>
+            {/* Dashboards */}
             <Route path="/dashboard/:role" element={<Dashboard />} />
+
+            {/* Patient Workflow */}
+            <Route path="/patients" element={<Patients />} />
+            <Route path="/patients/new" element={<PatientNew />} />
+            <Route path="/patients/:id" element={<PatientDetail />} />
+
+            {/* Appointments & Scheduling */}
+            <Route path="/appointments" element={<AppointmentsList />} />
+            <Route path="/appointments/availability" element={<AppointmentAvailability />} />
+            <Route path="/reception/queue" element={<ReceptionQueue />} />
+
+            {/* Nursing & Triage */}
+            <Route path="/nurse/triage" element={<NurseTriage />} />
+
+            {/* Doctor Clinical Workspace */}
+            <Route path="/doctor/queue" element={<DoctorQueue />} />
+            <Route path="/encounters/new" element={<ClinicalEncounter />} />
+            <Route path="/encounters/:id" element={<ClinicalEncounter />} />
+
+            {/* Pharmacy & Formulary */}
+            <Route path="/prescriptions" element={<PrescriptionsList />} />
+            <Route path="/pharmacy/inventory" element={<PharmacyInventory />} />
+
+            {/* Diagnostics & Laboratory */}
+            <Route path="/laboratory" element={<LaboratoryOrders />} />
+            <Route path="/laboratory/catalog" element={<LaboratoryCatalog />} />
+
+            {/* Billing, Invoices & Payments */}
+            <Route path="/billing" element={<BillingInvoices />} />
+
+            {/* Administration & Audit */}
             <Route path="/admin/staff" element={<AdminStaff />} />
             <Route path="/admin/schedules" element={<DoctorSchedules />} />
-            <Route
-              path="/appointments/availability"
-              element={<AppointmentAvailability />}
-            />
+            <Route path="/admin/audit" element={<AdminAuditLogs />} />
+
+            {/* Reports & Analytics */}
+            <Route path="/reports" element={<Reports />} />
           </Route>
 
           <Route path="*" element={<Navigate to="/login" replace />} />

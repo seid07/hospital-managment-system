@@ -8,6 +8,15 @@ const patientRoutes = require("./routes/patient.routes");
 const staffRoutes = require("./routes/staff.routes");
 const scheduleRoutes = require("./routes/schedule.routes");
 const appointmentRoutes = require("./routes/appointment.routes");
+const vitalsRoutes = require("./routes/vitals.routes");
+const encounterRoutes = require("./routes/encounter.routes");
+const pharmacyRoutes = require("./routes/pharmacy.routes");
+const laboratoryRoutes = require("./routes/laboratory.routes");
+const billingRoutes = require("./routes/billing.routes");
+const reportRoutes = require("./routes/report.routes");
+const notificationRoutes = require("./routes/notification.routes");
+const auditRoutes = require("./routes/audit.routes");
+const { errorHandler } = require("./middleware/error.middleware");
 
 const app = express();
 
@@ -17,7 +26,7 @@ app.use(
   cors({
     origin: process.env.CLIENT_URL || "http://localhost:5173",
     credentials: true,
-  }),
+  })
 );
 
 app.use(express.json());
@@ -37,5 +46,15 @@ app.use("/api/patients", patientRoutes);
 app.use("/api/staff", staffRoutes);
 app.use("/api/schedules", scheduleRoutes);
 app.use("/api/appointments", appointmentRoutes);
+app.use("/api/vitals", vitalsRoutes);
+app.use("/api/encounters", encounterRoutes);
+app.use("/api/pharmacy", pharmacyRoutes);
+app.use("/api/laboratory", laboratoryRoutes);
+app.use("/api/billing", billingRoutes);
+app.use("/api/reports", reportRoutes);
+app.use("/api/notifications", notificationRoutes);
+app.use("/api/audit-logs", auditRoutes);
+
+app.use(errorHandler);
 
 module.exports = app;

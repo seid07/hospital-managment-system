@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
-
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+import { useEffect, useState, useCallback } from "react";
+import AppShell from "../components/layout/AppShell";
+import { getStaff, getRoles, createStaff, updateStaffStatus } from "../services/staffService";
 
 const INITIAL_FORM = {
   firstName: "",
@@ -15,156 +15,69 @@ const INITIAL_FORM = {
 };
 
 function AdminStaff() {
-  const token = localStorage.getItem("hospital_token");
-
   const [staff, setStaff] = useState([]);
   const [roles, setRoles] = useState([]);
-
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
-
   const [form, setForm] = useState(INITIAL_FORM);
+  const [reloadTrigger, setReloadTrigger] = useState(0);
+
+  const refreshData = useCallback(() => {
+    setReloadTrigger((prev) => prev + 1);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
-
-    async function loadInitialData() {
+    async function loadData() {
       try {
-        setLoading(true);
         setError("");
-
-        const headers = {
-          Authorization: `Bearer ${token}`,
-        };
-
-        const [staffResponse, rolesResponse] = await Promise.all([
-          fetch(`${API_URL}/staff`, {
-            headers,
-          }),
-
-          fetch(`${API_URL}/staff/roles`, {
-            headers,
-          }),
+        const [staffRes, rolesRes] = await Promise.all([
+          getStaff(),
+          getRoles(),
         ]);
-
-        const staffData = await staffResponse.json();
-
-        const rolesData = await rolesResponse.json();
-
-        if (!staffResponse.ok) {
-          throw new Error(staffData.message || "Unable to load staff.");
-        }
-
-        if (!rolesResponse.ok) {
-          throw new Error(rolesData.message || "Unable to load roles.");
-        }
-
         if (!cancelled) {
-          setStaff(staffData.data || []);
-          setRoles(rolesData.data || []);
+          setStaff(staffRes.data || []);
+          setRoles(rolesRes.data || []);
+          setLoading(false);
         }
-      } catch (error) {
+      } catch (err) {
         if (!cancelled) {
-          setError(error.message || "Unable to load staff data.");
-        }
-      } finally {
-        if (!cancelled) {
+          setError(err.message || "Unable to load staff data.");
           setLoading(false);
         }
       }
     }
 
-    loadInitialData();
-
+    loadData();
     return () => {
       cancelled = true;
     };
-  }, [token]);
-
-  async function refreshData() {
-    try {
-      const headers = {
-        Authorization: `Bearer ${token}`,
-      };
-
-      const [staffResponse, rolesResponse] = await Promise.all([
-        fetch(`${API_URL}/staff`, {
-          headers,
-        }),
-
-        fetch(`${API_URL}/staff/roles`, {
-          headers,
-        }),
-      ]);
-
-      const staffData = await staffResponse.json();
-
-      const rolesData = await rolesResponse.json();
-
-      if (!staffResponse.ok) {
-        throw new Error(staffData.message || "Unable to load staff.");
-      }
-
-      if (!rolesResponse.ok) {
-        throw new Error(rolesData.message || "Unable to load roles.");
-      }
-
-      setStaff(staffData.data || []);
-      setRoles(rolesData.data || []);
-    } catch (error) {
-      throw new Error(error.message || "Unable to refresh staff data.", {
-        cause: error,
-      });
-    }
-  }
+  }, [reloadTrigger]);
 
   function handleChange(event) {
     const { name, value } = event.target;
-
-    setForm((current) => ({
-      ...current,
+    setForm((prev) => ({
+      ...prev,
       [name]: value,
     }));
   }
 
   async function handleSubmit(event) {
     event.preventDefault();
-
     setError("");
     setSuccess("");
 
     try {
       setSubmitting(true);
+      await createStaff(form);
 
-      const response = await fetch(`${API_URL}/staff`, {
-        method: "POST",
-
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-
-        body: JSON.stringify(form),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.message || "Unable to create staff.");
-      }
-
-      setForm({
-        ...INITIAL_FORM,
-      });
-
-      setSuccess("Staff account created successfully.");
-
-      await refreshData();
-    } catch (error) {
-      setError(error.message || "Unable to create staff.");
+      setSuccess(`Staff account created for ${form.firstName} ${form.lastName} (${form.role}).`);
+      setForm(INITIAL_FORM);
+      refreshData();
+    } catch (err) {
+      setError(err.message || "Unable to create staff.");
     } finally {
       setSubmitting(false);
     }
@@ -175,47 +88,28 @@ function AdminStaff() {
     setSuccess("");
 
     try {
-      const response = await fetch(`${API_URL}/staff/${member.id}/status`, {
-        method: "PATCH",
-
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-
-        body: JSON.stringify({
-          isActive: !member.is_active,
-        }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.message || "Unable to update staff.");
-      }
+      const nextStatus = !member.is_active;
+      await updateStaffStatus(member.id, nextStatus);
 
       setSuccess(
-        `Staff member ${
-          member.is_active ? "deactivated" : "activated"
-        } successfully.`,
+        `Staff member ${member.first_name} ${member.last_name} ${
+          nextStatus ? "activated" : "deactivated"
+        } successfully.`
       );
-
-      await refreshData();
-    } catch (error) {
-      setError(error.message || "Unable to update staff.");
+      refreshData();
+    } catch (err) {
+      setError(err.message || "Unable to update staff.");
     }
   }
 
   return (
-    <main className="page">
+    <AppShell>
       <div className="page-header">
         <div>
           <p className="page-eyebrow">Administration</p>
-
-          <h1>Staff Management</h1>
-
+          <h1>Staff & Role Management</h1>
           <p className="page-description">
-            Create and manage hospital staff accounts and access roles.
+            Create and manage hospital personnel accounts and system access roles.
           </p>
         </div>
       </div>
@@ -234,15 +128,13 @@ function AdminStaff() {
 
       <section className="card">
         <div className="card-header">
-          <h2>Create Staff Account</h2>
-
-          <p>Create a staff profile and application login.</p>
+          <h2>Create New Staff Account</h2>
+          <p>Create a staff profile and system login credentials.</p>
         </div>
 
         <form className="form-grid" onSubmit={handleSubmit}>
           <div className="form-field">
-            <label htmlFor="firstName">First name</label>
-
+            <label htmlFor="firstName">First name *</label>
             <input
               id="firstName"
               name="firstName"
@@ -254,8 +146,7 @@ function AdminStaff() {
           </div>
 
           <div className="form-field">
-            <label htmlFor="lastName">Last name</label>
-
+            <label htmlFor="lastName">Last name *</label>
             <input
               id="lastName"
               name="lastName"
@@ -267,13 +158,12 @@ function AdminStaff() {
           </div>
 
           <div className="form-field">
-            <label htmlFor="email">Email</label>
-
+            <label htmlFor="email">Email *</label>
             <input
               id="email"
               name="email"
               type="email"
-              placeholder="Email"
+              placeholder="staff@hospital.com"
               value={form.email}
               onChange={handleChange}
               required
@@ -281,12 +171,11 @@ function AdminStaff() {
           </div>
 
           <div className="form-field">
-            <label htmlFor="phone">Phone</label>
-
+            <label htmlFor="phone">Phone *</label>
             <input
               id="phone"
               name="phone"
-              placeholder="Phone"
+              placeholder="+1-555-0100"
               value={form.phone}
               onChange={handleChange}
               required
@@ -294,37 +183,13 @@ function AdminStaff() {
           </div>
 
           <div className="form-field">
-            <label htmlFor="department">Department</label>
-
-            <input
-              id="department"
-              name="department"
-              placeholder="Department"
-              value={form.department}
-              onChange={handleChange}
-            />
-          </div>
-
-          <div className="form-field">
-            <label htmlFor="specialty">Specialty</label>
-
-            <input
-              id="specialty"
-              name="specialty"
-              placeholder="Specialty"
-              value={form.specialty}
-              onChange={handleChange}
-            />
-          </div>
-
-          <div className="form-field">
-            <label htmlFor="role">Role</label>
-
+            <label htmlFor="role">Role *</label>
             <select
               id="role"
               name="role"
               value={form.role}
               onChange={handleChange}
+              required
             >
               {roles.map((role) => (
                 <option key={role.id} value={role.name}>
@@ -335,12 +200,33 @@ function AdminStaff() {
           </div>
 
           <div className="form-field">
-            <label htmlFor="username">Username</label>
+            <label htmlFor="department">Department</label>
+            <input
+              id="department"
+              name="department"
+              placeholder="e.g. Cardiology, Outpatient"
+              value={form.department}
+              onChange={handleChange}
+            />
+          </div>
 
+          <div className="form-field">
+            <label htmlFor="specialty">Specialty</label>
+            <input
+              id="specialty"
+              name="specialty"
+              placeholder="e.g. Interventional Cardiology"
+              value={form.specialty}
+              onChange={handleChange}
+            />
+          </div>
+
+          <div className="form-field">
+            <label htmlFor="username">Username *</label>
             <input
               id="username"
               name="username"
-              placeholder="Username"
+              placeholder="username"
               value={form.username}
               onChange={handleChange}
               required
@@ -348,8 +234,7 @@ function AdminStaff() {
           </div>
 
           <div className="form-field">
-            <label htmlFor="password">Temporary password</label>
-
+            <label htmlFor="password">Password *</label>
             <input
               id="password"
               name="password"
@@ -357,18 +242,17 @@ function AdminStaff() {
               placeholder="Temporary password"
               value={form.password}
               onChange={handleChange}
-              minLength={8}
               required
             />
           </div>
 
-          <div className="form-actions">
+          <div className="form-actions" style={{ gridColumn: "1 / -1", display: "flex", justifyContent: "flex-end" }}>
             <button
-              className="button button-primary"
+              className="button button-primary button-large"
               type="submit"
               disabled={submitting}
             >
-              {submitting ? "Creating..." : "Create Staff"}
+              {submitting ? "Creating account..." : "Create Staff Member →"}
             </button>
           </div>
         </form>
@@ -376,9 +260,8 @@ function AdminStaff() {
 
       <section className="card">
         <div className="card-header">
-          <h2>Staff Members</h2>
-
-          <p>Current hospital staff accounts.</p>
+          <h2>Active Hospital Personnel ({staff.length})</h2>
+          <p>Current registered staff members and their active status.</p>
         </div>
 
         {loading ? (
@@ -391,14 +274,14 @@ function AdminStaff() {
               <thead>
                 <tr>
                   <th>Name</th>
-                  <th>Username</th>
                   <th>Role</th>
-                  <th>Department</th>
+                  <th>Department / Specialty</th>
+                  <th>Username</th>
+                  <th>Email & Phone</th>
                   <th>Status</th>
                   <th>Action</th>
                 </tr>
               </thead>
-
               <tbody>
                 {staff.map((member) => (
                   <tr key={member.id}>
@@ -407,15 +290,21 @@ function AdminStaff() {
                         {member.first_name} {member.last_name}
                       </strong>
                     </td>
-
-                    <td>{member.username || "-"}</td>
-
                     <td>
-                      <span className="badge">{member.role}</span>
+                      <span className="badge badge-info">{member.role}</span>
                     </td>
-
-                    <td>{member.department || "-"}</td>
-
+                    <td>
+                      {member.department || "General"}
+                      {member.specialty && ` (${member.specialty})`}
+                    </td>
+                    <td>
+                      <code>{member.username || "—"}</code>
+                    </td>
+                    <td>
+                      {member.email}
+                      <br />
+                      <small style={{ color: "var(--text-muted)" }}>{member.phone}</small>
+                    </td>
                     <td>
                       <span
                         className={`status ${
@@ -425,7 +314,6 @@ function AdminStaff() {
                         {member.is_active ? "Active" : "Inactive"}
                       </span>
                     </td>
-
                     <td>
                       <button
                         className="button button-secondary"
@@ -442,7 +330,7 @@ function AdminStaff() {
           </div>
         )}
       </section>
-    </main>
+    </AppShell>
   );
 }
 

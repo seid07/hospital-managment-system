@@ -1,5 +1,6 @@
 const bcrypt = require("bcrypt");
 const pool = require("../config/database");
+const { recordAuditLog } = require("../utils/audit");
 
 async function getRoles() {
   const result = await pool.query(`
@@ -11,8 +12,32 @@ async function getRoles() {
   return result.rows;
 }
 
-async function getStaff() {
-  const result = await pool.query(`
+async function getStaff(query = {}) {
+  const role = query.role || null;
+  const search = query.search ? query.search.trim() : null;
+
+  const conditions = [];
+  const params = [];
+
+  if (role) {
+    params.push(role);
+    conditions.push(`r.name = $${params.length}`);
+  }
+
+  if (search) {
+    params.push(`%${search}%`);
+    conditions.push(`(
+      s.first_name ILIKE $${params.length}
+      OR s.last_name ILIKE $${params.length}
+      OR s.email ILIKE $${params.length}
+      OR u.username ILIKE $${params.length}
+    )`);
+  }
+
+  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+
+  const result = await pool.query(
+    `
     SELECT
       s.id,
       s.first_name,
@@ -26,17 +51,18 @@ async function getStaff() {
       r.name AS role,
       u.username
     FROM staff s
-    INNER JOIN roles r
-      ON r.id = s.role_id
-    LEFT JOIN users u
-      ON u.staff_id = s.id
+    INNER JOIN roles r ON r.id = s.role_id
+    LEFT JOIN users u ON u.staff_id = s.id
+    ${whereClause}
     ORDER BY s.created_at DESC
-  `);
+    `,
+    params
+  );
 
   return result.rows;
 }
 
-async function createStaff(data) {
+async function createStaff(data, createdByUserId) {
   const client = await pool.connect();
 
   try {
@@ -57,10 +83,7 @@ async function createStaff(data) {
 
     const roleId = roleResult.rows[0].id;
 
-    const passwordHash = await bcrypt.hash(
-      data.password,
-      12
-    );
+    const passwordHash = await bcrypt.hash(data.password, 10);
 
     const staffResult = await client.query(
       `
@@ -77,12 +100,12 @@ async function createStaff(data) {
         RETURNING id
       `,
       [
-        data.firstName,
-        data.lastName,
-        data.email,
-        data.phone,
-        data.department || null,
-        data.specialty || null,
+        data.firstName.trim(),
+        data.lastName.trim(),
+        data.email.trim().toLowerCase(),
+        data.phone.trim(),
+        data.department ? data.department.trim() : null,
+        data.specialty ? data.specialty.trim() : null,
         roleId,
       ]
     );
@@ -98,12 +121,20 @@ async function createStaff(data) {
         )
         VALUES ($1,$2,$3)
       `,
-      [
-        staffId,
-        data.username,
-        passwordHash,
-      ]
+      [staffId, data.username.trim().toLowerCase(), passwordHash]
     );
+
+    await recordAuditLog(client, {
+      userId: createdByUserId,
+      action: "STAFF_CREATED",
+      entity: "staff",
+      entityId: staffId,
+      details: {
+        username: data.username,
+        role: data.role,
+        name: `${data.firstName} ${data.lastName}`,
+      },
+    });
 
     await client.query("COMMIT");
 
@@ -125,7 +156,7 @@ async function createStaff(data) {
   }
 }
 
-async function updateStaffStatus(id, isActive) {
+async function updateStaffStatus(id, isActive, updatedByUserId) {
   const result = await pool.query(
     `
       UPDATE staff
@@ -133,12 +164,26 @@ async function updateStaffStatus(id, isActive) {
         is_active = $1,
         updated_at = CURRENT_TIMESTAMP
       WHERE id = $2
-      RETURNING id, is_active
+      RETURNING id, is_active, first_name, last_name
     `,
     [isActive, id]
   );
 
-  return result.rows[0] || null;
+  if (result.rows.length === 0) {
+    return null;
+  }
+
+  const staff = result.rows[0];
+
+  await recordAuditLog(pool, {
+    userId: updatedByUserId,
+    action: isActive ? "STAFF_ACTIVATED" : "STAFF_DEACTIVATED",
+    entity: "staff",
+    entityId: id,
+    details: { name: `${staff.first_name} ${staff.last_name}`, isActive },
+  });
+
+  return staff;
 }
 
 module.exports = {

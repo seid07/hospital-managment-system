@@ -1,0 +1,225 @@
+const billingService = require("../services/billing.service");
+const { isValidUUID } = require("../validators");
+
+async function getServices(req, res) {
+  try {
+    const result = await billingService.getBillableServices(req.query);
+
+    return res.status(200).json({
+      success: true,
+      data: result.services,
+      pagination: {
+        total: result.total,
+        page: result.page,
+        limit: result.limit,
+        totalPages: result.totalPages,
+      },
+    });
+  } catch (error) {
+    console.error("Get services error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Unable to retrieve billable services.",
+    });
+  }
+}
+
+async function addService(req, res) {
+  try {
+    const { code, name, category, standardFee } = req.body;
+
+    if (!code || !name || !category || standardFee === undefined) {
+      return res.status(400).json({
+        success: false,
+        message: "Code, name, category, and standardFee are required.",
+      });
+    }
+
+    const service = await billingService.addBillableService(req.body, req.user?.userId);
+
+    return res.status(201).json({
+      success: true,
+      message: "Billable service added to chargemaster.",
+      data: service,
+    });
+  } catch (error) {
+    console.error("Add service error:", error);
+    if (error.code === "23505") {
+      return res.status(409).json({
+        success: false,
+        message: "A service with this code already exists.",
+      });
+    }
+    return res.status(500).json({
+      success: false,
+      message: "Unable to add billable service.",
+    });
+  }
+}
+
+async function createInvoice(req, res) {
+  try {
+    const { patientId, items } = req.body;
+
+    if (!patientId || !isValidUUID(patientId)) {
+      return res.status(400).json({
+        success: false,
+        message: "A valid patientId is required.",
+      });
+    }
+
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Invoice must contain at least one line item.",
+      });
+    }
+
+    const invoice = await billingService.createInvoice({
+      ...req.body,
+      createdBy: req.user?.userId,
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: "Invoice generated successfully.",
+      data: invoice,
+    });
+  } catch (error) {
+    console.error("Create invoice error:", error);
+    if (error.message.startsWith("INVOICE_ITEMS_REQUIRED")) {
+      return res.status(400).json({
+        success: false,
+        message: error.message,
+      });
+    }
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Unable to create invoice.",
+    });
+  }
+}
+
+async function recordPayment(req, res) {
+  try {
+    const { invoiceId, amount, paymentMethod } = req.body;
+
+    if (!invoiceId || !isValidUUID(invoiceId)) {
+      return res.status(400).json({
+        success: false,
+        message: "A valid invoiceId is required.",
+      });
+    }
+
+    if (!amount || parseFloat(amount) <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Payment amount must be greater than zero.",
+      });
+    }
+
+    if (!paymentMethod) {
+      return res.status(400).json({
+        success: false,
+        message: "Payment method is required.",
+      });
+    }
+
+    const result = await billingService.recordPayment({
+      ...req.body,
+      receivedBy: req.user?.userId,
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: "Payment recorded successfully.",
+      data: result,
+    });
+  } catch (error) {
+    console.error("Record payment error:", error);
+    if (
+      error.message.startsWith("PAYMENT_EXCEEDS_BALANCE") ||
+      error.message.startsWith("INVOICE_ALREADY_PAID") ||
+      error.message.startsWith("INVALID_PAYMENT_AMOUNT")
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: error.message,
+      });
+    }
+    if (error.message === "INVOICE_NOT_FOUND") {
+      return res.status(404).json({
+        success: false,
+        message: "Invoice not found.",
+      });
+    }
+    return res.status(500).json({
+      success: false,
+      message: "Unable to record payment.",
+    });
+  }
+}
+
+async function getInvoices(req, res) {
+  try {
+    const result = await billingService.getInvoices(req.query);
+
+    return res.status(200).json({
+      success: true,
+      data: result.invoices,
+      pagination: {
+        total: result.total,
+        page: result.page,
+        limit: result.limit,
+        totalPages: result.totalPages,
+      },
+    });
+  } catch (error) {
+    console.error("Get invoices error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Unable to retrieve invoices.",
+    });
+  }
+}
+
+async function getInvoice(req, res) {
+  try {
+    const { id } = req.params;
+    if (!isValidUUID(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid invoice ID format.",
+      });
+    }
+
+    const invoice = await billingService.getInvoiceById(id);
+
+    if (!invoice) {
+      return res.status(404).json({
+        success: false,
+        message: "Invoice not found.",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: invoice,
+    });
+  } catch (error) {
+    console.error("Get invoice error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Unable to retrieve invoice.",
+    });
+  }
+}
+
+module.exports = {
+  getServices,
+  addService,
+  createInvoice,
+  recordPayment,
+  getInvoices,
+  getInvoice,
+};

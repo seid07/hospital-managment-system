@@ -1,0 +1,21 @@
+import { get, post, patch } from "./api";
+
+export async function getRoles() {
+  return get("/staff/roles");
+}
+
+export async function getStaff(query = {}) {
+  const params = new URLSearchParams();
+  if (query.role) params.append("role", query.role);
+  if (query.search) params.append("search", query.search);
+
+  return get(`/staff?${params.toString()}`);
+}
+
+export async function createStaff(data) {
+  return post("/staff", data);
+}
+
+export async function updateStaffStatus(id, isActive) {
+  return patch(`/staff/${id}/status`, { isActive });
+}

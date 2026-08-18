@@ -1,4 +1,5 @@
 const appointmentService = require("../services/appointment.service");
+const { isValidUUID } = require("../validators");
 
 async function getAvailableSlots(req, res) {
   try {
@@ -8,6 +9,13 @@ async function getAvailableSlots(req, res) {
       return res.status(400).json({
         success: false,
         message: "doctorId and date are required.",
+      });
+    }
+
+    if (!isValidUUID(doctorId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid doctorId format.",
       });
     }
 
@@ -53,17 +61,14 @@ async function createAppointment(req, res) {
       });
     }
 
-    /*
-     * Your authentication middleware uses req.user.userId.
-     *
-     * We confirmed this from patient.controller.js:
-     *
-     * req.user.userId
-     *
-     * Therefore we MUST use the same property here.
-     */
+    if (!isValidUUID(patientId) || !isValidUUID(doctorId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid patient or doctor ID format.",
+      });
+    }
 
-    const createdBy = req.user.userId;
+    const createdBy = req.user?.userId;
 
     if (!createdBy) {
       return res.status(401).json({
@@ -133,13 +138,6 @@ async function createAppointment(req, res) {
       });
     }
 
-    /*
-     * PostgreSQL exclusion constraint:
-     *
-     * prevent_doctor_double_booking
-     *
-     * SQLSTATE 23P01
-     */
     if (error.code === "23P01") {
       return res.status(409).json({
         success: false,
@@ -147,23 +145,10 @@ async function createAppointment(req, res) {
       });
     }
 
-    /*
-     * Unique appointment number.
-     */
     if (error.code === "23505") {
       return res.status(409).json({
         success: false,
         message: "Appointment number already exists. Please try again.",
-      });
-    }
-
-    /*
-     * Foreign-key violation.
-     */
-    if (error.code === "23503") {
-      return res.status(400).json({
-        success: false,
-        message: "One of the selected records is invalid.",
       });
     }
 
@@ -174,7 +159,183 @@ async function createAppointment(req, res) {
   }
 }
 
+async function getAppointments(req, res) {
+  try {
+    const result = await appointmentService.getAppointments(req.query);
+
+    return res.status(200).json({
+      success: true,
+      data: result.appointments,
+      pagination: {
+        total: result.total,
+        page: result.page,
+        limit: result.limit,
+        totalPages: result.totalPages,
+      },
+    });
+  } catch (error) {
+    console.error("Get appointments error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Unable to retrieve appointments list.",
+    });
+  }
+}
+
+async function getAppointment(req, res) {
+  try {
+    const { id } = req.params;
+    if (!isValidUUID(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid appointment ID format.",
+      });
+    }
+
+    const appointment = await appointmentService.getAppointmentById(id);
+
+    if (!appointment) {
+      return res.status(404).json({
+        success: false,
+        message: "Appointment not found.",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: appointment,
+    });
+  } catch (error) {
+    console.error("Get appointment error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Unable to retrieve appointment.",
+    });
+  }
+}
+
+async function updateStatus(req, res) {
+  try {
+    const { id } = req.params;
+    const { status, notes } = req.body;
+
+    if (!isValidUUID(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid appointment ID format.",
+      });
+    }
+
+    if (!status) {
+      return res.status(400).json({
+        success: false,
+        message: "Status is required.",
+      });
+    }
+
+    const appointment = await appointmentService.updateAppointmentStatus(
+      id,
+      status,
+      req.user?.userId,
+      notes,
+      req.user?.role
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: `Appointment status updated to ${status}.`,
+      data: appointment,
+    });
+  } catch (error) {
+    console.error("Update appointment status error:", error);
+
+    if (error.message.startsWith("INVALID_STATUS_TRANSITION")) {
+      return res.status(400).json({
+        success: false,
+        message: error.message,
+      });
+    }
+
+    if (error.message === "APPOINTMENT_NOT_FOUND") {
+      return res.status(404).json({
+        success: false,
+        message: "Appointment not found.",
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to update appointment status.",
+    });
+  }
+}
+
+async function reschedule(req, res) {
+  try {
+    const { id } = req.params;
+    const { appointmentDate, startTime, endTime, reason } = req.body;
+
+    if (!isValidUUID(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid appointment ID format.",
+      });
+    }
+
+    if (!appointmentDate || !startTime || !endTime) {
+      return res.status(400).json({
+        success: false,
+        message: "Appointment date, start time and end time are required.",
+      });
+    }
+
+    const appointment = await appointmentService.rescheduleAppointment(
+      id,
+      { appointmentDate, startTime, endTime, reason },
+      req.user?.userId
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Appointment rescheduled successfully.",
+      data: appointment,
+    });
+  } catch (error) {
+    console.error("Reschedule appointment error:", error);
+
+    if (error.message.startsWith("CANNOT_RESCHEDULE")) {
+      return res.status(400).json({
+        success: false,
+        message: error.message,
+      });
+    }
+
+    if (error.message === "OUTSIDE_DOCTOR_SCHEDULE") {
+      return res.status(409).json({
+        success: false,
+        message: "The selected time is outside the doctor's working schedule.",
+      });
+    }
+
+    if (error.code === "23P01") {
+      return res.status(409).json({
+        success: false,
+        message: "This appointment slot has already been booked.",
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Unable to reschedule appointment.",
+    });
+  }
+}
+
 module.exports = {
   getAvailableSlots,
   createAppointment,
+  getAppointments,
+  getAppointment,
+  updateStatus,
+  reschedule,
 };

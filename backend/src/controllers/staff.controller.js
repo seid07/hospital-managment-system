@@ -1,17 +1,18 @@
 const staffService = require("../services/staff.service");
+const { isValidUUID } = require("../validators");
 
 async function getRoles(req, res) {
   try {
     const roles = await staffService.getRoles();
 
-    res.json({
+    return res.json({
       success: true,
       data: roles,
     });
   } catch (error) {
-    console.error(error);
+    console.error("Get roles error:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Unable to retrieve roles.",
     });
@@ -20,16 +21,16 @@ async function getRoles(req, res) {
 
 async function getStaff(req, res) {
   try {
-    const staff = await staffService.getStaff();
+    const staff = await staffService.getStaff(req.query);
 
-    res.json({
+    return res.json({
       success: true,
       data: staff,
     });
   } catch (error) {
-    console.error(error);
+    console.error("Get staff error:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Unable to retrieve staff.",
     });
@@ -43,8 +44,6 @@ async function createStaff(req, res) {
       lastName,
       email,
       phone,
-      department,
-      specialty,
       role,
       username,
       password,
@@ -66,33 +65,31 @@ async function createStaff(req, res) {
       });
     }
 
-    const staff = await staffService.createStaff(
-      req.body
-    );
+    const staff = await staffService.createStaff(req.body, req.user?.userId);
 
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
+      message: "Staff member created successfully.",
       data: staff,
     });
   } catch (error) {
     if (error.message === "ROLE_NOT_FOUND") {
       return res.status(400).json({
         success: false,
-        message: "Invalid role.",
+        message: "Invalid role specified.",
       });
     }
 
     if (error.message === "DUPLICATE_STAFF") {
       return res.status(409).json({
         success: false,
-        message:
-          "Username or staff information already exists.",
+        message: "A staff account with this email, phone, or username already exists.",
       });
     }
 
-    console.error(error);
+    console.error("Create staff error:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Unable to create staff.",
     });
@@ -101,7 +98,15 @@ async function createStaff(req, res) {
 
 async function updateStatus(req, res) {
   try {
+    const { id } = req.params;
     const { isActive } = req.body;
+
+    if (!isValidUUID(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid staff ID format.",
+      });
+    }
 
     if (typeof isActive !== "boolean") {
       return res.status(400).json({
@@ -110,11 +115,7 @@ async function updateStatus(req, res) {
       });
     }
 
-    const staff =
-      await staffService.updateStaffStatus(
-        req.params.id,
-        isActive
-      );
+    const staff = await staffService.updateStaffStatus(id, isActive, req.user?.userId);
 
     if (!staff) {
       return res.status(404).json({
@@ -123,14 +124,15 @@ async function updateStatus(req, res) {
       });
     }
 
-    res.json({
+    return res.json({
       success: true,
+      message: `Staff member ${isActive ? "activated" : "deactivated"}.`,
       data: staff,
     });
   } catch (error) {
-    console.error(error);
+    console.error("Update staff status error:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Unable to update staff status.",
     });
