@@ -80,3 +80,7 @@ export async function login(username, password) {
 export async function getProtectedData() {
   return get("/test/protected");
 }
+
+const api = { get, post, put, patch, del, request };
+export default api;
+

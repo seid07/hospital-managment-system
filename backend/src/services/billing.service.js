@@ -2,6 +2,7 @@ const pool = require("../config/database");
 const { generateInvoiceNumber, generatePaymentNumber } = require("../utils/number-generators");
 const { recordAuditLog } = require("../utils/audit");
 const { parsePagination } = require("../validators");
+const { generateQueueNumber } = require("./serviceOrder.service");
 
 async function getBillableServices(query = {}) {
   const { page, limit, offset } = parsePagination(query);
@@ -23,7 +24,7 @@ async function getBillableServices(query = {}) {
 
   const whereClause = `WHERE ${conditions.join(" AND ")}`;
 
-  const countResult = await pool.query(`SELECT COUNT(*) AS total FROM billable_services ${whereClause}`, params);
+  const countResult = await pool.query(`SELECT COUNT(*) AS total FROM services ${whereClause}`, params);
   const total = parseInt(countResult.rows[0].total, 10);
 
   params.push(limit);
@@ -32,7 +33,7 @@ async function getBillableServices(query = {}) {
   const listResult = await pool.query(
     `
     SELECT *
-    FROM billable_services
+    FROM services
     ${whereClause}
     ORDER BY category ASC, name ASC
     LIMIT $${params.length - 1} OFFSET $${params.length}
@@ -52,21 +53,27 @@ async function getBillableServices(query = {}) {
 async function addBillableService(data, userId) {
   const result = await pool.query(
     `
-    INSERT INTO billable_services (
+    INSERT INTO services (
       code,
       name,
       category,
-      standard_fee,
+      department_id,
+      price,
+      currency,
       is_active
     )
-    VALUES ($1, $2, $3, $4, TRUE)
+    VALUES (
+      $1, $2, $3, 
+      (SELECT id FROM departments WHERE code = 'CLINICAL' LIMIT 1),
+      $4, 'ETB', TRUE
+    )
     RETURNING *
     `,
     [
       data.code.trim().toUpperCase(),
       data.name.trim(),
       data.category.trim(),
-      parseFloat(data.standardFee) || 0,
+      parseFloat(data.standardFee || data.price) || 0,
     ]
   );
 
@@ -75,7 +82,7 @@ async function addBillableService(data, userId) {
   await recordAuditLog(pool, {
     userId,
     action: "BILLABLE_SERVICE_ADDED",
-    entity: "billable_services",
+    entity: "services",
     entityId: service.id,
     details: { code: service.code, name: service.name },
   });
@@ -85,6 +92,7 @@ async function addBillableService(data, userId) {
 
 async function createInvoice({
   patientId,
+  visitId,
   encounterId,
   items = [],
   discountAmount = 0,
@@ -139,6 +147,7 @@ async function createInvoice({
       INSERT INTO invoices (
         invoice_number,
         patient_id,
+        visit_id,
         encounter_id,
         subtotal,
         discount_amount,
@@ -151,12 +160,13 @@ async function createInvoice({
         notes,
         created_by
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, 0, $7, 'PENDING', $8, $9, $10)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, $8, 'PENDING', $9, $10, $11)
       RETURNING *
       `,
       [
         invoiceNumber,
         patientId,
+        visitId || null,
         encounterId || null,
         subtotal,
         discount,
@@ -198,6 +208,14 @@ async function createInvoice({
         ]
       );
       savedItems.push(itemRes.rows[0]);
+
+      // If item references a service order, associate with invoice
+      if (item.referenceId) {
+        await client.query(
+          `UPDATE service_orders SET invoice_id = $1 WHERE id = $2`,
+          [invoice.id, item.referenceId]
+        );
+      }
     }
 
     await recordAuditLog(client, {
@@ -261,7 +279,7 @@ async function recordPayment({
     const currentBalance = parseFloat(invoice.balance_amount);
     if (payAmount > currentBalance + 0.001) {
       throw new Error(
-        `PAYMENT_EXCEEDS_BALANCE: Payment amount ($${payAmount}) cannot exceed outstanding balance ($${currentBalance}).`
+        `PAYMENT_EXCEEDS_BALANCE: Payment amount (${payAmount}) cannot exceed outstanding balance (${currentBalance}).`
       );
     }
 
@@ -301,7 +319,82 @@ async function recordPayment({
 
     const payment = paymentRes.rows[0];
 
-    // 2. Update invoice status and amounts
+    // 2. Authorize corresponding service orders and enqueue into department queues
+    const ordersRes = await client.query(
+      `
+      SELECT so.*, s.queue_enabled, s.name AS service_name, d.code AS department_code
+      FROM service_orders so
+      JOIN services s ON so.service_id = s.id
+      JOIN departments d ON so.department_id = d.id
+      WHERE so.invoice_id = $1 OR so.id IN (
+        SELECT reference_id FROM invoice_items WHERE invoice_id = $1 AND reference_id IS NOT NULL
+      )
+      `,
+      [invoiceId]
+    );
+
+    const authorizedOrders = [];
+    const authorizedAt = new Date();
+
+    for (const order of ordersRes.rows) {
+      if (order.status === "WAITING_PAYMENT" || order.status === "ORDERED") {
+        await client.query(
+          `
+          UPDATE service_orders
+          SET 
+            status = 'PAID',
+            authorized_at = $1,
+            authorized_by = $2,
+            authorization_source = 'PAYMENT',
+            updated_at = CURRENT_TIMESTAMP
+          WHERE id = $3
+          `,
+          [authorizedAt, receivedBy, order.id]
+        );
+
+        // Record payment allocation
+        await client.query(
+          `
+          INSERT INTO payment_allocations (payment_id, service_order_id, invoice_id, amount)
+          VALUES ($1, $2, $3, $4)
+          `,
+          [payment.id, order.id, invoiceId, order.price]
+        );
+
+        // Enqueue into department queue if queue_enabled
+        if (order.queue_enabled) {
+          const existingQ = await client.query(
+            `SELECT id FROM queue_entries WHERE service_order_id = $1`,
+            [order.id]
+          );
+
+          if (existingQ.rowCount === 0) {
+            const queueNumber = await generateQueueNumber(client, order.department_code);
+            await client.query(
+              `
+              INSERT INTO queue_entries (
+                department_id, service_order_id, visit_id, patient_id,
+                queue_number, priority, status, authorized_at, queued_at
+              )
+              VALUES ($1, $2, $3, $4, $5, 'NORMAL', 'WAITING', $6, CURRENT_TIMESTAMP)
+              `,
+              [
+                order.department_id,
+                order.id,
+                order.visit_id,
+                order.patient_id,
+                queueNumber,
+                authorizedAt,
+              ]
+            );
+          }
+        }
+
+        authorizedOrders.push(order.id);
+      }
+    }
+
+    // 3. Update invoice status and amounts
     const updateInvoiceRes = await client.query(
       `
       UPDATE invoices
@@ -327,6 +420,7 @@ async function recordPayment({
         amount: payAmount,
         newBalance,
         newStatus,
+        authorizedOrdersCount: authorizedOrders.length,
       },
     });
 
@@ -335,6 +429,7 @@ async function recordPayment({
     return {
       payment,
       invoice: updateInvoiceRes.rows[0],
+      authorizedOrders,
     };
   } catch (error) {
     await client.query("ROLLBACK");

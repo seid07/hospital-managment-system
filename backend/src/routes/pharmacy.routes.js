@@ -15,8 +15,14 @@ router.post(
 
 router.get(
   "/prescriptions",
-  authorizeRoles("ADMIN", "PHARMACIST", "DOCTOR", "NURSE"),
+  authorizeRoles("ADMIN", "PHARMACIST", "DOCTOR"),
   pharmacyController.getPrescriptionsQueue
+);
+
+router.post(
+  "/payments",
+  authorizeRoles("ADMIN", "PHARMACIST"),
+  pharmacyController.recordPharmacyPayment
 );
 
 router.post(
@@ -27,7 +33,6 @@ router.post(
 
 router.get(
   "/medications",
-  authorizeRoles("ADMIN", "PHARMACIST", "DOCTOR", "NURSE"),
   pharmacyController.getMedications
 );
 

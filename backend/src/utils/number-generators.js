@@ -1,55 +1,61 @@
-async function generateSequentialNumber(client, prefix, table, column) {
+const pool = require("../config/database");
+
+async function generateWithSequence(clientOrPool, prefix, seqName) {
+  const db = clientOrPool || pool;
   const year = new Date().getFullYear();
-  const pattern = `${prefix}-${year}-%`;
 
-  const result = await client.query(
-    `
-    SELECT ${column} AS num
-    FROM ${table}
-    WHERE ${column} LIKE $1
-    ORDER BY ${column} DESC
-    LIMIT 1
-    `,
-    [pattern]
-  );
-
-  let nextNumber = 1;
-  if (result.rows.length > 0) {
-    const lastPart = result.rows[0].num.split("-").pop();
-    const parsed = parseInt(lastPart, 10);
-    if (!Number.isNaN(parsed)) {
-      nextNumber = parsed + 1;
-    }
+  try {
+    const res = await db.query(`SELECT nextval('${seqName}') AS val`);
+    const val = res.rows[0].val;
+    return `${prefix}-${year}-${String(val).padStart(6, "0")}`;
+  } catch (error) {
+    // Fallback in case sequence query fails
+    const timePart = Date.now().toString().slice(-4);
+    const randPart = Math.floor(10 + Math.random() * 90);
+    return `${prefix}-${year}-${timePart}${randPart}`;
   }
-
-  return `${prefix}-${year}-${String(nextNumber).padStart(6, "0")}`;
 }
 
 async function generatePrescriptionNumber(client) {
-  return generateSequentialNumber(client, "RX", "prescriptions", "prescription_number");
+  return generateWithSequence(client, "RX", "seq_prescription_num");
 }
 
 async function generateLabOrderNumber(client) {
-  return generateSequentialNumber(client, "LAB", "lab_orders", "order_number");
+  return generateWithSequence(client, "LAB", "seq_lab_order_num");
 }
 
 async function generateInvoiceNumber(client) {
-  return generateSequentialNumber(client, "INV", "invoices", "invoice_number");
+  return generateWithSequence(client, "INV", "seq_invoice_num");
 }
 
 async function generatePaymentNumber(client) {
-  return generateSequentialNumber(client, "PAY", "payments", "payment_number");
+  return generateWithSequence(client, "PAY", "seq_payment_num");
 }
 
 async function generatePatientNumber(client) {
-  return generateSequentialNumber(client, "PAT", "patients", "patient_number");
+  return generateWithSequence(client, "PAT", "seq_patient_num");
+}
+
+async function generateVisitNumber(client) {
+  return generateWithSequence(client, "VIS", "seq_visit_num");
+}
+
+async function generateOrderNumber(client) {
+  return generateWithSequence(client, "ORD", "seq_order_num");
+}
+
+async function generateAdmissionNumber(client) {
+  return generateWithSequence(client, "ADM", "seq_admission_num");
 }
 
 module.exports = {
-  generateSequentialNumber,
+  generateWithSequence,
   generatePrescriptionNumber,
   generateLabOrderNumber,
   generateInvoiceNumber,
   generatePaymentNumber,
   generatePatientNumber,
+  generateVisitNumber,
+  generateOrderNumber,
+  generateAdmissionNumber,
 };

@@ -410,7 +410,7 @@ async function getLabOrdersQueue(query = {}) {
         WHEN o.priority = 'URGENT' THEN 2
         ELSE 3
       END,
-      o.created_at DESC
+      o.created_at ASC
     LIMIT $${params.length - 1} OFFSET $${params.length}
   `;
 

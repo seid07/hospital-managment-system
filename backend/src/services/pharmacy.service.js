@@ -1,5 +1,5 @@
 const pool = require("../config/database");
-const { generatePrescriptionNumber } = require("../utils/number-generators");
+const { generatePrescriptionNumber, generatePaymentNumber } = require("../utils/number-generators");
 const { recordAuditLog } = require("../utils/audit");
 const { parsePagination } = require("../validators");
 
@@ -22,13 +22,15 @@ async function createPrescription({
     await client.query("BEGIN");
 
     let finalMedName = medicationName;
+    let unitPrice = 0;
     if (medicationId) {
       const medCheck = await client.query(
-        "SELECT id, name FROM medications WHERE id = $1 AND is_active = TRUE",
+        "SELECT id, name, unit_price FROM medications WHERE id = $1 AND is_active = TRUE",
         [medicationId]
       );
       if (medCheck.rows.length > 0) {
         finalMedName = medCheck.rows[0].name;
+        unitPrice = parseFloat(medCheck.rows[0].unit_price) || 0;
       }
     }
 
@@ -98,7 +100,89 @@ async function createPrescription({
   }
 }
 
-async function dispensePrescription(prescriptionId, { dispensedNotes }, userId) {
+async function recordPharmacyPayment({
+  prescriptionId,
+  amount,
+  paymentMethod = "CASH",
+  transactionReference,
+  notes,
+  receivedBy,
+}) {
+  const payAmount = parseFloat(amount);
+  if (Number.isNaN(payAmount) || payAmount < 0) {
+    throw new Error("Invalid payment amount.");
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const rxRes = await client.query(
+      `SELECT * FROM prescriptions WHERE id = $1 FOR UPDATE`,
+      [prescriptionId]
+    );
+    if (rxRes.rowCount === 0) {
+      throw new Error("Prescription not found.");
+    }
+    const rx = rxRes.rows[0];
+
+    const paymentNumber = await generatePaymentNumber(client);
+
+    const paymentRes = await client.query(
+      `
+      INSERT INTO payments (
+        payment_number, invoice_id, patient_id, amount,
+        payment_method, transaction_reference, notes, received_by
+      )
+      VALUES (
+        $1, NULL, $2, $3,
+        $4, $5, $6, $7
+      )
+      RETURNING *;
+      `,
+      [
+        paymentNumber,
+        rx.patient_id,
+        payAmount,
+        paymentMethod,
+        transactionReference || null,
+        notes ? `Pharmacy Medication Payment: ${notes}` : "Pharmacy Medication Payment",
+        receivedBy,
+      ]
+    );
+
+    await client.query(
+      `UPDATE prescriptions SET status = 'PAID', updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+      [prescriptionId]
+    );
+
+    await recordAuditLog(client, {
+      userId: receivedBy,
+      action: "PHARMACY_PAYMENT_RECORDED",
+      entity: "prescriptions",
+      entityId: prescriptionId,
+      details: {
+        paymentNumber,
+        prescriptionNumber: rx.prescription_number,
+        amount: payAmount,
+        paymentMethod,
+      },
+    });
+
+    await client.query("COMMIT");
+    return {
+      payment: paymentRes.rows[0],
+      prescription: { ...rx, status: "PAID" },
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function dispensePrescription(prescriptionId, { dispensedNotes } = {}, userId) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -175,13 +259,13 @@ async function dispensePrescription(prescriptionId, { dispensedNotes }, userId) 
 
 async function getPrescriptionsQueue(query = {}) {
   const { page, limit, offset } = parsePagination(query);
-  const status = query.status || "ACTIVE";
+  const status = query.status || "ALL";
   const search = query.search ? query.search.trim() : null;
 
   const conditions = [];
   const params = [];
 
-  if (status !== "ALL") {
+  if (status && status !== "ALL") {
     params.push(status);
     conditions.push(`p.status = $${params.length}`);
   }
@@ -223,10 +307,13 @@ async function getPrescriptionsQueue(query = {}) {
       pat.gender AS patient_gender,
       s.first_name AS doctor_first_name,
       s.last_name AS doctor_last_name,
+      m.unit_price AS unit_price,
+      m.stock_quantity AS current_stock,
       u.username AS dispensed_by_username
     FROM prescriptions p
     JOIN patients pat ON p.patient_id = pat.id
     JOIN staff s ON p.doctor_id = s.id
+    LEFT JOIN medications m ON p.medication_id = m.id
     LEFT JOIN users u ON p.dispensed_by = u.id
     ${whereClause}
     ORDER BY p.created_at DESC
@@ -393,6 +480,7 @@ async function updateStock(medicationId, { quantityChange, newStock, unitPrice }
 
 module.exports = {
   createPrescription,
+  recordPharmacyPayment,
   dispensePrescription,
   getPrescriptionsQueue,
   getMedications,

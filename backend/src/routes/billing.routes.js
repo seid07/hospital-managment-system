@@ -9,7 +9,6 @@ router.use(authenticateToken);
 
 router.get(
   "/services",
-  authorizeRoles("ADMIN", "FINANCE", "REGISTRAR", "DOCTOR", "NURSE"),
   billingController.getServices
 );
 
@@ -27,13 +26,13 @@ router.post(
 
 router.get(
   "/invoices",
-  authorizeRoles("ADMIN", "FINANCE", "REGISTRAR", "DOCTOR"),
+  authorizeRoles("ADMIN", "FINANCE", "REGISTRAR"),
   billingController.getInvoices
 );
 
 router.get(
   "/invoices/:id",
-  authorizeRoles("ADMIN", "FINANCE", "REGISTRAR", "DOCTOR"),
+  authorizeRoles("ADMIN", "FINANCE", "REGISTRAR"),
   billingController.getInvoice
 );
 

@@ -16,6 +16,17 @@ const billingRoutes = require("./routes/billing.routes");
 const reportRoutes = require("./routes/report.routes");
 const notificationRoutes = require("./routes/notification.routes");
 const auditRoutes = require("./routes/audit.routes");
+
+// Service-first workflow routes
+const serviceCatalogRoutes = require("./routes/serviceCatalog.routes");
+const visitRoutes = require("./routes/visit.routes");
+const serviceOrderRoutes = require("./routes/serviceOrder.routes");
+const queueRoutes = require("./routes/queue.routes");
+const radiologyRoutes = require("./routes/radiology.routes");
+const procedureRoutes = require("./routes/procedure.routes");
+const wardRoutes = require("./routes/ward.routes");
+const surgeryRoutes = require("./routes/surgery.routes");
+
 const { errorHandler } = require("./middleware/error.middleware");
 
 const app = express();
@@ -54,6 +65,16 @@ app.use("/api/billing", billingRoutes);
 app.use("/api/reports", reportRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/audit-logs", auditRoutes);
+
+// Mount Service-First Workflow routes
+app.use("/api/services", serviceCatalogRoutes);
+app.use("/api/visits", visitRoutes);
+app.use("/api/service-orders", serviceOrderRoutes);
+app.use("/api/queues", queueRoutes);
+app.use("/api/radiology", radiologyRoutes);
+app.use("/api/procedures", procedureRoutes);
+app.use("/api/ward", wardRoutes);
+app.use("/api/surgery", surgeryRoutes);
 
 app.use(errorHandler);
 

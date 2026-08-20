@@ -14,6 +14,10 @@ export async function getPrescriptions(query = {}) {
   return get(`/pharmacy/prescriptions?${params.toString()}`);
 }
 
+export async function recordPharmacyPayment(data) {
+  return post("/pharmacy/payments", data);
+}
+
 export async function dispensePrescription(id, data = {}) {
   return post(`/pharmacy/prescriptions/${id}/dispense`, data);
 }

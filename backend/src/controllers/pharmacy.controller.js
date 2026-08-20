@@ -21,7 +21,7 @@ async function createPrescription(req, res) {
 
     const rx = await pharmacyService.createPrescription({
       ...req.body,
-      createdBy: req.user?.userId,
+      createdBy: req.user?.id || req.user?.userId,
     });
 
     return res.status(201).json({
@@ -38,6 +38,39 @@ async function createPrescription(req, res) {
   }
 }
 
+async function recordPharmacyPayment(req, res) {
+  try {
+    const { prescriptionId, amount, paymentMethod, transactionReference, notes } = req.body;
+    if (!prescriptionId || amount === undefined) {
+      return res.status(400).json({
+        success: false,
+        message: "prescriptionId and amount are required.",
+      });
+    }
+
+    const result = await pharmacyService.recordPharmacyPayment({
+      prescriptionId,
+      amount,
+      paymentMethod,
+      transactionReference,
+      notes,
+      receivedBy: req.user?.id || req.user?.userId,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Pharmacy payment recorded successfully.",
+      data: result,
+    });
+  } catch (error) {
+    console.error("Record pharmacy payment error:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Unable to record pharmacy payment.",
+    });
+  }
+}
+
 async function dispensePrescription(req, res) {
   try {
     const { id } = req.params;
@@ -50,7 +83,11 @@ async function dispensePrescription(req, res) {
       });
     }
 
-    const rx = await pharmacyService.dispensePrescription(id, { dispensedNotes }, req.user?.userId);
+    const rx = await pharmacyService.dispensePrescription(
+      id,
+      { dispensedNotes },
+      req.user?.id || req.user?.userId
+    );
 
     return res.status(200).json({
       success: true,
@@ -135,7 +172,7 @@ async function addMedication(req, res) {
       });
     }
 
-    const med = await pharmacyService.addMedication(req.body, req.user?.userId);
+    const med = await pharmacyService.addMedication(req.body, req.user?.id || req.user?.userId);
 
     return res.status(201).json({
       success: true,
@@ -167,7 +204,7 @@ async function updateStock(req, res) {
       });
     }
 
-    const med = await pharmacyService.updateStock(id, req.body, req.user?.userId);
+    const med = await pharmacyService.updateStock(id, req.body, req.user?.id || req.user?.userId);
 
     return res.status(200).json({
       success: true,
@@ -191,6 +228,7 @@ async function updateStock(req, res) {
 
 module.exports = {
   createPrescription,
+  recordPharmacyPayment,
   dispensePrescription,
   getPrescriptionsQueue,
   getMedications,

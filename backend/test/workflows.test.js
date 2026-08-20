@@ -74,11 +74,12 @@ test("End-to-End Hospital Management System Workflow", async (t) => {
   });
 
   await t.test("3. Scheduling: Check Availability and Book Appointment", async () => {
-    // Find next valid Monday-Friday date in the future
+    // Find next valid scheduled weekday (Monday=1, Wednesday=3, Friday=5)
     const targetDate = new Date();
-    targetDate.setDate(targetDate.getDate() + 7);
-    if (targetDate.getDay() === 0) targetDate.setDate(targetDate.getDate() + 1); // If Sun -> Mon
-    if (targetDate.getDay() === 6) targetDate.setDate(targetDate.getDate() + 2); // If Sat -> Mon
+    targetDate.setDate(targetDate.getDate() + 1);
+    while (![1, 3, 5].includes(targetDate.getDay())) {
+      targetDate.setDate(targetDate.getDate() + 1);
+    }
 
     const dateStr = targetDate.toISOString().split("T")[0];
 

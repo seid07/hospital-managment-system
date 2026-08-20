@@ -4,6 +4,7 @@ import ProtectedRoute from "./routes/ProtectedRoute";
 
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
+import RegistrarVisitDesk from "./pages/RegistrarVisitDesk";
 import Patients from "./pages/Patients";
 import PatientNew from "./pages/PatientNew";
 import PatientDetail from "./pages/PatientDetail";
@@ -17,6 +18,10 @@ import PrescriptionsList from "./pages/PrescriptionsList";
 import PharmacyInventory from "./pages/PharmacyInventory";
 import LaboratoryOrders from "./pages/LaboratoryOrders";
 import LaboratoryCatalog from "./pages/LaboratoryCatalog";
+import RadiologyQueue from "./pages/RadiologyQueue";
+import ProcedureQueue from "./pages/ProcedureQueue";
+import WardInpatient from "./pages/WardInpatient";
+import SurgeryQueue from "./pages/SurgeryQueue";
 import BillingInvoices from "./pages/BillingInvoices";
 import AdminStaff from "./pages/AdminStaff";
 import DoctorSchedules from "./pages/DoctorSchedules";
@@ -33,6 +38,9 @@ function App() {
           <Route element={<ProtectedRoute />}>
             {/* Dashboards */}
             <Route path="/dashboard/:role" element={<Dashboard />} />
+
+            {/* Service-First Registrar Workspace */}
+            <Route path="/registrar/desk" element={<RegistrarVisitDesk />} />
 
             {/* Patient Workflow */}
             <Route path="/patients" element={<Patients />} />
@@ -51,6 +59,12 @@ function App() {
             <Route path="/doctor/queue" element={<DoctorQueue />} />
             <Route path="/encounters/new" element={<ClinicalEncounter />} />
             <Route path="/encounters/:id" element={<ClinicalEncounter />} />
+
+            {/* Specialized Clinical Department Queues */}
+            <Route path="/radiology/queue" element={<RadiologyQueue />} />
+            <Route path="/procedures/queue" element={<ProcedureQueue />} />
+            <Route path="/ward/inpatient" element={<WardInpatient />} />
+            <Route path="/surgery/queue" element={<SurgeryQueue />} />
 
             {/* Pharmacy & Formulary */}
             <Route path="/prescriptions" element={<PrescriptionsList />} />
