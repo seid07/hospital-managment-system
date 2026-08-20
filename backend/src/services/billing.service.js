@@ -563,6 +563,47 @@ async function getInvoiceById(id) {
   };
 }
 
+async function getPendingCashierOrders(query = {}) {
+  const { search } = query;
+  let sql = `
+    SELECT 
+      so.id AS service_order_id,
+      so.order_number,
+      so.price,
+      so.status AS payment_status,
+      so.clinical_notes,
+      so.created_at,
+      so.visit_id,
+      s.name AS service_name,
+      s.code AS service_code,
+      s.category AS service_category,
+      d.name AS department_name,
+      p.id AS patient_id,
+      p.patient_number,
+      p.first_name AS patient_first_name,
+      p.last_name AS patient_last_name,
+      p.phone AS patient_phone,
+      doc.first_name AS doctor_first_name,
+      doc.last_name AS doctor_last_name,
+      so.invoice_id
+    FROM service_orders so
+    JOIN services s ON so.service_id = s.id
+    JOIN departments d ON so.department_id = d.id
+    JOIN patients p ON so.patient_id = p.id
+    LEFT JOIN staff doc ON so.doctor_id = doc.id
+    WHERE so.status = 'WAITING_PAYMENT'
+      AND s.payment_location != 'PHARMACY'
+  `;
+  const params = [];
+  if (search) {
+    params.push(`%${search.trim()}%`);
+    sql += ` AND (p.first_name ILIKE $1 OR p.last_name ILIKE $1 OR p.patient_number ILIKE $1 OR so.order_number ILIKE $1)`;
+  }
+  sql += ` ORDER BY so.created_at ASC`;
+  const res = await pool.query(sql, params);
+  return res.rows;
+}
+
 module.exports = {
   getBillableServices,
   addBillableService,
@@ -570,4 +611,6 @@ module.exports = {
   recordPayment,
   getInvoices,
   getInvoiceById,
+  getPendingCashierOrders,
 };
+

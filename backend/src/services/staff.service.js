@@ -1,6 +1,7 @@
 const bcrypt = require("bcrypt");
 const pool = require("../config/database");
 const { recordAuditLog } = require("../utils/audit");
+const { validatePasswordStrength, validateEthiopianPhone, normalizeEthiopianPhone } = require("../validators");
 
 async function getRoles() {
   const result = await pool.query(`
@@ -63,6 +64,19 @@ async function getStaff(query = {}) {
 }
 
 async function createStaff(data, createdByUserId) {
+  const passwordCheck = validatePasswordStrength(data.password);
+  if (!passwordCheck.isValid) {
+    throw new Error(`WEAK_PASSWORD: ${passwordCheck.message}`);
+  }
+
+  let phone = data.phone ? data.phone.trim() : "";
+  if (phone) {
+    if (!validateEthiopianPhone(phone)) {
+      throw new Error("INVALID_PHONE_FORMAT");
+    }
+    phone = normalizeEthiopianPhone(phone);
+  }
+
   const client = await pool.connect();
 
   try {
@@ -103,7 +117,7 @@ async function createStaff(data, createdByUserId) {
         data.firstName.trim(),
         data.lastName.trim(),
         data.email.trim().toLowerCase(),
-        data.phone.trim(),
+        phone,
         data.department ? data.department.trim() : null,
         data.specialty ? data.specialty.trim() : null,
         roleId,

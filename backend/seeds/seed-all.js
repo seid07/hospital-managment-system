@@ -238,75 +238,9 @@ async function seedAll() {
       console.log("Doctor schedules seeded.");
     }
 
-    // 4. Sample Patients
-    const patients = [
-      {
-        patientNumber: "PAT-2026-000001",
-        firstName: "Abebe",
-        lastName: "Kebede",
-        dob: "1988-04-12",
-        gender: "Male",
-        phone: "+251-911-234567",
-        email: "abebe.kebede@example.com",
-        address: "Bole Sub-City, Kebele 03, Addis Ababa",
-        emergencyName: "Tigist Kebede",
-        emergencyPhone: "+251-911-987654",
-      },
-      {
-        patientNumber: "PAT-2026-000002",
-        firstName: "Hana",
-        lastName: "Tadesse",
-        dob: "1992-09-24",
-        gender: "Female",
-        phone: "+251-922-345678",
-        email: "hana.tadesse@example.com",
-        address: "Yeka Sub-City, Addis Ababa",
-        emergencyName: "Mulugeta Tadesse",
-        emergencyPhone: "+251-922-876543",
-      },
-      {
-        patientNumber: "PAT-2026-000003",
-        firstName: "Ali",
-        lastName: "Mohammed",
-        dob: "1975-11-03",
-        gender: "Male",
-        phone: "+251-933-456789",
-        email: "ali.mohammed@example.com",
-        address: "Kirkos Sub-City, Addis Ababa",
-        emergencyName: "Fatuma Ali",
-        emergencyPhone: "+251-933-765432",
-      },
-    ];
-
-    for (const p of patients) {
-      await client.query(
-        `
-        INSERT INTO patients (
-          patient_number, first_name, last_name, date_of_birth, gender,
-          phone, email, address, emergency_contact_name, emergency_contact_phone, is_active
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, TRUE)
-        ON CONFLICT (patient_number) DO UPDATE SET
-          first_name = EXCLUDED.first_name,
-          last_name = EXCLUDED.last_name,
-          phone = EXCLUDED.phone,
-          address = EXCLUDED.address;
-        `,
-        [
-          p.patientNumber,
-          p.firstName,
-          p.lastName,
-          p.dob,
-          p.gender,
-          p.phone,
-          p.email,
-          p.address,
-          p.emergencyName,
-          p.emergencyPhone,
-        ]
-      );
-    }
-    console.log("Sample patients seeded.");
+    // 4. Cleanup fake demo patients if present
+    await client.query("DELETE FROM patients WHERE patient_number LIKE 'PAT-2026-00000%'");
+    console.log("Verified database clean of default demo patients.");
 
     await client.query("COMMIT");
     console.log("Seed finished successfully!");

@@ -1,4 +1,4 @@
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import AppShell from "../components/layout/AppShell";
 import StatusBadge from "../components/common/StatusBadge";
@@ -14,6 +14,8 @@ import {
   getServices,
 } from "../services/billingService";
 import { useAuth } from "../context/useAuth";
+import { formatCurrency } from "../utils/currency";
+import { useDebounce } from "../hooks/useDebounce";
 
 function BillingInvoices() {
   const { user } = useAuth();
@@ -28,8 +30,7 @@ function BillingInvoices() {
   const [total, setTotal] = useState(0);
   const [statusFilter, setStatusFilter] = useState("");
   const [searchInput, setSearchInput] = useState("");
-  const [searchTerm, setSearchTerm] = useState("");
-  const [, startTransition] = useTransition();
+  const debouncedSearch = useDebounce(searchInput, 300);
 
   // Create Invoice Modal
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -65,7 +66,7 @@ function BillingInvoices() {
           page,
           limit: 15,
           status: statusFilter,
-          search: searchTerm,
+          search: debouncedSearch.trim(),
         });
         if (!cancelled && res.data) {
           setInvoices(res.data);
@@ -84,7 +85,7 @@ function BillingInvoices() {
     return () => {
       cancelled = true;
     };
-  }, [page, statusFilter, searchTerm, reloadKey]);
+  }, [page, statusFilter, debouncedSearch, reloadKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -105,9 +106,6 @@ function BillingInvoices() {
   function handleSearchSubmit(e) {
     e.preventDefault();
     setPage(1);
-    startTransition(() => {
-      setSearchTerm(searchInput.trim());
-    });
   }
 
   function handleAddLineItem() {
@@ -191,7 +189,7 @@ function BillingInvoices() {
         transactionReference: paymentRef,
         notes: paymentNotes,
       });
-      setSuccess(`Payment of $${payAmount} recorded for Invoice #${paymentTarget.invoice_number}.`);
+      setSuccess(`Payment of ${formatCurrency(payAmount)} recorded for Invoice #${paymentTarget.invoice_number}.`);
       setPaymentTarget(null);
       setReloadKey((prev) => prev + 1);
     } catch (err) {
@@ -309,16 +307,16 @@ function BillingInvoices() {
                       <small style={{ color: "var(--text-muted)" }}>{inv.patient_number}</small>
                     </td>
                     <td>{new Date(inv.created_at).toLocaleDateString()}</td>
-                    <td>${inv.subtotal}</td>
+                    <td>{formatCurrency(inv.subtotal)}</td>
                     <td>
-                      <small>-${inv.discount_amount} / +${inv.tax_amount}</small>
+                      <small>-{formatCurrency(inv.discount_amount)} / +{formatCurrency(inv.tax_amount)}</small>
                     </td>
                     <td>
-                      <strong style={{ color: "var(--primary)" }}>${inv.total_amount}</strong>
+                      <strong style={{ color: "var(--primary)" }}>{formatCurrency(inv.total_amount)}</strong>
                     </td>
                     <td>
                       <strong style={{ color: parseFloat(inv.balance_amount) > 0 ? "var(--danger)" : "var(--success)" }}>
-                        ${inv.balance_amount}
+                        {formatCurrency(inv.balance_amount)}
                       </strong>
                     </td>
                     <td>
@@ -413,7 +411,7 @@ function BillingInvoices() {
                   <input
                     type="number"
                     step="0.01"
-                    placeholder="Unit Price ($)"
+                    placeholder="Unit Price (ETB)"
                     value={item.unitPrice}
                     onChange={(e) => handleItemChange(idx, "unitPrice", e.target.value)}
                     required
@@ -456,7 +454,7 @@ function BillingInvoices() {
                     }
                     style={{ background: "none", border: "none", color: "var(--primary)", textDecoration: "underline", cursor: "pointer", marginRight: "8px" }}
                   >
-                    + {s.name} (${s.standard_fee})
+                    + {s.name} ({formatCurrency(s.standard_fee)})
                   </button>
                 ))}
               </div>
@@ -465,7 +463,7 @@ function BillingInvoices() {
 
           <div className="form-grid" style={{ marginBottom: "16px" }}>
             <div className="form-field">
-              <label>Discount Amount ($)</label>
+              <label>Discount Amount (ETB)</label>
               <input
                 type="number"
                 step="0.01"
@@ -476,7 +474,7 @@ function BillingInvoices() {
             </div>
 
             <div className="form-field">
-              <label>Tax Amount ($)</label>
+              <label>Tax Amount (ETB)</label>
               <input
                 type="number"
                 step="0.01"
@@ -488,8 +486,8 @@ function BillingInvoices() {
           </div>
 
           <div style={{ background: "var(--primary-light)", padding: "12px", borderRadius: "var(--radius-sm)", marginBottom: "16px", display: "flex", justifyContent: "space-between" }}>
-            <span>Subtotal: <strong>${estimatedSubtotal.toFixed(2)}</strong></span>
-            <span>Total Payable: <strong style={{ color: "var(--primary)", fontSize: "16px" }}>${estimatedTotal.toFixed(2)}</strong></span>
+            <span>Subtotal: <strong>{formatCurrency(estimatedSubtotal)}</strong></span>
+            <span>Total Payable: <strong style={{ color: "var(--primary)", fontSize: "16px" }}>{formatCurrency(estimatedTotal)}</strong></span>
           </div>
 
           <div className="form-field" style={{ marginBottom: "16px" }}>
@@ -520,12 +518,12 @@ function BillingInvoices() {
             <div style={{ background: "var(--primary-light)", padding: "12px", borderRadius: "var(--radius-sm)", marginBottom: "14px", fontSize: "13px" }}>
               <div><strong>Invoice #:</strong> {paymentTarget.invoice_number}</div>
               <div><strong>Patient:</strong> {paymentTarget.patient_first_name} {paymentTarget.patient_last_name} ({paymentTarget.patient_number})</div>
-              <div><strong>Total Amount:</strong> ${paymentTarget.total_amount} | <strong>Outstanding Balance:</strong> <strong style={{ color: "var(--danger)" }}>${paymentTarget.balance_amount}</strong></div>
+              <div><strong>Total Amount:</strong> {formatCurrency(paymentTarget.total_amount)} | <strong>Outstanding Balance:</strong> <strong style={{ color: "var(--danger)" }}>{formatCurrency(paymentTarget.balance_amount)}</strong></div>
             </div>
 
             <div className="form-grid">
               <div className="form-field">
-                <label>Payment Amount ($) *</label>
+                <label>Payment Amount (ETB) *</label>
                 <input
                   type="number"
                   step="0.01"
@@ -620,8 +618,8 @@ function BillingInvoices() {
                       <td style={{ padding: "8px", border: "1px solid #e2e8f0" }}>{it.item_type}</td>
                       <td style={{ padding: "8px", border: "1px solid #e2e8f0" }}>{it.description}</td>
                       <td style={{ padding: "8px", border: "1px solid #e2e8f0" }}>{it.quantity}</td>
-                      <td style={{ padding: "8px", border: "1px solid #e2e8f0" }}>${it.unit_price}</td>
-                      <td style={{ padding: "8px", border: "1px solid #e2e8f0", textAlign: "right", fontWeight: 600 }}>${it.total_price}</td>
+                      <td style={{ padding: "8px", border: "1px solid #e2e8f0" }}>{formatCurrency(it.unit_price)}</td>
+                      <td style={{ padding: "8px", border: "1px solid #e2e8f0", textAlign: "right", fontWeight: 600 }}>{formatCurrency(it.total_price)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -630,15 +628,15 @@ function BillingInvoices() {
               <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "16px" }}>
                 <table style={{ width: "240px", fontSize: "13px" }}>
                   <tbody>
-                    <tr><td>Subtotal:</td><td style={{ textAlign: "right" }}>${printTarget.subtotal}</td></tr>
-                    <tr><td>Discount:</td><td style={{ textAlign: "right" }}>-${printTarget.discount_amount}</td></tr>
-                    <tr><td>Tax:</td><td style={{ textAlign: "right" }}>+${printTarget.tax_amount}</td></tr>
+                    <tr><td>Subtotal:</td><td style={{ textAlign: "right" }}>{formatCurrency(printTarget.subtotal)}</td></tr>
+                    <tr><td>Discount:</td><td style={{ textAlign: "right" }}>-{formatCurrency(printTarget.discount_amount)}</td></tr>
+                    <tr><td>Tax:</td><td style={{ textAlign: "right" }}>+{formatCurrency(printTarget.tax_amount)}</td></tr>
                     <tr style={{ fontWeight: 700, fontSize: "14px", borderTop: "1px solid #333" }}>
-                      <td>Total Due:</td><td style={{ textAlign: "right" }}>${printTarget.total_amount}</td>
+                      <td>Total Due:</td><td style={{ textAlign: "right" }}>{formatCurrency(printTarget.total_amount)}</td>
                     </tr>
-                    <tr style={{ color: "green" }}><td>Total Paid:</td><td style={{ textAlign: "right" }}>${printTarget.paid_amount}</td></tr>
+                    <tr style={{ color: "green" }}><td>Total Paid:</td><td style={{ textAlign: "right" }}>{formatCurrency(printTarget.paid_amount)}</td></tr>
                     <tr style={{ fontWeight: 700, color: parseFloat(printTarget.balance_amount) > 0 ? "red" : "green" }}>
-                      <td>Balance Remaining:</td><td style={{ textAlign: "right" }}>${printTarget.balance_amount}</td>
+                      <td>Balance Remaining:</td><td style={{ textAlign: "right" }}>{formatCurrency(printTarget.balance_amount)}</td>
                     </tr>
                   </tbody>
                 </table>
@@ -651,7 +649,7 @@ function BillingInvoices() {
                 <ul style={{ fontSize: "12px", margin: 0, paddingLeft: "20px" }}>
                   {printTarget.payments.map((p) => (
                     <li key={p.id}>
-                      Receipt #{p.payment_number}: ${p.amount} paid via {p.payment_method} on {new Date(p.created_at).toLocaleDateString()}
+                      Receipt #{p.payment_number}: {formatCurrency(p.amount)} paid via {p.payment_method} on {new Date(p.created_at).toLocaleDateString()}
                     </li>
                   ))}
                 </ul>

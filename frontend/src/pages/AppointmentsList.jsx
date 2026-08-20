@@ -1,4 +1,4 @@
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import AppShell from "../components/layout/AppShell";
 import StatusBadge from "../components/common/StatusBadge";
@@ -12,6 +12,7 @@ import {
 } from "../services/appointmentService";
 import { getDoctors } from "../services/scheduleService";
 import { useAuth } from "../context/useAuth";
+import { useDebounce } from "../hooks/useDebounce";
 
 function AppointmentsList() {
   const navigate = useNavigate();
@@ -32,8 +33,7 @@ function AppointmentsList() {
   const [doctorFilter, setDoctorFilter] = useState("");
   const [dateFilter, setDateFilter] = useState("");
   const [searchInput, setSearchInput] = useState("");
-  const [searchTerm, setSearchTerm] = useState("");
-  const [, startTransition] = useTransition();
+  const debouncedSearch = useDebounce(searchInput, 300);
 
   // Reschedule modal
   const [rescheduleTarget, setRescheduleTarget] = useState(null);
@@ -55,7 +55,7 @@ function AppointmentsList() {
           status: statusFilter,
           doctorId: doctorFilter,
           date: dateFilter,
-          search: searchTerm,
+          search: debouncedSearch.trim(),
         });
         if (!cancelled && res.data) {
           setAppointments(res.data);
@@ -74,7 +74,7 @@ function AppointmentsList() {
     return () => {
       cancelled = true;
     };
-  }, [page, statusFilter, doctorFilter, dateFilter, searchTerm, reloadKey]);
+  }, [page, statusFilter, doctorFilter, dateFilter, debouncedSearch, reloadKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -154,9 +154,6 @@ function AppointmentsList() {
   function handleSearchSubmit(e) {
     e.preventDefault();
     setPage(1);
-    startTransition(() => {
-      setSearchTerm(searchInput.trim());
-    });
   }
 
   return (
@@ -249,7 +246,6 @@ function AppointmentsList() {
             className="button button-secondary"
             onClick={() => {
               setSearchInput("");
-              setSearchTerm("");
               setDoctorFilter("");
               setStatusFilter("");
               setDateFilter("");

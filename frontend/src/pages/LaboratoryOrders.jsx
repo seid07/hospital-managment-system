@@ -1,4 +1,4 @@
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import AppShell from "../components/layout/AppShell";
 import StatusBadge from "../components/common/StatusBadge";
@@ -12,6 +12,7 @@ import {
   verifyResults,
 } from "../services/laboratoryService";
 import { useAuth } from "../context/useAuth";
+import { useDebounce } from "../hooks/useDebounce";
 
 function LaboratoryOrders() {
   const { user } = useAuth();
@@ -27,8 +28,7 @@ function LaboratoryOrders() {
   const [statusFilter, setStatusFilter] = useState("");
   const [priorityFilter, setPriorityFilter] = useState("");
   const [searchInput, setSearchInput] = useState("");
-  const [searchTerm, setSearchTerm] = useState("");
-  const [, startTransition] = useTransition();
+  const debouncedSearch = useDebounce(searchInput, 300);
 
   // Results entry modal
   const [resultTarget, setResultTarget] = useState(null);
@@ -55,7 +55,7 @@ function LaboratoryOrders() {
           limit: 15,
           status: statusFilter,
           priority: priorityFilter,
-          search: searchTerm,
+          search: debouncedSearch.trim(),
         });
         if (!cancelled && res.data) {
           setOrders(res.data);
@@ -74,14 +74,11 @@ function LaboratoryOrders() {
     return () => {
       cancelled = true;
     };
-  }, [page, statusFilter, priorityFilter, searchTerm, reloadKey]);
+  }, [page, statusFilter, priorityFilter, debouncedSearch, reloadKey]);
 
   function handleSearchSubmit(e) {
     e.preventDefault();
     setPage(1);
-    startTransition(() => {
-      setSearchTerm(searchInput.trim());
-    });
   }
 
   async function handleCollectSpecimen(orderId) {

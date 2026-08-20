@@ -41,6 +41,56 @@ async function login(req, res) {
   }
 }
 
+async function forgotPassword(req, res) {
+  try {
+    const { username } = req.body;
+    const result = await authService.requestPasswordReset(username);
+    return res.status(200).json(result);
+  } catch (error) {
+    console.error("Forgot password error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Unable to process password reset request.",
+    });
+  }
+}
+
+async function resetPassword(req, res) {
+  try {
+    const { token, newPassword } = req.body;
+
+    if (!token || !newPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "Reset token and new password are required.",
+      });
+    }
+
+    const result = await authService.resetPassword(token, newPassword);
+    return res.status(200).json(result);
+  } catch (error) {
+    if (error.message?.startsWith("WEAK_PASSWORD")) {
+      return res.status(400).json({
+        success: false,
+        message: error.message.replace("WEAK_PASSWORD: ", ""),
+      });
+    }
+    if (error.message === "INVALID_OR_EXPIRED_TOKEN") {
+      return res.status(400).json({
+        success: false,
+        message: "Password reset token is invalid or has expired. Please request a new one.",
+      });
+    }
+    console.error("Reset password error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Unable to reset password.",
+    });
+  }
+}
+
 module.exports = {
   login,
+  forgotPassword,
+  resetPassword,
 };

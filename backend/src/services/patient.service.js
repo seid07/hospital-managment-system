@@ -1,12 +1,62 @@
 const pool = require("../config/database");
 const { generatePatientNumber } = require("../utils/number-generators");
 const { recordAuditLog } = require("../utils/audit");
-const { parsePagination } = require("../validators");
+const {
+  parsePagination,
+  validateEthiopianPhone,
+  normalizeEthiopianPhone,
+  calculateDobFromAge,
+} = require("../validators");
+
+function formatPatientAge(dob) {
+  if (!dob) return null;
+  const birthDate = new Date(dob);
+  if (isNaN(birthDate.getTime())) return null;
+  const today = new Date();
+  let age = today.getFullYear() - birthDate.getFullYear();
+  const m = today.getMonth() - birthDate.getMonth();
+  if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) {
+    age--;
+  }
+  return Math.max(0, age);
+}
+
+function attachAgeToPatient(patient) {
+  if (!patient) return null;
+  return {
+    ...patient,
+    age: formatPatientAge(patient.date_of_birth),
+  };
+}
 
 async function createPatient(data, userId) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+
+    // Validate phone
+    if (!validateEthiopianPhone(data.phone)) {
+      throw new Error("INVALID_PHONE_FORMAT");
+    }
+    const normalizedPhone = normalizeEthiopianPhone(data.phone);
+
+    // Validate emergency phone if provided
+    let normalizedEmergencyPhone = null;
+    if (data.emergencyContactPhone && data.emergencyContactPhone.trim()) {
+      if (!validateEthiopianPhone(data.emergencyContactPhone)) {
+        throw new Error("INVALID_EMERGENCY_PHONE_FORMAT");
+      }
+      normalizedEmergencyPhone = normalizeEthiopianPhone(data.emergencyContactPhone);
+    }
+
+    // Determine date_of_birth
+    let dob = data.dateOfBirth;
+    if (!dob && (data.age !== undefined && data.age !== null && data.age !== "")) {
+      dob = calculateDobFromAge(data.age);
+    }
+    if (!dob) {
+      throw new Error("AGE_OR_DOB_REQUIRED");
+    }
 
     const patientNumber = await generatePatientNumber(client);
 
@@ -34,25 +84,25 @@ async function createPatient(data, userId) {
         patientNumber,
         data.firstName.trim(),
         data.lastName.trim(),
-        data.dateOfBirth,
+        dob,
         data.gender,
-        data.phone.trim(),
-        data.email ? data.email.trim() : null,
+        normalizedPhone,
+        data.email ? data.email.trim().toLowerCase() : null,
         data.address ? data.address.trim() : null,
         data.emergencyContactName ? data.emergencyContactName.trim() : null,
-        data.emergencyContactPhone ? data.emergencyContactPhone.trim() : null,
+        normalizedEmergencyPhone,
         userId || null,
       ]
     );
 
-    const patient = result.rows[0];
+    const patient = attachAgeToPatient(result.rows[0]);
 
     await recordAuditLog(client, {
       userId,
       action: "PATIENT_CREATED",
       entity: "patients",
       entityId: patient.id,
-      details: { patientNumber: patient.patient_number, name: `${patient.first_name} ${patient.last_name}` },
+      details: { patientNumber: patient.patient_number, name: `${patient.first_name} ${patient.last_name}`, age: patient.age },
     });
 
     await client.query("COMMIT");
@@ -69,6 +119,27 @@ async function updatePatient(id, data, userId) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+
+    let normalizedPhone = undefined;
+    if (data.phone) {
+      if (!validateEthiopianPhone(data.phone)) {
+        throw new Error("INVALID_PHONE_FORMAT");
+      }
+      normalizedPhone = normalizeEthiopianPhone(data.phone);
+    }
+
+    let normalizedEmergencyPhone = undefined;
+    if (data.emergencyContactPhone) {
+      if (!validateEthiopianPhone(data.emergencyContactPhone)) {
+        throw new Error("INVALID_EMERGENCY_PHONE_FORMAT");
+      }
+      normalizedEmergencyPhone = normalizeEthiopianPhone(data.emergencyContactPhone);
+    }
+
+    let dob = data.dateOfBirth;
+    if (!dob && data.age !== undefined && data.age !== null) {
+      dob = calculateDobFromAge(data.age);
+    }
 
     const result = await client.query(
       `
@@ -90,15 +161,54 @@ async function updatePatient(id, data, userId) {
       [
         data.firstName ? data.firstName.trim() : null,
         data.lastName ? data.lastName.trim() : null,
-        data.dateOfBirth || null,
+        dob || null,
         data.gender || null,
-        data.phone ? data.phone.trim() : null,
-        data.email ? data.email.trim() : null,
+        normalizedPhone || null,
+        data.email ? data.email.trim().toLowerCase() : null,
         data.address ? data.address.trim() : null,
         data.emergencyContactName ? data.emergencyContactName.trim() : null,
-        data.emergencyContactPhone ? data.emergencyContactPhone.trim() : null,
+        normalizedEmergencyPhone || null,
         id,
       ]
+    );
+
+    if (result.rows.length === 0) {
+      throw new Error("PATIENT_NOT_FOUND");
+    }
+
+    const patient = attachAgeToPatient(result.rows[0]);
+
+    await recordAuditLog(client, {
+      userId,
+      action: "PATIENT_UPDATED",
+      entity: "patients",
+      entityId: patient.id,
+      details: { patientNumber: patient.patient_number },
+    });
+
+    await client.query("COMMIT");
+    return patient;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function deletePatient(id, userId) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const result = await client.query(
+      `
+      UPDATE patients
+      SET is_active = FALSE, updated_at = CURRENT_TIMESTAMP
+      WHERE id = $1 AND is_active = TRUE
+      RETURNING *
+      `,
+      [id]
     );
 
     if (result.rows.length === 0) {
@@ -109,10 +219,10 @@ async function updatePatient(id, data, userId) {
 
     await recordAuditLog(client, {
       userId,
-      action: "PATIENT_UPDATED",
+      action: "PATIENT_DELETED",
       entity: "patients",
-      entityId: patient.id,
-      details: { patientNumber: patient.patient_number },
+      entityId: id,
+      details: { patientNumber: patient.patient_number, name: `${patient.first_name} ${patient.last_name}` },
     });
 
     await client.query("COMMIT");
@@ -176,7 +286,7 @@ async function searchPatients(search, paginationQuery = {}) {
   );
 
   return {
-    patients: result.rows,
+    patients: result.rows.map(attachAgeToPatient),
     total,
     page,
     limit,
@@ -224,7 +334,7 @@ async function getPatients(query = {}) {
   const result = await pool.query(listQuery, params);
 
   return {
-    patients: result.rows,
+    patients: result.rows.map(attachAgeToPatient),
     total,
     page,
     limit,
@@ -243,7 +353,7 @@ async function getPatientById(id) {
     [id]
   );
 
-  return result.rows[0] || null;
+  return result.rows[0] ? attachAgeToPatient(result.rows[0]) : null;
 }
 
 async function getPatientMedicalRecord(patientId) {
@@ -408,8 +518,10 @@ async function getPatientMedicalRecord(patientId) {
 module.exports = {
   createPatient,
   updatePatient,
+  deletePatient,
   searchPatients,
   getPatients,
   getPatientById,
   getPatientMedicalRecord,
+  formatPatientAge,
 };

@@ -13,6 +13,106 @@ function parsePagination(query) {
   return { page, limit, offset };
 }
 
+/**
+ * Validates Ethiopian phone number format:
+ * Accepts:
+ * - 09XXXXXXXX (10 digits)
+ * - 07XXXXXXXX (10 digits)
+ * - +2519XXXXXXXX (13 chars)
+ * - +2517XXXXXXXX (13 chars)
+ * - 2519XXXXXXXX (12 digits)
+ * - 2517XXXXXXXX (12 digits)
+ */
+function validateEthiopianPhone(phone) {
+  if (!phone || typeof phone !== "string") {
+    return false;
+  }
+  const clean = phone.trim().replace(/[\s-]/g, "");
+  const ethiopianRegex = /^(?:\+251[97]\d{8}|251[97]\d{8}|0[97]\d{8})$/;
+  return ethiopianRegex.test(clean);
+}
+
+function normalizeEthiopianPhone(phone) {
+  if (!phone || typeof phone !== "string") return "";
+  const clean = phone.trim().replace(/[\s-]/g, "");
+  if (clean.startsWith("+251")) {
+    return clean;
+  }
+  if (clean.startsWith("251")) {
+    return `+${clean}`;
+  }
+  if (clean.startsWith("0")) {
+    return `+251${clean.slice(1)}`;
+  }
+  return clean;
+}
+
+/**
+ * Validates strong password requirements:
+ * - At least 8 characters
+ * - At least one uppercase letter
+ * - At least one lowercase letter
+ * - At least one number
+ * - At least one special character
+ */
+function validatePasswordStrength(password) {
+  if (!password || typeof password !== "string") {
+    return {
+      isValid: false,
+      message: "Password is required.",
+    };
+  }
+
+  if (password.length < 8) {
+    return {
+      isValid: false,
+      message: "Password must be at least 8 characters long.",
+    };
+  }
+
+  if (!/[A-Z]/.test(password)) {
+    return {
+      isValid: false,
+      message: "Password must contain at least one uppercase letter.",
+    };
+  }
+
+  if (!/[a-z]/.test(password)) {
+    return {
+      isValid: false,
+      message: "Password must contain at least one lowercase letter.",
+    };
+  }
+
+  if (!/[0-9]/.test(password)) {
+    return {
+      isValid: false,
+      message: "Password must contain at least one number.",
+    };
+  }
+
+  if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?`~]/.test(password)) {
+    return {
+      isValid: false,
+      message: "Password must contain at least one special character (!@#$%^&*...).",
+    };
+  }
+
+  return {
+    isValid: true,
+  };
+}
+
+function calculateDobFromAge(age) {
+  const numericAge = parseInt(age, 10);
+  if (isNaN(numericAge) || numericAge < 0 || numericAge > 130) {
+    return null;
+  }
+  const currentYear = new Date().getFullYear();
+  const birthYear = currentYear - numericAge;
+  return `${birthYear}-01-01`;
+}
+
 function validateVitals(data) {
   const errors = [];
 
@@ -78,5 +178,9 @@ function validateVitals(data) {
 module.exports = {
   isValidUUID,
   parsePagination,
+  validateEthiopianPhone,
+  normalizeEthiopianPhone,
+  validatePasswordStrength,
+  calculateDobFromAge,
   validateVitals,
 };

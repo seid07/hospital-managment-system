@@ -1,20 +1,30 @@
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import AppShell from "../components/layout/AppShell";
 import Pagination from "../components/common/Pagination";
-import { getPatients } from "../services/patientService";
+import Modal from "../components/common/Modal";
+import { useAuth } from "../context/useAuth";
+import { useDebounce } from "../hooks/useDebounce";
+import { getPatients, deletePatient } from "../services/patientService";
 
 function Patients() {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const canManagePatients = user?.role === "ADMIN" || user?.role === "REGISTRAR";
+
   const [patients, setPatients] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [successMsg, setSuccessMsg] = useState("");
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [total, setTotal] = useState(0);
   const [searchInput, setSearchInput] = useState("");
-  const [searchTerm, setSearchTerm] = useState("");
-  const [, startTransition] = useTransition();
+  const debouncedSearch = useDebounce(searchInput, 300);
+
+  // Delete modal state
+  const [patientToDelete, setPatientToDelete] = useState(null);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -22,7 +32,7 @@ function Patients() {
       try {
         setLoading(true);
         setError("");
-        const res = await getPatients({ page, limit: 15, search: searchTerm });
+        const res = await getPatients({ page, limit: 15, search: debouncedSearch.trim() });
         if (!cancelled && res.data) {
           setPatients(res.data);
           setTotal(res.pagination?.total || 0);
@@ -42,14 +52,26 @@ function Patients() {
     return () => {
       cancelled = true;
     };
-  }, [page, searchTerm]);
+  }, [page, debouncedSearch]);
 
-  function handleSearchSubmit(e) {
-    e.preventDefault();
-    setPage(1);
-    startTransition(() => {
-      setSearchTerm(searchInput.trim());
-    });
+  async function handleDeleteConfirm() {
+    if (!patientToDelete) return;
+    try {
+      setDeleting(true);
+      setError("");
+      await deletePatient(patientToDelete.id);
+      setSuccessMsg(`Patient ${patientToDelete.first_name} ${patientToDelete.last_name} record has been removed.`);
+      setPatientToDelete(null);
+      // Reload current page
+      const res = await getPatients({ page, limit: 15, search: debouncedSearch.trim() });
+      setPatients(res.data || []);
+      setTotal(res.pagination?.total || 0);
+      setTotalPages(res.pagination?.totalPages || 1);
+    } catch (err) {
+      setError(err.message || "Failed to delete patient record.");
+    } finally {
+      setDeleting(false);
+    }
   }
 
   return (
@@ -59,15 +81,18 @@ function Patients() {
           <p className="page-eyebrow">Patient Management</p>
           <h1>Patients Directory</h1>
           <p className="page-description">
-            Search, register, and manage patient medical records.
+            Search, view clinical charts, and manage hospital patient database.
           </p>
         </div>
 
-        <div className="page-actions">
-          <Link to="/patients/new" className="button button-primary button-large">
-            + Register New Patient
-          </Link>
-        </div>
+        {/* New Registration Button - Strictly ADMIN and REGISTRAR */}
+        {canManagePatients && (
+          <div className="page-actions">
+            <Link to="/patients/new" className="button button-primary button-large">
+              + Register New Patient
+            </Link>
+          </div>
+        )}
       </div>
 
       {error && (
@@ -76,34 +101,47 @@ function Patients() {
         </div>
       )}
 
+      {successMsg && (
+        <div className="alert alert-success" role="status">
+          {successMsg}
+        </div>
+      )}
+
+      {/* Live Search Bar */}
       <section className="card" style={{ marginBottom: "20px" }}>
-        <form onSubmit={handleSearchSubmit} style={{ display: "flex", gap: "10px" }}>
+        <div style={{ position: "relative" }}>
           <input
             type="search"
-            placeholder="Search by patient number, name, or phone number..."
+            placeholder="Live search by patient # (PAT-...), first name, last name, or phone..."
             value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-            style={{ flex: 1, padding: "10px 14px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)" }}
+            onChange={(e) => {
+              setSearchInput(e.target.value);
+              setPage(1);
+            }}
+            style={{ width: "100%", padding: "11px 14px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)" }}
           />
-          <button type="submit" className="button button-primary">
-            Search
-          </button>
-          {searchTerm && (
+          {searchInput && (
             <button
               type="button"
-              className="button button-secondary"
-              onClick={() => {
-                setSearchInput("");
-                setSearchTerm("");
-                setPage(1);
+              onClick={() => setSearchInput("")}
+              style={{
+                position: "absolute",
+                right: "12px",
+                top: "50%",
+                transform: "translateY(-50%)",
+                background: "none",
+                border: "none",
+                color: "var(--text-muted)",
+                cursor: "pointer",
               }}
             >
-              Clear
+              ✕ Clear
             </button>
           )}
-        </form>
+        </div>
       </section>
 
+      {/* Patients Table */}
       <section className="card">
         {loading ? (
           <div className="loading-state">Loading patients database...</div>
@@ -112,8 +150,8 @@ function Patients() {
             <div className="empty-state-icon">♙</div>
             <h3>No patients found</h3>
             <p>
-              {searchTerm
-                ? "No patient records match your search criteria."
+              {debouncedSearch
+                ? `No patient records match "${debouncedSearch}".`
                 : "No patients have been registered yet."}
             </p>
           </div>
@@ -124,8 +162,7 @@ function Patients() {
                 <tr>
                   <th>Patient #</th>
                   <th>Full Name</th>
-                  <th>Date of Birth / Age</th>
-                  <th>Gender</th>
+                  <th>Age / Gender</th>
                   <th>Phone</th>
                   <th>Registration Date</th>
                   <th>Action</th>
@@ -133,12 +170,7 @@ function Patients() {
               </thead>
               <tbody>
                 {patients.map((p) => {
-                  const birthYear = p.date_of_birth
-                    ? new Date(p.date_of_birth).getFullYear()
-                    : null;
-                  const age = birthYear
-                    ? new Date().getFullYear() - birthYear
-                    : "—";
+                  const displayAge = p.age !== undefined && p.age !== null ? `${p.age} yrs` : p.date_of_birth ? `${new Date().getFullYear() - new Date(p.date_of_birth).getFullYear()} yrs` : "—";
 
                   return (
                     <tr
@@ -147,7 +179,9 @@ function Patients() {
                       onClick={() => navigate(`/patients/${p.id}`)}
                     >
                       <td>
-                        <strong>{p.patient_number}</strong>
+                        <strong style={{ fontFamily: "monospace", color: "var(--primary-dark)" }}>
+                          {p.patient_number}
+                        </strong>
                       </td>
                       <td>
                         <span style={{ fontWeight: 600, color: "var(--primary)" }}>
@@ -155,22 +189,38 @@ function Patients() {
                         </span>
                       </td>
                       <td>
-                        {p.date_of_birth} ({age} yrs)
+                        {displayAge} • {p.gender}
                       </td>
-                      <td>{p.gender}</td>
-                      <td>{p.phone}</td>
+                      <td style={{ fontFamily: "monospace" }}>{p.phone}</td>
                       <td>{new Date(p.created_at).toLocaleDateString()}</td>
                       <td>
-                        <button
-                          type="button"
-                          className="button button-secondary"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            navigate(`/patients/${p.id}`);
-                          }}
-                        >
-                          Open Chart →
-                        </button>
+                        <div style={{ display: "flex", gap: "6px" }}>
+                          <button
+                            type="button"
+                            className="button button-secondary"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              navigate(`/patients/${p.id}`);
+                            }}
+                          >
+                            Open Chart →
+                          </button>
+
+                          {/* Delete Patient - Strictly ADMIN and REGISTRAR */}
+                          {canManagePatients && (
+                            <button
+                              type="button"
+                              className="button button-danger"
+                              style={{ padding: "4px 8px", fontSize: "11px" }}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setPatientToDelete(p);
+                              }}
+                            >
+                              Delete
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );
@@ -187,6 +237,44 @@ function Patients() {
           onPageChange={(newPage) => setPage(newPage)}
         />
       </section>
+
+      {/* Delete Patient Confirmation Modal */}
+      <Modal
+        isOpen={Boolean(patientToDelete)}
+        onClose={() => setPatientToDelete(null)}
+        title="Confirm Patient Record Deletion"
+      >
+        {patientToDelete && (
+          <div>
+            <p style={{ fontSize: "14px", color: "var(--text)", marginBottom: "14px" }}>
+              Are you sure you want to deactivate and remove patient record for{" "}
+              <strong>{patientToDelete.first_name} {patientToDelete.last_name}</strong> (
+              <span style={{ fontFamily: "monospace" }}>{patientToDelete.patient_number}</span>)?
+            </p>
+            <p style={{ fontSize: "12px", color: "#e11d48", background: "#fff1f2", padding: "10px", borderRadius: "6px" }}>
+              ⚠️ This will mark the patient as inactive and prevent future appointment bookings or encounters.
+            </p>
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px", marginTop: "20px" }}>
+              <button
+                type="button"
+                className="button button-secondary"
+                onClick={() => setPatientToDelete(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="button button-danger"
+                disabled={deleting}
+                onClick={handleDeleteConfirm}
+              >
+                {deleting ? "Deleting..." : "Confirm Deactivation"}
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
     </AppShell>
   );
 }

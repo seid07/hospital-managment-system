@@ -15,12 +15,23 @@ const ALL_CLINICAL_AND_ADMIN_ROLES = [
   "PHARMACIST",
   "LAB_TECH",
   "FINANCE",
+  "RADIOLOGIST",
+  "SURGEON",
+  "WARD_STAFF",
 ];
 
+// Create new patient - strictly ADMIN and REGISTRAR
 router.post(
   "/",
   authorizeRoles("ADMIN", "REGISTRAR"),
   patientController.createPatient
+);
+
+// Delete patient - strictly ADMIN and REGISTRAR
+router.delete(
+  "/:id",
+  authorizeRoles("ADMIN", "REGISTRAR"),
+  patientController.deletePatient
 );
 
 router.get(

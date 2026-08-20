@@ -7,6 +7,7 @@ import PrintableDocument from "../components/common/PrintableDocument";
 import { getPatientRecord, updatePatient } from "../services/patientService";
 import { recordVitals } from "../services/vitalsService";
 import { useAuth } from "../context/useAuth";
+import { formatCurrency } from "../utils/currency";
 
 function PatientDetail() {
   const { id } = useParams();
@@ -685,10 +686,10 @@ function PatientDetail() {
                   </div>
 
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: "12px", background: "var(--surface-muted)", padding: "12px", borderRadius: "var(--radius-sm)", marginBottom: "12px" }}>
-                    <div><span style={{ fontSize: "11px", color: "var(--text-muted)" }}>Subtotal</span><br /><strong>${inv.subtotal}</strong></div>
-                    <div><span style={{ fontSize: "11px", color: "var(--text-muted)" }}>Discount / Tax</span><br /><span>-${inv.discount_amount} / +${inv.tax_amount}</span></div>
-                    <div><span style={{ fontSize: "11px", color: "var(--text-muted)" }}>Total Due</span><br /><strong style={{ color: "var(--primary)" }}>${inv.total_amount}</strong></div>
-                    <div><span style={{ fontSize: "11px", color: "var(--text-muted)" }}>Balance Remaining</span><br /><strong style={{ color: parseFloat(inv.balance_amount) > 0 ? "var(--danger)" : "var(--success)" }}>${inv.balance_amount}</strong></div>
+                    <div><span style={{ fontSize: "11px", color: "var(--text-muted)" }}>Subtotal</span><br /><strong>{formatCurrency(inv.subtotal)}</strong></div>
+                    <div><span style={{ fontSize: "11px", color: "var(--text-muted)" }}>Discount / Tax</span><br /><span>-{formatCurrency(inv.discount_amount)} / +{formatCurrency(inv.tax_amount)}</span></div>
+                    <div><span style={{ fontSize: "11px", color: "var(--text-muted)" }}>Total Due</span><br /><strong style={{ color: "var(--primary)" }}>{formatCurrency(inv.total_amount)}</strong></div>
+                    <div><span style={{ fontSize: "11px", color: "var(--text-muted)" }}>Balance Remaining</span><br /><strong style={{ color: parseFloat(inv.balance_amount) > 0 ? "var(--danger)" : "var(--success)" }}>{formatCurrency(inv.balance_amount)}</strong></div>
                   </div>
 
                   {inv.items && inv.items.length > 0 && (
@@ -697,7 +698,7 @@ function PatientDetail() {
                       <ul style={{ margin: "4px 0", paddingLeft: "20px" }}>
                         {inv.items.map((it, idx) => (
                           <li key={idx}>
-                            {it.description} ({it.quantity} × ${it.unit_price}) = <strong>${it.total_price}</strong>
+                            {it.description} ({it.quantity} × {formatCurrency(it.unit_price)}) = <strong>{formatCurrency(it.total_price)}</strong>
                           </li>
                         ))}
                       </ul>
@@ -710,7 +711,7 @@ function PatientDetail() {
                       <ul style={{ margin: "4px 0", paddingLeft: "20px" }}>
                         {inv.payments.map((pm, idx) => (
                           <li key={idx}>
-                            ${pm.amount} via {pm.payment_method} ({pm.payment_number}) on {new Date(pm.created_at).toLocaleDateString()}
+                            {formatCurrency(pm.amount)} via {pm.payment_method} ({pm.payment_number}) on {new Date(pm.created_at).toLocaleDateString()}
                           </li>
                         ))}
                       </ul>

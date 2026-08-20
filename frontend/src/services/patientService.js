@@ -1,4 +1,4 @@
-import { get, post, put } from "./api";
+import { get, post, put, del } from "./api";
 
 export async function searchPatients(query, pagination = {}) {
   const params = new URLSearchParams({
@@ -25,6 +25,10 @@ export async function createPatient(patient) {
 
 export async function updatePatient(id, patient) {
   return put(`/patients/${id}`, patient);
+}
+
+export async function deletePatient(id) {
+  return del(`/patients/${id}`);
 }
 
 export async function getPatient(id) {

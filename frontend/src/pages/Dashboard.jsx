@@ -6,6 +6,7 @@ import StatCard from "../components/common/StatCard";
 import StatusBadge from "../components/common/StatusBadge";
 import { getDashboardKPIs } from "../services/reportService";
 import { getNavigation } from "../constants/navigation";
+import { formatCurrency } from "../utils/currency";
 
 function formatRole(role) {
   if (!role) return "User";
@@ -66,7 +67,7 @@ function Dashboard() {
         </div>
       )}
 
-      {/* Role-tailored KPI Grid */}
+      {/* Role-tailored Clickable KPI Grid */}
       <section className="dashboard-grid">
         {role === "ADMIN" && (
           <>
@@ -75,48 +76,56 @@ function Dashboard() {
               value={loading ? "..." : kpis?.totalStaff}
               icon="👥"
               description="Active hospital employees"
+              to="/admin/staff"
             />
             <StatCard
               label="Active Doctors"
               value={loading ? "..." : kpis?.activeDoctors}
               icon="🩺"
               description="Available for appointments"
+              to="/admin/schedules"
             />
             <StatCard
               label="Registered Patients"
               value={loading ? "..." : kpis?.registeredPatients}
               icon="♙"
               description="Total patient records"
+              to="/patients"
             />
             <StatCard
               label="Today's Appointments"
               value={loading ? "..." : kpis?.todayAppointments}
               icon="□"
               description="Scheduled for today"
+              to="/appointments"
             />
             <StatCard
               label="Total Revenue"
-              value={loading ? "..." : `$${(kpis?.totalRevenue || 0).toLocaleString()}`}
+              value={loading ? "..." : formatCurrency(kpis?.totalRevenue || 0)}
               icon="💳"
               description="All-time payments collected"
+              to="/billing"
             />
             <StatCard
               label="Unpaid Invoices"
-              value={loading ? "..." : `$${(kpis?.unpaidInvoicesBalance || 0).toLocaleString()}`}
+              value={loading ? "..." : formatCurrency(kpis?.unpaidInvoicesBalance || 0)}
               icon="⏳"
               description="Outstanding balances"
+              to="/billing"
             />
             <StatCard
               label="Lab Workload"
               value={loading ? "..." : kpis?.labWorkload}
               icon="🔬"
               description="Pending / processing orders"
+              to="/laboratory"
             />
             <StatCard
               label="Active Prescriptions"
               value={loading ? "..." : kpis?.pharmacyWorkload}
               icon="💊"
               description="Pending pharmacy dispensing"
+              to="/prescriptions"
             />
           </>
         )}
@@ -124,28 +133,32 @@ function Dashboard() {
         {role === "REGISTRAR" && (
           <>
             <StatCard
+              label="Registrar Visit Desk"
+              value="ACTIVE"
+              icon="📋"
+              description="Intake, Cashier & Routing Hub"
+              to="/registrar/desk"
+            />
+            <StatCard
               label="Today's Appointments"
               value={loading ? "..." : kpis?.todayAppointments}
               icon="□"
               description="Total booked for today"
+              to="/appointments"
             />
             <StatCard
               label="Checked In"
               value={loading ? "..." : kpis?.checkedInPatients}
               icon="🚶"
               description="Patients waiting for triage / doctor"
-            />
-            <StatCard
-              label="Registered Today"
-              value={loading ? "..." : kpis?.registeredToday}
-              icon="+"
-              description="New patients created today"
+              to="/reception/queue"
             />
             <StatCard
               label="Total Patients"
               value={loading ? "..." : kpis?.totalPatients}
               icon="♙"
               description="Active patient database"
+              to="/patients"
             />
           </>
         )}
@@ -157,24 +170,28 @@ function Dashboard() {
               value={loading ? "..." : kpis?.todayAppointments}
               icon="□"
               description="Consultations scheduled today"
+              to="/appointments"
             />
             <StatCard
               label="Patient Queue"
               value={loading ? "..." : kpis?.patientQueue}
               icon="🩺"
-              description="Checked-in and in consultation"
-            />
-            <StatCard
-              label="Completed Visits Today"
-              value={loading ? "..." : kpis?.completedVisitsToday}
-              icon="✓"
-              description="Encounters finalized"
+              description="Authorized patients in doctor queue"
+              to="/doctor/queue"
             />
             <StatCard
               label="Pending Lab Orders"
               value={loading ? "..." : kpis?.pendingLabOrders}
               icon="🔬"
               description="Awaiting laboratory processing"
+              to="/laboratory"
+            />
+            <StatCard
+              label="My Clinic Schedule"
+              value="VIEW"
+              icon="◷"
+              description="Weekly consultation hours"
+              to="/doctor/my-schedule"
             />
           </>
         )}
@@ -185,25 +202,29 @@ function Dashboard() {
               label="Triage Queue"
               value={loading ? "..." : kpis?.triageQueue}
               icon="💓"
-              description="Patients checked in"
+              description="Patients waiting for triage"
+              to="/nurse/triage"
             />
             <StatCard
               label="Vitals Recorded Today"
               value={loading ? "..." : kpis?.vitalsRecordedToday}
               icon="📈"
               description="Completed nursing intake"
+              to="/nurse/triage"
             />
             <StatCard
-              label="Awaiting Triage"
-              value={loading ? "..." : kpis?.waitingForTriage}
-              icon="⏳"
-              description="Patients in waiting room"
+              label="Clinical Procedures"
+              value="QUEUE"
+              icon="💉"
+              description="Dressings and minor procedures"
+              to="/procedures/queue"
             />
             <StatCard
-              label="Status"
-              value="ACTIVE"
-              icon="●"
-              description="Inpatient & triage services"
+              label="Inpatient Ward"
+              value="BEDS"
+              icon="🛏️"
+              description="Ward census and admissions"
+              to="/ward/inpatient"
             />
           </>
         )}
@@ -214,25 +235,29 @@ function Dashboard() {
               label="Pending Prescriptions"
               value={loading ? "..." : kpis?.pendingPrescriptions}
               icon="💊"
-              description="Awaiting dispensing"
+              description="Awaiting payment & dispensing"
+              to="/prescriptions"
             />
             <StatCard
               label="Dispensed Today"
               value={loading ? "..." : kpis?.dispensedToday}
               icon="✓"
               description="Prescriptions processed today"
+              to="/prescriptions"
             />
             <StatCard
               label="Low Stock Alerts"
               value={loading ? "..." : kpis?.lowStockAlerts}
               icon="⚠️"
               description="Items below reorder level"
+              to="/pharmacy/inventory"
             />
             <StatCard
               label="Total Catalog Items"
               value={loading ? "..." : kpis?.totalMedications}
               icon="📦"
               description="Active medication types"
+              to="/pharmacy/inventory"
             />
           </>
         )}
@@ -244,24 +269,92 @@ function Dashboard() {
               value={loading ? "..." : kpis?.pendingOrders}
               icon="🔬"
               description="Awaiting processing"
+              to="/laboratory"
             />
             <StatCard
               label="Specimens Collected"
               value={loading ? "..." : kpis?.specimensCollected}
               icon="🧪"
               description="Ready for testing"
+              to="/laboratory"
             />
             <StatCard
               label="Verified Today"
               value={loading ? "..." : kpis?.verifiedToday}
               icon="✓"
               description="Reports released to doctors"
+              to="/laboratory"
             />
             <StatCard
-              label="STAT / Urgent Orders"
-              value={loading ? "..." : kpis?.statOrdersCount}
-              icon="🚨"
-              description="High priority tests"
+              label="Test Catalog"
+              value="CATALOG"
+              icon="📋"
+              description="Laboratory diagnostic panels"
+              to="/laboratory/catalog"
+            />
+          </>
+        )}
+
+        {role === "RADIOLOGIST" && (
+          <>
+            <StatCard
+              label="Radiology Queue"
+              value="ACTIVE"
+              icon="🩻"
+              description="Authorized X-Ray and Ultrasound scans"
+              to="/radiology/queue"
+            />
+            <StatCard
+              label="Patient Directory"
+              value="SEARCH"
+              icon="♙"
+              description="View authorized patient charts"
+              to="/patients"
+            />
+          </>
+        )}
+
+        {role === "SURGEON" && (
+          <>
+            <StatCard
+              label="Operating Theatre"
+              value="ACTIVE"
+              icon="🔪"
+              description="Authorized surgical procedures"
+              to="/surgery/queue"
+            />
+            <StatCard
+              label="Inpatient Ward"
+              value="BEDS"
+              icon="🛏️"
+              description="Post-op inpatient care & beds"
+              to="/ward/inpatient"
+            />
+            <StatCard
+              label="Patient Directory"
+              value="SEARCH"
+              icon="♙"
+              description="View surgical patients"
+              to="/patients"
+            />
+          </>
+        )}
+
+        {role === "WARD_STAFF" && (
+          <>
+            <StatCard
+              label="Inpatient Ward"
+              value="ACTIVE"
+              icon="🛏️"
+              description="Bed occupancy and admissions"
+              to="/ward/inpatient"
+            />
+            <StatCard
+              label="Patient Directory"
+              value="SEARCH"
+              icon="♙"
+              description="Inpatient medical records"
+              to="/patients"
             />
           </>
         )}
@@ -270,27 +363,31 @@ function Dashboard() {
           <>
             <StatCard
               label="Today's Revenue"
-              value={loading ? "..." : `$${(kpis?.todayRevenue || 0).toLocaleString()}`}
+              value={loading ? "..." : formatCurrency(kpis?.todayRevenue || 0)}
               icon="💳"
               description="Payments received today"
+              to="/billing"
             />
             <StatCard
               label="Unpaid Invoices"
               value={loading ? "..." : kpis?.unpaidInvoicesCount}
               icon="⏳"
               description="Invoices with balance > 0"
+              to="/billing"
             />
             <StatCard
               label="Transactions Today"
               value={loading ? "..." : kpis?.paymentsRecordedToday}
               icon="🧾"
               description="Receipts issued today"
+              to="/billing"
             />
             <StatCard
               label="Outstanding Total"
-              value={loading ? "..." : `$${(kpis?.totalOutstandingBalance || 0).toLocaleString()}`}
+              value={loading ? "..." : formatCurrency(kpis?.totalOutstandingBalance || 0)}
               icon="📊"
               description="Total hospital receivables"
+              to="/billing"
             />
           </>
         )}

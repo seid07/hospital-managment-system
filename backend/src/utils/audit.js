@@ -16,8 +16,10 @@ async function recordAuditLog(clientOrPool, { userId, action, entity, entityId, 
       RETURNING id;
     `;
 
+    const isValidUuid = typeof userId === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId);
+
     const result = await db.query(query, [
-      userId || null,
+      isValidUuid ? userId : null,
       action,
       entity || null,
       entityId || null,

@@ -49,18 +49,18 @@ test("End-to-End Hospital Management System Workflow", async (t) => {
   });
 
   await t.test("2. Patient Management: Register and Search Patient", async () => {
-    const uniquePhone = `+1-555-${Math.floor(100000 + Math.random() * 900000)}`;
+    const uniquePhone = `09${Math.floor(10000000 + Math.random() * 90000000)}`;
     testPatient = await patientService.createPatient(
       {
         firstName: "Test",
         lastName: "Automation",
-        dateOfBirth: "1990-01-15",
+        age: 34,
         gender: "Male",
         phone: uniquePhone,
         email: `test.${Date.now()}@example.com`,
-        address: "100 Hospital Way",
+        address: "Bole Sub-City, Addis Ababa",
         emergencyContactName: "Jane Automation",
-        emergencyContactPhone: "+1-555-9999",
+        emergencyContactPhone: "0911223344",
       },
       registrarUser.id
     );

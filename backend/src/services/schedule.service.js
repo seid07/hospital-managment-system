@@ -1,22 +1,48 @@
 const pool = require("../config/database");
+const { generateSlots, timeToMinutes, rangesOverlap } = require("../utils/time");
 
-async function getDoctors() {
-  const result = await pool.query(`
-    SELECT
+async function getDoctors(filters = {}) {
+  const { date, specialty } = filters;
+
+  let query = `
+    SELECT DISTINCT
       s.id,
       s.first_name,
       s.last_name,
       s.email,
+      s.phone,
       s.department,
       s.specialty
     FROM staff s
     INNER JOIN roles r
       ON r.id = s.role_id
-    WHERE r.name = 'DOCTOR'
-      AND s.is_active = TRUE
-    ORDER BY s.last_name, s.first_name
-  `);
+  `;
 
+  const conditions = ["r.name = 'DOCTOR'", "s.is_active = TRUE"];
+  const params = [];
+
+  if (specialty) {
+    params.push(specialty);
+    conditions.push(`s.specialty = $${params.length}`);
+  }
+
+  if (date) {
+    const parsedDate = new Date(`${date}T00:00:00`);
+    if (!isNaN(parsedDate.getTime())) {
+      const dayOfWeek = parsedDate.getDay();
+      params.push(dayOfWeek);
+      query += `
+        INNER JOIN doctor_schedules ds
+          ON ds.doctor_id = s.id
+          AND ds.day_of_week = $${params.length}
+          AND ds.is_active = TRUE
+      `;
+    }
+  }
+
+  query += ` WHERE ${conditions.join(" AND ")} ORDER BY s.last_name, s.first_name`;
+
+  const result = await pool.query(query, params);
   return result.rows;
 }
 
@@ -39,6 +65,112 @@ async function getDoctorSchedules(doctorId) {
   );
 
   return result.rows;
+}
+
+async function getDoctorUpcomingAvailability(doctorId, daysAhead = 14) {
+  // 1. Verify doctor
+  const docResult = await pool.query(
+    `
+    SELECT s.id, s.first_name, s.last_name, s.specialty, s.department
+    FROM staff s
+    JOIN roles r ON s.role_id = r.id
+    WHERE s.id = $1 AND r.name = 'DOCTOR' AND s.is_active = TRUE
+    `,
+    [doctorId]
+  );
+
+  if (docResult.rows.length === 0) {
+    throw new Error("DOCTOR_NOT_FOUND");
+  }
+
+  const doctor = docResult.rows[0];
+
+  // 2. Get all active schedules for this doctor
+  const schedulesResult = await pool.query(
+    `
+    SELECT day_of_week, start_time, end_time, slot_duration_minutes
+    FROM doctor_schedules
+    WHERE doctor_id = $1 AND is_active = TRUE
+    ORDER BY day_of_week, start_time
+    `,
+    [doctorId]
+  );
+
+  const schedules = schedulesResult.rows;
+  if (schedules.length === 0) {
+    return { doctor, availableDates: [] };
+  }
+
+  const scheduleDays = new Set(schedules.map((s) => s.day_of_week));
+  const availableDates = [];
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  // Check each day starting from today up to daysAhead
+  for (let i = 0; i < daysAhead; i++) {
+    const d = new Date(today);
+    d.setDate(today.getDate() + i);
+
+    const dayOfWeek = d.getDay();
+    if (!scheduleDays.has(dayOfWeek)) {
+      continue;
+    }
+
+    const dateStr = d.toISOString().split("T")[0];
+    const daySchedules = schedules.filter((s) => s.day_of_week === dayOfWeek);
+
+    // Get appointments on this date
+    const apptsResult = await pool.query(
+      `
+      SELECT start_time, end_time
+      FROM appointments
+      WHERE doctor_id = $1
+        AND appointment_date = $2
+        AND status IN ('SCHEDULED', 'CHECKED_IN', 'IN_PROGRESS')
+      `,
+      [doctorId, dateStr]
+    );
+    const existingAppointments = apptsResult.rows;
+
+    const slots = [];
+    for (const sch of daySchedules) {
+      const generated = generateSlots(sch.start_time, sch.end_time, sch.slot_duration_minutes);
+      for (const slot of generated) {
+        const slotStart = timeToMinutes(slot.startTime);
+        const slotEnd = timeToMinutes(slot.endTime);
+
+        const booked = existingAppointments.some((appt) => {
+          const apptStart = timeToMinutes(appt.start_time);
+          const apptEnd = timeToMinutes(appt.end_time);
+          return rangesOverlap(slotStart, slotEnd, apptStart, apptEnd);
+        });
+
+        slots.push({
+          startTime: slot.startTime,
+          endTime: slot.endTime,
+          available: !booked,
+        });
+      }
+    }
+
+    const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+    availableDates.push({
+      date: dateStr,
+      dayOfWeek,
+      dayName: dayNames[dayOfWeek],
+      formattedDate: `${dayNames[dayOfWeek]}, ${monthNames[d.getMonth()]} ${d.getDate()}`,
+      slots,
+      hasAvailableSlots: slots.some((s) => s.available),
+    });
+  }
+
+  return {
+    doctor,
+    availableDates,
+  };
 }
 
 async function createSchedule(doctorId, data) {
@@ -103,6 +235,7 @@ async function deleteSchedule(scheduleId) {
 module.exports = {
   getDoctors,
   getDoctorSchedules,
+  getDoctorUpcomingAvailability,
   createSchedule,
   deleteSchedule,
 };

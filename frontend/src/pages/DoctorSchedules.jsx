@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import AppShell from "../components/layout/AppShell";
+import { useAuth } from "../context/useAuth";
 import {
   getDoctors,
   getDoctorSchedules,
@@ -24,15 +25,18 @@ const INITIAL_FORM = {
   slotDurationMinutes: 30,
 };
 
-function DoctorSchedules() {
+function DoctorSchedules({ isDoctorSelfView = false }) {
+  const { user } = useAuth();
+  const isDoctor = user?.role === "DOCTOR" || isDoctorSelfView;
+
   const [doctors, setDoctors] = useState([]);
-  const [selectedDoctor, setSelectedDoctor] = useState("");
+  const [selectedDoctor, setSelectedDoctor] = useState(isDoctor ? user?.staff_id : "");
   const [schedules, setSchedules] = useState([]);
   const [form, setForm] = useState(INITIAL_FORM);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [loading, setLoading] = useState(false);
-  const [doctorsLoading, setDoctorsLoading] = useState(true);
+  const [doctorsLoading, setDoctorsLoading] = useState(!isDoctor);
   const [submitting, setSubmitting] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
 
@@ -40,6 +44,11 @@ function DoctorSchedules() {
     let cancelled = false;
 
     async function loadDoctors() {
+      if (isDoctor) {
+        setSelectedDoctor(user?.staff_id);
+        return;
+      }
+
       try {
         setError("");
         const res = await getDoctors();
@@ -47,7 +56,7 @@ function DoctorSchedules() {
         const list = res.data || [];
         setDoctors(list);
         setDoctorsLoading(false);
-        if (list.length > 0) {
+        if (list.length > 0 && !selectedDoctor) {
           setSelectedDoctor(list[0].id);
         }
       } catch (err) {
@@ -62,16 +71,17 @@ function DoctorSchedules() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [isDoctor, selectedDoctor, user?.staff_id]);
 
   useEffect(() => {
-    if (!selectedDoctor) return;
+    const doctorIdToLoad = isDoctor ? user?.staff_id : selectedDoctor;
+    if (!doctorIdToLoad) return;
     let cancelled = false;
 
     async function loadSchedules() {
       try {
         setError("");
-        const res = await getDoctorSchedules(selectedDoctor);
+        const res = await getDoctorSchedules(doctorIdToLoad);
         if (!cancelled) {
           setSchedules(res.data || []);
           setLoading(false);
@@ -88,7 +98,7 @@ function DoctorSchedules() {
     return () => {
       cancelled = true;
     };
-  }, [selectedDoctor, reloadKey]);
+  }, [isDoctor, selectedDoctor, user?.staff_id, reloadKey]);
 
   function handleDoctorChange(event) {
     setSelectedDoctor(event.target.value);
@@ -110,14 +120,15 @@ function DoctorSchedules() {
     setError("");
     setSuccess("");
 
-    if (!selectedDoctor) {
+    const targetDocId = isDoctor ? user?.staff_id : selectedDoctor;
+    if (!targetDocId) {
       setError("Please select a doctor.");
       return;
     }
 
     try {
       setSubmitting(true);
-      await createSchedule(selectedDoctor, form);
+      await createSchedule(targetDocId, form);
       setSuccess("Doctor schedule rule created successfully.");
       setReloadKey((prev) => prev + 1);
     } catch (err) {
@@ -140,16 +151,20 @@ function DoctorSchedules() {
     }
   }
 
-  const selectedDoctorDetails = doctors.find((d) => d.id === selectedDoctor);
+  const selectedDoctorDetails = isDoctor
+    ? { first_name: user?.first_name, last_name: user?.last_name, specialty: user?.specialty }
+    : doctors.find((d) => d.id === selectedDoctor);
 
   return (
     <AppShell>
       <div className="page-header">
         <div>
-          <p className="page-eyebrow">Administration & Capacity</p>
-          <h1>Doctor Schedules & Consultation Hours</h1>
+          <p className="page-eyebrow">{isDoctor ? "Doctor Workspace" : "Administration & Capacity"}</p>
+          <h1>{isDoctor ? "My Clinic Schedule & Hours" : "Doctor Schedules & Consultation Hours"}</h1>
           <p className="page-description">
-            Define recurring weekly clinic schedules and appointment slot durations.
+            {isDoctor
+              ? "View your assigned recurring weekly clinic hours and consultation appointment intervals."
+              : "Define recurring weekly clinic schedules and appointment slot durations."}
           </p>
         </div>
       </div>
@@ -157,115 +172,128 @@ function DoctorSchedules() {
       {error && <div className="alert alert-error" role="alert">{error}</div>}
       {success && <div className="alert alert-success" role="status">{success}</div>}
 
-      <section className="card">
-        <div className="card-header">
-          <h2>Select Physician</h2>
-          <p>Choose the doctor whose schedules you wish to manage.</p>
-        </div>
+      {/* Doctor Selector - Hidden for Doctors */}
+      {!isDoctor && (
+        <section className="card">
+          <div className="card-header">
+            <h2>Select Physician</h2>
+            <p>Choose the doctor whose schedules you wish to manage.</p>
+          </div>
 
-        <div className="form-field">
-          <label htmlFor="doctorSelect">Doctor</label>
-          <select
-            id="doctorSelect"
-            value={selectedDoctor}
-            onChange={handleDoctorChange}
-            disabled={doctorsLoading}
-          >
-            {doctors.map((doctor) => (
-              <option key={doctor.id} value={doctor.id}>
-                Dr. {doctor.first_name} {doctor.last_name} ({doctor.specialty || doctor.department || "General"})
-              </option>
-            ))}
-          </select>
-        </div>
-      </section>
-
-      <section className="card">
-        <div className="card-header">
-          <h2>
-            Add Weekly Schedule for Dr. {selectedDoctorDetails?.first_name}{" "}
-            {selectedDoctorDetails?.last_name}
-          </h2>
-          <p>
-            Configure weekday, hours, and slot intervals. The database prevents overlapping shifts.
-          </p>
-        </div>
-
-        <form className="form-grid" onSubmit={handleSubmit}>
           <div className="form-field">
-            <label htmlFor="dayOfWeek">Day of week *</label>
+            <label htmlFor="doctorSelect">Doctor</label>
             <select
-              id="dayOfWeek"
-              name="dayOfWeek"
-              value={form.dayOfWeek}
-              onChange={handleFormChange}
-              required
+              id="doctorSelect"
+              value={selectedDoctor}
+              onChange={handleDoctorChange}
+              disabled={doctorsLoading}
             >
-              {DAYS.map((day) => (
-                <option key={day.value} value={day.value}>
-                  {day.label}
+              {doctors.map((doctor) => (
+                <option key={doctor.id} value={doctor.id}>
+                  Dr. {doctor.first_name} {doctor.last_name} ({doctor.specialty || doctor.department || "General"})
                 </option>
               ))}
             </select>
           </div>
+        </section>
+      )}
 
-          <div className="form-field">
-            <label htmlFor="startTime">Start time *</label>
-            <input
-              id="startTime"
-              name="startTime"
-              type="time"
-              value={form.startTime}
-              onChange={handleFormChange}
-              required
-            />
+      {/* Schedule creation form - Admin only */}
+      {!isDoctor && user?.role === "ADMIN" && (
+        <section className="card">
+          <div className="card-header">
+            <h2>
+              Add Weekly Schedule for Dr. {selectedDoctorDetails?.first_name}{" "}
+              {selectedDoctorDetails?.last_name}
+            </h2>
+            <p>
+              Configure weekday, hours, and slot intervals. The database prevents overlapping shifts.
+            </p>
           </div>
 
-          <div className="form-field">
-            <label htmlFor="endTime">End time *</label>
-            <input
-              id="endTime"
-              name="endTime"
-              type="time"
-              value={form.endTime}
-              onChange={handleFormChange}
-              required
-            />
-          </div>
+          <form className="form-grid" onSubmit={handleSubmit}>
+            <div className="form-field">
+              <label htmlFor="dayOfWeek">Day of week *</label>
+              <select
+                id="dayOfWeek"
+                name="dayOfWeek"
+                value={form.dayOfWeek}
+                onChange={handleFormChange}
+                required
+              >
+                {DAYS.map((day) => (
+                  <option key={day.value} value={day.value}>
+                    {day.label}
+                  </option>
+                ))}
+              </select>
+            </div>
 
-          <div className="form-field">
-            <label htmlFor="slotDurationMinutes">Slot duration *</label>
-            <select
-              id="slotDurationMinutes"
-              name="slotDurationMinutes"
-              value={form.slotDurationMinutes}
-              onChange={handleFormChange}
-              required
-            >
-              <option value={15}>15 minutes</option>
-              <option value={20}>20 minutes</option>
-              <option value={30}>30 minutes</option>
-              <option value={45}>45 minutes</option>
-              <option value={60}>60 minutes</option>
-            </select>
-          </div>
+            <div className="form-field">
+              <label htmlFor="startTime">Start time *</label>
+              <input
+                id="startTime"
+                name="startTime"
+                type="time"
+                value={form.startTime}
+                onChange={handleFormChange}
+                required
+              />
+            </div>
 
-          <div className="form-actions" style={{ gridColumn: "1 / -1", display: "flex", justifyContent: "flex-end" }}>
-            <button
-              className="button button-primary button-large"
-              type="submit"
-              disabled={submitting || !selectedDoctor}
-            >
-              {submitting ? "Saving schedule..." : "Save Schedule Slot →"}
-            </button>
-          </div>
-        </form>
-      </section>
+            <div className="form-field">
+              <label htmlFor="endTime">End time *</label>
+              <input
+                id="endTime"
+                name="endTime"
+                type="time"
+                value={form.endTime}
+                onChange={handleFormChange}
+                required
+              />
+            </div>
 
+            <div className="form-field">
+              <label htmlFor="slotDurationMinutes">Slot duration *</label>
+              <select
+                id="slotDurationMinutes"
+                name="slotDurationMinutes"
+                value={form.slotDurationMinutes}
+                onChange={handleFormChange}
+                required
+              >
+                <option value={15}>15 minutes</option>
+                <option value={20}>20 minutes</option>
+                <option value={30}>30 minutes</option>
+                <option value={45}>45 minutes</option>
+                <option value={60}>60 minutes</option>
+              </select>
+            </div>
+
+            <div className="form-actions" style={{ gridColumn: "1 / -1", display: "flex", justifyContent: "flex-end" }}>
+              <button
+                className="button button-primary button-large"
+                type="submit"
+                disabled={submitting || !selectedDoctor}
+              >
+                {submitting ? "Saving schedule..." : "Save Schedule Slot →"}
+              </button>
+            </div>
+          </form>
+        </section>
+      )}
+
+      {/* Recurring Schedules Table */}
       <section className="card">
         <div className="card-header">
-          <h2>Active Recurring Schedules ({schedules.length})</h2>
-          <p>Configured clinic shifts for this physician.</p>
+          <h2>
+            {isDoctor ? "My Active Recurring Schedules" : `Active Recurring Schedules (${schedules.length})`}
+          </h2>
+          <p>
+            {isDoctor
+              ? "Your weekly recurring consultation slots and duration."
+              : `Configured clinic shifts for Dr. ${selectedDoctorDetails?.first_name || ""} ${selectedDoctorDetails?.last_name || ""}.`}
+          </p>
         </div>
 
         {loading ? (
@@ -283,7 +311,7 @@ function DoctorSchedules() {
                   <th>Hours</th>
                   <th>Slot Duration</th>
                   <th>Status</th>
-                  <th>Action</th>
+                  {!isDoctor && user?.role === "ADMIN" && <th>Action</th>}
                 </tr>
               </thead>
               <tbody>
@@ -299,16 +327,18 @@ function DoctorSchedules() {
                     <td>
                       <span className="badge badge-success">Active</span>
                     </td>
-                    <td>
-                      <button
-                        className="button button-danger"
-                        type="button"
-                        style={{ padding: "4px 8px", fontSize: "11px" }}
-                        onClick={() => handleDelete(schedule.id)}
-                      >
-                        Remove
-                      </button>
-                    </td>
+                    {!isDoctor && user?.role === "ADMIN" && (
+                      <td>
+                        <button
+                          className="button button-danger"
+                          type="button"
+                          style={{ padding: "4px 8px", fontSize: "11px" }}
+                          onClick={() => handleDelete(schedule.id)}
+                        >
+                          Remove
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>

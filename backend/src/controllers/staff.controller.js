@@ -73,6 +73,20 @@ async function createStaff(req, res) {
       data: staff,
     });
   } catch (error) {
+    if (error.message?.startsWith("WEAK_PASSWORD")) {
+      return res.status(400).json({
+        success: false,
+        message: error.message.replace("WEAK_PASSWORD: ", ""),
+      });
+    }
+
+    if (error.message === "INVALID_PHONE_FORMAT") {
+      return res.status(400).json({
+        success: false,
+        message: "Enter a valid Ethiopian phone number starting with 09, 07, or +251.",
+      });
+    }
+
     if (error.message === "ROLE_NOT_FOUND") {
       return res.status(400).json({
         success: false,

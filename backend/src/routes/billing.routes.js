@@ -42,4 +42,10 @@ router.post(
   billingController.recordPayment
 );
 
+router.get(
+  "/pending-orders",
+  authorizeRoles("ADMIN", "FINANCE", "REGISTRAR"),
+  billingController.getPendingCashierOrders
+);
+
 module.exports = router;

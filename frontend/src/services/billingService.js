@@ -36,3 +36,9 @@ export async function getInvoice(id) {
 export async function recordPayment(data) {
   return post("/billing/payments", data);
 }
+
+export async function getPendingCashierOrders(query = {}) {
+  const params = new URLSearchParams();
+  if (query.search) params.append("search", query.search);
+  return get(`/billing/pending-orders?${params.toString()}`);
+}

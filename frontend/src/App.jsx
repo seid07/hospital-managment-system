@@ -3,6 +3,7 @@ import { AuthProvider } from "./context/AuthContext";
 import ProtectedRoute from "./routes/ProtectedRoute";
 
 import Login from "./pages/Login";
+import ResetPassword from "./pages/ResetPassword";
 import Dashboard from "./pages/Dashboard";
 import RegistrarVisitDesk from "./pages/RegistrarVisitDesk";
 import Patients from "./pages/Patients";
@@ -34,6 +35,7 @@ function App() {
       <AuthProvider>
         <Routes>
           <Route path="/login" element={<Login />} />
+          <Route path="/reset-password" element={<ResetPassword />} />
 
           <Route element={<ProtectedRoute />}>
             {/* Dashboards */}
@@ -54,9 +56,11 @@ function App() {
 
             {/* Nursing & Triage */}
             <Route path="/nurse/triage" element={<NurseTriage />} />
+            <Route path="/triage" element={<NurseTriage />} />
 
             {/* Doctor Clinical Workspace */}
             <Route path="/doctor/queue" element={<DoctorQueue />} />
+            <Route path="/doctor/my-schedule" element={<DoctorSchedules isDoctorSelfView={true} />} />
             <Route path="/encounters/new" element={<ClinicalEncounter />} />
             <Route path="/encounters/:id" element={<ClinicalEncounter />} />
 

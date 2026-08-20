@@ -1,4 +1,4 @@
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import AppShell from "../components/layout/AppShell";
 import StatusBadge from "../components/common/StatusBadge";
@@ -11,6 +11,7 @@ import {
   dispensePrescription,
 } from "../services/pharmacyService";
 import { useAuth } from "../context/useAuth";
+import { useDebounce } from "../hooks/useDebounce";
 
 function PrescriptionsList() {
   const { user } = useAuth();
@@ -25,8 +26,7 @@ function PrescriptionsList() {
   const [total, setTotal] = useState(0);
   const [statusFilter, setStatusFilter] = useState("");
   const [searchInput, setSearchInput] = useState("");
-  const [searchTerm, setSearchTerm] = useState("");
-  const [, startTransition] = useTransition();
+  const debouncedSearch = useDebounce(searchInput, 300);
 
   // Payment & Dispense modal
   const [dispenseTarget, setDispenseTarget] = useState(null);
@@ -49,7 +49,7 @@ function PrescriptionsList() {
           page,
           limit: 15,
           status: statusFilter,
-          search: searchTerm,
+          search: debouncedSearch.trim(),
         });
         if (!cancelled && res.data) {
           setPrescriptions(res.data);
@@ -69,14 +69,11 @@ function PrescriptionsList() {
     return () => {
       cancelled = true;
     };
-  }, [page, statusFilter, searchTerm, reloadKey]);
+  }, [page, statusFilter, debouncedSearch, reloadKey]);
 
   function handleSearchSubmit(e) {
     e.preventDefault();
     setPage(1);
-    startTransition(() => {
-      setSearchTerm(searchInput.trim());
-    });
   }
 
   function handleOpenDispense(rx) {

@@ -3,12 +3,12 @@ const { isValidUUID } = require("../validators");
 
 async function createPatient(req, res) {
   try {
-    const { firstName, lastName, dateOfBirth, gender, phone } = req.body;
+    const { firstName, lastName, dateOfBirth, age, gender, phone } = req.body;
 
-    if (!firstName || !lastName || !dateOfBirth || !gender || !phone) {
+    if (!firstName || !lastName || (!dateOfBirth && (age === undefined || age === null || age === "")) || !gender || !phone) {
       return res.status(400).json({
         success: false,
-        message: "First name, last name, date of birth, gender, and phone are required.",
+        message: "First name, last name, age or date of birth, gender, and phone are required.",
       });
     }
 
@@ -20,6 +20,24 @@ async function createPatient(req, res) {
       data: patient,
     });
   } catch (error) {
+    if (error.message === "INVALID_PHONE_FORMAT") {
+      return res.status(400).json({
+        success: false,
+        message: "Enter a valid Ethiopian phone number starting with 09, 07, or +251.",
+      });
+    }
+    if (error.message === "INVALID_EMERGENCY_PHONE_FORMAT") {
+      return res.status(400).json({
+        success: false,
+        message: "Enter a valid Ethiopian emergency phone number starting with 09, 07, or +251.",
+      });
+    }
+    if (error.message === "AGE_OR_DOB_REQUIRED") {
+      return res.status(400).json({
+        success: false,
+        message: "Valid age or date of birth is required.",
+      });
+    }
     console.error("Create patient error:", error);
     if (error.code === "23505") {
       return res.status(409).json({
@@ -52,6 +70,12 @@ async function updatePatient(req, res) {
       data: patient,
     });
   } catch (error) {
+    if (error.message === "INVALID_PHONE_FORMAT") {
+      return res.status(400).json({
+        success: false,
+        message: "Enter a valid Ethiopian phone number starting with 09, 07, or +251.",
+      });
+    }
     if (error.message === "PATIENT_NOT_FOUND") {
       return res.status(404).json({
         success: false,
@@ -66,14 +90,47 @@ async function updatePatient(req, res) {
   }
 }
 
+async function deletePatient(req, res) {
+  try {
+    const { id } = req.params;
+    if (!isValidUUID(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid patient ID format.",
+      });
+    }
+
+    const patient = await patientService.deletePatient(id, req.user?.userId);
+
+    return res.status(200).json({
+      success: true,
+      message: "Patient deleted successfully.",
+      data: patient,
+    });
+  } catch (error) {
+    if (error.message === "PATIENT_NOT_FOUND") {
+      return res.status(404).json({
+        success: false,
+        message: "Patient not found.",
+      });
+    }
+    console.error("Delete patient error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Unable to delete patient.",
+    });
+  }
+}
+
 async function searchPatients(req, res) {
   try {
     const { q } = req.query;
 
-    if (!q || q.trim().length < 2) {
-      return res.status(400).json({
-        success: false,
-        message: "Search query must contain at least 2 characters.",
+    if (!q || q.trim().length < 1) {
+      return res.status(200).json({
+        success: true,
+        data: [],
+        pagination: { total: 0, page: 1, limit: 20, totalPages: 0 },
       });
     }
 
@@ -188,6 +245,7 @@ async function getPatientRecord(req, res) {
 module.exports = {
   createPatient,
   updatePatient,
+  deletePatient,
   searchPatients,
   getPatients,
   getPatient,

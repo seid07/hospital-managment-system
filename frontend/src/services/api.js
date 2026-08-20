@@ -77,10 +77,17 @@ export async function login(username, password) {
   });
 }
 
+export async function forgotPassword(username) {
+  return post("/auth/forgot-password", { username });
+}
+
+export async function resetPassword(token, newPassword) {
+  return post("/auth/reset-password", { token, newPassword });
+}
+
 export async function getProtectedData() {
   return get("/test/protected");
 }
 
-const api = { get, post, put, patch, del, request };
+const api = { get, post, put, patch, del, request, login, forgotPassword, resetPassword };
 export default api;
-

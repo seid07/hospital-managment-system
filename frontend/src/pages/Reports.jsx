@@ -4,6 +4,7 @@ import StatCard from "../components/common/StatCard";
 import PrintableDocument from "../components/common/PrintableDocument";
 import Modal from "../components/common/Modal";
 import { getAnalyticsReport } from "../services/reportService";
+import { formatCurrency } from "../utils/currency";
 
 function getInitialStartDate() {
   const d = new Date();
@@ -184,7 +185,7 @@ function Reports() {
               <div className="dashboard-grid">
                 <StatCard
                   label="Total Collections"
-                  value={`$${parseFloat(data.summary?.total_collected || 0).toLocaleString()}`}
+                  value={formatCurrency(data.summary?.total_collected || 0)}
                   icon="💳"
                   description={`${data.summary?.payment_count || 0} total payments processed`}
                 />
@@ -210,7 +211,7 @@ function Reports() {
                           <tr key={i}>
                             <td><strong>{m.payment_method}</strong></td>
                             <td>{m.count}</td>
-                            <td><strong>${parseFloat(m.total).toFixed(2)}</strong></td>
+                            <td><strong>{formatCurrency(m.total)}</strong></td>
                           </tr>
                         ))}
                       </tbody>
@@ -238,9 +239,9 @@ function Reports() {
                           <tr key={i}>
                             <td><strong>{inv.status}</strong></td>
                             <td>{inv.count}</td>
-                            <td>${parseFloat(inv.total_invoiced).toFixed(2)}</td>
+                            <td>{formatCurrency(inv.total_invoiced)}</td>
                             <td style={{ color: parseFloat(inv.total_balance) > 0 ? "var(--danger)" : "var(--success)" }}>
-                              ${parseFloat(inv.total_balance).toFixed(2)}
+                              {formatCurrency(inv.total_balance)}
                             </td>
                           </tr>
                         ))}
@@ -345,7 +346,7 @@ function Reports() {
             {reportType === "REVENUE" && data?.summary && (
               <div>
                 <h4>Financial Summary</h4>
-                <p>Total Payments Received: <strong>${data.summary.total_collected}</strong> ({data.summary.payment_count} transactions)</p>
+                <p>Total Payments Received: <strong>{formatCurrency(data.summary.total_collected)}</strong> ({data.summary.payment_count} transactions)</p>
               </div>
             )}
 

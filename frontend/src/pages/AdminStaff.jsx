@@ -1,12 +1,15 @@
 import { useEffect, useState, useCallback } from "react";
 import AppShell from "../components/layout/AppShell";
 import { getStaff, getRoles, createStaff, updateStaffStatus } from "../services/staffService";
+import { validateEthiopianPhone } from "../utils/phone";
+import { checkPasswordStrength } from "../utils/password";
+import { useDebounce } from "../hooks/useDebounce";
 
 const INITIAL_FORM = {
   firstName: "",
   lastName: "",
   email: "",
-  phone: "",
+  phone: "09",
   department: "",
   specialty: "",
   role: "DOCTOR",
@@ -22,7 +25,12 @@ function AdminStaff() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [form, setForm] = useState(INITIAL_FORM);
+  const [showPassword, setShowPassword] = useState(false);
+  const [search, setSearch] = useState("");
+  const debouncedSearch = useDebounce(search, 300);
   const [reloadTrigger, setReloadTrigger] = useState(0);
+
+  const passwordStrength = checkPasswordStrength(form.password);
 
   const refreshData = useCallback(() => {
     setReloadTrigger((prev) => prev + 1);
@@ -34,7 +42,7 @@ function AdminStaff() {
       try {
         setError("");
         const [staffRes, rolesRes] = await Promise.all([
-          getStaff(),
+          getStaff({ search: debouncedSearch.trim() }),
           getRoles(),
         ]);
         if (!cancelled) {
@@ -54,7 +62,7 @@ function AdminStaff() {
     return () => {
       cancelled = true;
     };
-  }, [reloadTrigger]);
+  }, [debouncedSearch, reloadTrigger]);
 
   function handleChange(event) {
     const { name, value } = event.target;
@@ -68,6 +76,16 @@ function AdminStaff() {
     event.preventDefault();
     setError("");
     setSuccess("");
+
+    if (!validateEthiopianPhone(form.phone)) {
+      setError("Please enter a valid Ethiopian phone number starting with 09, 07, or +251.");
+      return;
+    }
+
+    if (!passwordStrength.isValid) {
+      setError(`Password requirement: ${passwordStrength.feedback}`);
+      return;
+    }
 
     try {
       setSubmitting(true);
@@ -109,7 +127,7 @@ function AdminStaff() {
           <p className="page-eyebrow">Administration</p>
           <h1>Staff & Role Management</h1>
           <p className="page-description">
-            Create and manage hospital personnel accounts and system access roles.
+            Create and manage hospital personnel accounts, security credentials, and system access roles.
           </p>
         </div>
       </div>
@@ -129,7 +147,7 @@ function AdminStaff() {
       <section className="card">
         <div className="card-header">
           <h2>Create New Staff Account</h2>
-          <p>Create a staff profile and system login credentials.</p>
+          <p>Create a staff profile with strong authentication credentials.</p>
         </div>
 
         <form className="form-grid" onSubmit={handleSubmit}>
@@ -138,7 +156,7 @@ function AdminStaff() {
             <input
               id="firstName"
               name="firstName"
-              placeholder="First name"
+              placeholder="e.g. Dawit"
               value={form.firstName}
               onChange={handleChange}
               required
@@ -150,7 +168,7 @@ function AdminStaff() {
             <input
               id="lastName"
               name="lastName"
-              placeholder="Last name"
+              placeholder="e.g. Haile"
               value={form.lastName}
               onChange={handleChange}
               required
@@ -158,12 +176,12 @@ function AdminStaff() {
           </div>
 
           <div className="form-field">
-            <label htmlFor="email">Email *</label>
+            <label htmlFor="email">Email Address *</label>
             <input
               id="email"
               name="email"
               type="email"
-              placeholder="staff@hospital.com"
+              placeholder="staff@hospital.local"
               value={form.email}
               onChange={handleChange}
               required
@@ -171,11 +189,11 @@ function AdminStaff() {
           </div>
 
           <div className="form-field">
-            <label htmlFor="phone">Phone *</label>
+            <label htmlFor="phone">Phone Number (Ethiopian Format) *</label>
             <input
               id="phone"
               name="phone"
-              placeholder="+1-555-0100"
+              placeholder="09XXXXXXXX or +2519XXXXXXXX"
               value={form.phone}
               onChange={handleChange}
               required
@@ -183,7 +201,7 @@ function AdminStaff() {
           </div>
 
           <div className="form-field">
-            <label htmlFor="role">Role *</label>
+            <label htmlFor="role">System Role *</label>
             <select
               id="role"
               name="role"
@@ -193,7 +211,7 @@ function AdminStaff() {
             >
               {roles.map((role) => (
                 <option key={role.id} value={role.name}>
-                  {role.name}
+                  {role.name} — {role.description}
                 </option>
               ))}
             </select>
@@ -204,7 +222,7 @@ function AdminStaff() {
             <input
               id="department"
               name="department"
-              placeholder="e.g. Cardiology, Outpatient"
+              placeholder="e.g. Cardiology, Outpatient, Lab"
               value={form.department}
               onChange={handleChange}
             />
@@ -215,7 +233,7 @@ function AdminStaff() {
             <input
               id="specialty"
               name="specialty"
-              placeholder="e.g. Interventional Cardiology"
+              placeholder="e.g. Internal Medicine, Radiography"
               value={form.specialty}
               onChange={handleChange}
             />
@@ -226,31 +244,79 @@ function AdminStaff() {
             <input
               id="username"
               name="username"
-              placeholder="username"
+              placeholder="e.g. dr_dawit"
               value={form.username}
               onChange={handleChange}
               required
             />
           </div>
 
+          {/* Password with Strength Meter and Eye Toggle */}
           <div className="form-field">
-            <label htmlFor="password">Password *</label>
-            <input
-              id="password"
-              name="password"
-              type="password"
-              placeholder="Temporary password"
-              value={form.password}
-              onChange={handleChange}
-              required
-            />
+            <label htmlFor="password">Temporary Password *</label>
+            <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+              <input
+                id="password"
+                name="password"
+                type={showPassword ? "text" : "password"}
+                placeholder="Min 8 chars with upper, lower, digit, symbol"
+                value={form.password}
+                onChange={handleChange}
+                required
+                style={{ paddingRight: "42px" }}
+              />
+              <button
+                type="button"
+                aria-label={showPassword ? "Hide password" : "Show password"}
+                onClick={() => setShowPassword(!showPassword)}
+                style={{
+                  position: "absolute",
+                  right: "10px",
+                  background: "none",
+                  border: "none",
+                  color: "var(--text-muted)",
+                  cursor: "pointer",
+                  fontSize: "16px",
+                  padding: "4px",
+                }}
+              >
+                {showPassword ? "👁️" : "🙈"}
+              </button>
+            </div>
+
+            {/* Live Strength Feedback */}
+            {form.password && (
+              <div style={{ marginTop: "6px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px", marginBottom: "4px" }}>
+                  <span>Policy Strength: <strong style={{ color: passwordStrength.color }}>{passwordStrength.label}</strong></span>
+                  <span style={{ color: passwordStrength.isValid ? "var(--success)" : "var(--text-muted)" }}>
+                    {passwordStrength.isValid ? "✓ Policy Compliant" : "Requirements Incomplete"}
+                  </span>
+                </div>
+                <div style={{ display: "flex", gap: "4px", height: "4px", background: "var(--border)", borderRadius: "2px", overflow: "hidden" }}>
+                  {[1, 2, 3, 4, 5].map((i) => (
+                    <div
+                      key={i}
+                      style={{
+                        flex: 1,
+                        background: i <= passwordStrength.score ? passwordStrength.color : "transparent",
+                        transition: "all 150ms ease",
+                      }}
+                    />
+                  ))}
+                </div>
+                <div style={{ fontSize: "10px", color: "var(--text-secondary)", marginTop: "4px" }}>
+                  {passwordStrength.feedback}
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="form-actions" style={{ gridColumn: "1 / -1", display: "flex", justifyContent: "flex-end" }}>
             <button
               className="button button-primary button-large"
               type="submit"
-              disabled={submitting}
+              disabled={submitting || !passwordStrength.isValid}
             >
               {submitting ? "Creating account..." : "Create Staff Member →"}
             </button>
@@ -259,15 +325,26 @@ function AdminStaff() {
       </section>
 
       <section className="card">
-        <div className="card-header">
-          <h2>Active Hospital Personnel ({staff.length})</h2>
-          <p>Current registered staff members and their active status.</p>
+        <div className="card-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div>
+            <h2>Active Hospital Personnel ({staff.length})</h2>
+            <p>Current registered staff members and their active status.</p>
+          </div>
+          <div style={{ width: "240px" }}>
+            <input
+              type="search"
+              placeholder="Live filter staff..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              style={{ padding: "6px 10px", fontSize: "12px" }}
+            />
+          </div>
         </div>
 
         {loading ? (
           <div className="loading-state">Loading staff...</div>
         ) : staff.length === 0 ? (
-          <div className="empty-state">No staff members found.</div>
+          <div className="empty-state">No staff members match criteria.</div>
         ) : (
           <div className="table-wrapper">
             <table className="data-table">
@@ -298,12 +375,12 @@ function AdminStaff() {
                       {member.specialty && ` (${member.specialty})`}
                     </td>
                     <td>
-                      <code>{member.username || "—"}</code>
+                      <code style={{ fontFamily: "monospace" }}>{member.username || "—"}</code>
                     </td>
                     <td>
                       {member.email}
                       <br />
-                      <small style={{ color: "var(--text-muted)" }}>{member.phone}</small>
+                      <small style={{ color: "var(--text-muted)", fontFamily: "monospace" }}>{member.phone}</small>
                     </td>
                     <td>
                       <span

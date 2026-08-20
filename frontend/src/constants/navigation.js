@@ -51,7 +51,7 @@ export function getNavigation(role) {
       { label: "Surgery Theatre", path: "/surgery/queue", icon: "🔪" },
       { label: "Prescriptions", path: "/prescriptions", icon: "💊" },
       { label: "Laboratory", path: "/laboratory", icon: "🔬" },
-      { label: "My Schedule", path: "/admin/schedules", icon: "◷" },
+      { label: "My Schedule", path: "/doctor/my-schedule", icon: "◷" },
     ];
   }
 

@@ -215,6 +215,22 @@ async function getInvoice(req, res) {
   }
 }
 
+async function getPendingCashierOrders(req, res) {
+  try {
+    const orders = await billingService.getPendingCashierOrders(req.query);
+    return res.status(200).json({
+      success: true,
+      data: orders,
+    });
+  } catch (error) {
+    console.error("Get pending cashier orders error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Unable to retrieve pending cashier orders.",
+    });
+  }
+}
+
 module.exports = {
   getServices,
   addService,
@@ -222,4 +238,6 @@ module.exports = {
   recordPayment,
   getInvoices,
   getInvoice,
+  getPendingCashierOrders,
 };
+

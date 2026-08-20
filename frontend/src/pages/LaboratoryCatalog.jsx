@@ -1,10 +1,12 @@
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import AppShell from "../components/layout/AppShell";
 import Pagination from "../components/common/Pagination";
 import Modal from "../components/common/Modal";
 import { getTestCatalog, addCatalogTest } from "../services/laboratoryService";
 import { useAuth } from "../context/useAuth";
+import { formatCurrency } from "../utils/currency";
+import { useDebounce } from "../hooks/useDebounce";
 
 const INITIAL_TEST_FORM = {
   code: "",
@@ -29,8 +31,7 @@ function LaboratoryCatalog() {
   const [total, setTotal] = useState(0);
   const [categoryFilter, setCategoryFilter] = useState("");
   const [searchInput, setSearchInput] = useState("");
-  const [searchTerm, setSearchTerm] = useState("");
-  const [, startTransition] = useTransition();
+  const debouncedSearch = useDebounce(searchInput, 300);
 
   // Add modal
   const [showAddModal, setShowAddModal] = useState(false);
@@ -47,7 +48,7 @@ function LaboratoryCatalog() {
           page,
           limit: 15,
           category: categoryFilter,
-          search: searchTerm,
+          search: debouncedSearch.trim(),
         });
         if (!cancelled && res.data) {
           setCatalog(res.data);
@@ -66,14 +67,11 @@ function LaboratoryCatalog() {
     return () => {
       cancelled = true;
     };
-  }, [page, categoryFilter, searchTerm, reloadKey]);
+  }, [page, categoryFilter, debouncedSearch, reloadKey]);
 
   function handleSearchSubmit(e) {
     e.preventDefault();
     setPage(1);
-    startTransition(() => {
-      setSearchTerm(searchInput.trim());
-    });
   }
 
   async function handleAddSubmit(e) {
@@ -194,7 +192,7 @@ function LaboratoryCatalog() {
                     <td>{t.reference_range || "—"}</td>
                     <td>{t.unit || "—"}</td>
                     <td>{t.turnaround_time_hours} hours</td>
-                    <td><strong>${t.price}</strong></td>
+                    <td><strong>{formatCurrency(t.price)}</strong></td>
                   </tr>
                 ))}
               </tbody>
@@ -269,11 +267,12 @@ function LaboratoryCatalog() {
             </div>
 
             <div className="form-field">
-              <label>Fee / Price ($) *</label>
+              <label>Fee / Price (ETB) *</label>
               <input
                 type="number"
                 step="0.01"
-                placeholder="40.00"
+                min="0"
+                placeholder="e.g. 150.00"
                 value={addForm.price}
                 onChange={(e) => setAddForm({ ...addForm, price: e.target.value })}
                 required

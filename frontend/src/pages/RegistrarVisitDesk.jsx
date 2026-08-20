@@ -1,27 +1,41 @@
 import { useState, useEffect } from "react";
+import { Link } from "react-router-dom";
 import AppShell from "../components/layout/AppShell";
 import Modal from "../components/common/Modal";
+import StatCard from "../components/common/StatCard";
 import { searchPatients, createPatient } from "../services/patientService";
 import { serviceCatalogService } from "../services/serviceCatalogService";
 import { visitService } from "../services/visitService";
 import { serviceOrderService } from "../services/serviceOrderService";
-import { recordPayment } from "../services/billingService";
+import { recordPayment, getPendingCashierOrders } from "../services/billingService";
+import { getDashboardKPIs } from "../services/reportService";
+import { getDoctors } from "../services/scheduleService";
+import { getAvailability, createAppointment } from "../services/appointmentService";
+import { formatCurrency } from "../utils/currency";
+import { validateEthiopianPhone } from "../utils/phone";
+import { useDebounce } from "../hooks/useDebounce";
 
 export default function RegistrarVisitDesk() {
+  // Active Tab
+  const [activeTab, setActiveTab] = useState("NEW_VISIT"); // "NEW_VISIT" or "PENDING_ORDERS"
+
+  // Activity KPIs
+  const [kpis, setKpis] = useState(null);
+
   // Search & Patient selection
   const [searchQuery, setSearchQuery] = useState("");
+  const debouncedSearch = useDebounce(searchQuery, 300);
   const [searchResults, setSearchResults] = useState([]);
   const [selectedPatient, setSelectedPatient] = useState(null);
-  const [isSearching, setIsSearching] = useState(false);
 
   // New Patient Modal state
   const [showNewPatientModal, setShowNewPatientModal] = useState(false);
   const [newPatient, setNewPatient] = useState({
     firstName: "",
     lastName: "",
-    dateOfBirth: "",
+    age: "",
     gender: "Male",
-    phone: "+251-",
+    phone: "09",
     email: "",
     address: "Addis Ababa",
     emergencyContactName: "",
@@ -44,23 +58,48 @@ export default function RegistrarVisitDesk() {
   const [transactionRef, setTransactionRef] = useState("");
   const [payNotes, setPayNotes] = useState("");
 
+  // Doctor-Ordered Services Cashier Queue
+  const [pendingOrders, setPendingOrders] = useState([]);
+  const [selectedPendingOrder, setSelectedPendingOrder] = useState(null);
+  const [showPayOrderModal, setShowPayOrderModal] = useState(false);
+  const [orderPayMethod, setOrderPayMethod] = useState("CASH");
+  const [orderTxnRef, setOrderTxnRef] = useState("");
+
+  // Auto-Appointment Booking State
+  const [showAppointmentModal, setShowAppointmentModal] = useState(false);
+  const [todayDoctors, setTodayDoctors] = useState([]);
+  const [selectedDocId, setSelectedDocId] = useState("");
+  const [availableSlots, setAvailableSlots] = useState([]);
+  const [selectedSlot, setSelectedSlot] = useState(null);
+  const [loadingSlots, setLoadingSlots] = useState(false);
+
   // Workflow processing states
   const [processing, setProcessing] = useState(false);
   const [successReceipt, setSuccessReceipt] = useState(null);
   const [errorMessage, setErrorMessage] = useState("");
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
 
+  const today = new Date().toISOString().split("T")[0];
+
+  // Load initial catalog, KPIs & pending doctor orders
   useEffect(() => {
     let cancelled = false;
     async function loadData() {
       try {
-        const data = await serviceCatalogService.getServices({ activeOnly: true });
+        const [catData, kpiData, ordersData] = await Promise.all([
+          serviceCatalogService.getServices({ activeOnly: true }),
+          getDashboardKPIs(),
+          getPendingCashierOrders(),
+        ]);
         if (!cancelled) {
-          setCatalog(data || []);
+          setCatalog(catData || []);
+          setKpis(kpiData?.data || null);
+          setPendingOrders(ordersData?.data || []);
           setLoadingCatalog(false);
         }
       } catch (err) {
         if (!cancelled) {
-          console.error("Failed to load catalog:", err);
+          console.error("Failed to load desk data:", err);
           setLoadingCatalog(false);
         }
       }
@@ -70,32 +109,125 @@ export default function RegistrarVisitDesk() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [refreshTrigger]);
 
-  async function handleSearch(e) {
-    e.preventDefault();
-    if (!searchQuery.trim()) return;
-    try {
-      setIsSearching(true);
-      const res = await searchPatients(searchQuery.trim());
-      setSearchResults(res.patients || []);
-    } catch (err) {
-      console.error("Patient search error:", err);
-    } finally {
-      setIsSearching(false);
+  // Live debounced patient search
+  useEffect(() => {
+    if (!debouncedSearch.trim() || selectedPatient) {
+      return;
     }
-  }
+
+    let cancelled = false;
+    async function performSearch() {
+      try {
+        const res = await searchPatients(debouncedSearch.trim());
+        if (!cancelled) {
+          setSearchResults(res.patients || []);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          console.error("Search error:", err);
+        }
+      }
+    }
+
+    performSearch();
+    return () => {
+      cancelled = true;
+    };
+  }, [debouncedSearch, selectedPatient]);
 
   async function handleCreatePatientSubmit(e) {
     e.preventDefault();
+    setErrorMessage("");
+
+    if (!validateEthiopianPhone(newPatient.phone)) {
+      setErrorMessage("Enter a valid Ethiopian phone number starting with 09, 07, or +251.");
+      return;
+    }
+
+    const ageNum = parseInt(newPatient.age, 10);
+    if (isNaN(ageNum) || ageNum < 0 || ageNum > 130) {
+      setErrorMessage("Please enter a valid age.");
+      return;
+    }
+
     try {
       setProcessing(true);
-      const created = await createPatient(newPatient);
+      const res = await createPatient({
+        ...newPatient,
+        age: ageNum,
+      });
+      const created = res.data;
       setSelectedPatient(created);
       setShowNewPatientModal(false);
       setErrorMessage("");
+
+      // Open appointment offer
+      try {
+        const docRes = await getDoctors({ date: today });
+        const docs = docRes.data || [];
+        setTodayDoctors(docs);
+        if (docs.length > 0) {
+          setSelectedDocId(docs[0].id);
+        }
+        setShowAppointmentModal(true);
+      } catch (docErr) {
+        console.error("Doc load error:", docErr);
+      }
     } catch (err) {
-      setErrorMessage(err.response?.data?.message || err.message || "Failed to register patient.");
+      setErrorMessage(err.message || "Failed to register patient.");
+    } finally {
+      setProcessing(false);
+    }
+  }
+
+  // Load slots for appointment modal
+  useEffect(() => {
+    if (!showAppointmentModal || !selectedDocId) {
+      return;
+    }
+
+    let cancelled = false;
+    async function loadSlots() {
+      try {
+        setLoadingSlots(true);
+        const res = await getAvailability(selectedDocId, today);
+        if (!cancelled) {
+          const avail = (res.data || []).filter((s) => s.available);
+          setAvailableSlots(avail);
+          setSelectedSlot(avail.length > 0 ? avail[0] : null);
+          setLoadingSlots(false);
+        }
+      } catch {
+        if (!cancelled) {
+          setLoadingSlots(false);
+        }
+      }
+    }
+
+    loadSlots();
+    return () => {
+      cancelled = true;
+    };
+  }, [showAppointmentModal, selectedDocId, today]);
+
+  async function handleBookConsultationAppointment() {
+    if (!selectedPatient || !selectedDocId || !selectedSlot) return;
+    try {
+      setProcessing(true);
+      await createAppointment({
+        patientId: selectedPatient.id,
+        doctorId: selectedDocId,
+        appointmentDate: today,
+        startTime: selectedSlot.startTime,
+        endTime: selectedSlot.endTime,
+        reason: "Front Desk Consultation Intake",
+      });
+      setShowAppointmentModal(false);
+      setRefreshTrigger((k) => k + 1);
+    } catch (err) {
+      setErrorMessage(err.message || "Failed to book consultation appointment.");
     } finally {
       setProcessing(false);
     }
@@ -187,29 +319,55 @@ export default function RegistrarVisitDesk() {
       setEmergencyOverride(false);
       setTransactionRef("");
       setPayNotes("");
+      setRefreshTrigger((k) => k + 1);
     } catch (err) {
       console.error("Workflow processing error:", err);
-      setErrorMessage(err.response?.data?.message || err.message || "Failed to process visit workflow.");
+      setErrorMessage(err.message || "Failed to process visit workflow.");
     } finally {
       setProcessing(false);
     }
   }
 
-  // Group catalog by category
+  // Pay single doctor-ordered service (e.g. CBC, X-Ray ordered by clinician)
+  async function handlePayDoctorOrderSubmit(e) {
+    e.preventDefault();
+    if (!selectedPendingOrder) return;
+    try {
+      setProcessing(true);
+      if (selectedPendingOrder.invoice_id) {
+        await recordPayment({
+          invoiceId: selectedPendingOrder.invoice_id,
+          amount: parseFloat(selectedPendingOrder.price),
+          paymentMethod: orderPayMethod,
+          transactionReference: orderTxnRef || null,
+          notes: `Payment for ${selectedPendingOrder.service_name}`,
+        });
+      }
+      setShowPayOrderModal(false);
+      setSelectedPendingOrder(null);
+      setOrderTxnRef("");
+      setRefreshTrigger((k) => k + 1);
+    } catch (err) {
+      setErrorMessage(err.message || "Failed to record order payment.");
+    } finally {
+      setProcessing(false);
+    }
+  }
+
   const categories = Array.from(new Set(catalog.map((c) => c.category)));
 
   return (
     <AppShell>
       <div className="page-header">
         <div>
-          <p className="page-eyebrow">Front Desk & Intake</p>
+          <p className="page-eyebrow">Front Desk Operational Center</p>
           <h1>Registrar & Service Desk</h1>
           <p className="page-description">
-            Service-first patient intake, service ordering, cashier payment collection, and instant department queue routing.
+            Service-first intake, cashier payment authorization, doctor-ordered services collection, and instant queue routing.
           </p>
         </div>
 
-        <div className="page-actions">
+        <div className="page-actions" style={{ display: "flex", gap: "8px" }}>
           <button
             type="button"
             onClick={() => setShowNewPatientModal(true)}
@@ -220,7 +378,57 @@ export default function RegistrarVisitDesk() {
         </div>
       </div>
 
+      {/* Activity Summary StatCards */}
+      <section className="dashboard-grid" style={{ marginBottom: "20px" }}>
+        <StatCard
+          label="Today's Appointments"
+          value={kpis?.todayAppointments ?? "—"}
+          icon="□"
+          description="Total scheduled for today"
+          to="/appointments"
+        />
+        <StatCard
+          label="Checked In"
+          value={kpis?.checkedInPatients ?? "—"}
+          icon="🚶"
+          description="Patients in clinic queue"
+          to="/reception/queue"
+        />
+        <StatCard
+          label="Registered Today"
+          value={kpis?.registeredToday ?? "—"}
+          icon="+"
+          description="New patient intakes today"
+          to="/patients"
+        />
+        <StatCard
+          label="Pending Doctor Orders"
+          value={pendingOrders.length}
+          icon="⏳"
+          description="Doctor orders awaiting cashier"
+          onClick={() => setActiveTab("PENDING_ORDERS")}
+        />
+      </section>
+
       {errorMessage && <div className="alert alert-error">{errorMessage}</div>}
+
+      {/* Navigation Tabs between New Intake vs Pending Doctor Orders Queue */}
+      <div style={{ display: "flex", gap: "10px", marginBottom: "18px", borderBottom: "1px solid var(--border)", paddingBottom: "10px" }}>
+        <button
+          type="button"
+          className={`button ${activeTab === "NEW_VISIT" ? "button-primary" : "button-secondary"}`}
+          onClick={() => setActiveTab("NEW_VISIT")}
+        >
+          📋 New Patient Intake & Service Checkout
+        </button>
+        <button
+          type="button"
+          className={`button ${activeTab === "PENDING_ORDERS" ? "button-primary" : "button-secondary"}`}
+          onClick={() => setActiveTab("PENDING_ORDERS")}
+        >
+          💳 Doctor-Ordered Services Cashier Queue ({pendingOrders.length})
+        </button>
+      </div>
 
       {/* Success Receipt Modal / Banner */}
       {successReceipt && (
@@ -281,243 +489,392 @@ export default function RegistrarVisitDesk() {
         </div>
       )}
 
-      {/* Main 2-Column Desk Layout */}
-      <div className="desk-layout">
-        {/* Left Column: Patient Lookup & Emergency Options */}
-        <div className="desk-left-col">
-          {/* Patient Lookup Card */}
-          <div className="patient-search-card">
-            <h2 style={{ margin: 0, fontSize: "15px", fontWeight: 700 }}>🔍 Patient Lookup</h2>
-            <form onSubmit={handleSearch} className="search-input-group">
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Name, Phone, or PAT-..."
-                style={{ flex: 1 }}
-              />
-              <button type="submit" disabled={isSearching} className="button button-primary">
-                {isSearching ? "..." : "Find"}
-              </button>
-            </form>
-
-            {/* Search Results Dropdown */}
-            {searchResults.length > 0 && !selectedPatient && (
-              <div className="search-results-list">
-                {searchResults.map((pat) => (
-                  <div
-                    key={pat.id}
-                    onClick={() => {
-                      setSelectedPatient(pat);
-                      setSearchResults([]);
-                    }}
-                    className="search-result-item"
-                  >
-                    <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 600, fontSize: "13px" }}>
-                      <span>{pat.first_name} {pat.last_name}</span>
-                      <span style={{ color: "var(--primary)", fontFamily: "monospace", fontSize: "11px" }}>
-                        {pat.patient_number}
-                      </span>
-                    </div>
-                    <div style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "2px" }}>
-                      {pat.gender} • DOB: {pat.date_of_birth ? new Date(pat.date_of_birth).toLocaleDateString() : "N/A"} • {pat.phone}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* Selected Patient Banner */}
-            {selectedPatient && (
-              <div className="selected-patient-banner">
-                <div className="selected-patient-header">
-                  <span style={{ fontSize: "11px", fontWeight: 700, textTransform: "uppercase", color: "var(--primary)" }}>
-                    Selected Patient
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedPatient(null)}
-                    style={{ background: "none", border: "none", color: "var(--text-muted)", fontSize: "12px", cursor: "pointer" }}
-                  >
-                    Change ✕
-                  </button>
-                </div>
-                <div className="selected-patient-name">
-                  {selectedPatient.first_name} {selectedPatient.last_name}
-                </div>
-                <div className="selected-patient-meta">
-                  <div>ID: {selectedPatient.patient_number}</div>
-                  <div>Phone: {selectedPatient.phone}</div>
-                  <div>Gender: {selectedPatient.gender}</div>
-                  <div>DOB: {selectedPatient.date_of_birth ? new Date(selectedPatient.date_of_birth).toLocaleDateString() : "N/A"}</div>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Emergency Override Box */}
-          <div className={`emergency-card ${emergencyOverride ? "active" : ""}`}>
-            <div className="emergency-card-header">
-              <label className="emergency-switch-label">
+      {/* Tab 1: New Visit & Service Ordering */}
+      {activeTab === "NEW_VISIT" && (
+        <div className="desk-layout">
+          {/* Left Column: Patient Search & Emergency Override */}
+          <div className="desk-left-col">
+            <div className="patient-search-card">
+              <h2 style={{ margin: 0, fontSize: "15px", fontWeight: 700 }}>🔍 Live Patient Lookup</h2>
+              <div className="search-input-group">
                 <input
-                  type="checkbox"
-                  checked={emergencyOverride}
-                  onChange={(e) => setEmergencyOverride(e.target.checked)}
-                  style={{ width: "18px", height: "18px", cursor: "pointer" }}
+                  type="search"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Live search by Name, Phone, or PAT-..."
+                  style={{ flex: 1 }}
                 />
-                <span>🚨 Emergency Override</span>
-              </label>
+              </div>
+
+              {/* Search Results Dropdown */}
+              {searchResults.length > 0 && !selectedPatient && (
+                <div className="search-results-list">
+                  {searchResults.map((pat) => (
+                    <div
+                      key={pat.id}
+                      onClick={() => {
+                        setSelectedPatient(pat);
+                        setSearchResults([]);
+                        setSearchQuery("");
+                      }}
+                      className="search-result-item"
+                    >
+                      <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 600, fontSize: "13px" }}>
+                        <span>{pat.first_name} {pat.last_name}</span>
+                        <span style={{ color: "var(--primary)", fontFamily: "monospace", fontSize: "11px" }}>
+                          {pat.patient_number}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "2px" }}>
+                        Age: {pat.age ? `${pat.age} yrs` : "—"} • {pat.gender} • {pat.phone}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Selected Patient Banner */}
+              {selectedPatient && (
+                <div className="selected-patient-banner">
+                  <div className="selected-patient-header">
+                    <span style={{ fontSize: "11px", fontWeight: 700, textTransform: "uppercase", color: "var(--primary)" }}>
+                      Selected Patient
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedPatient(null)}
+                      style={{ background: "none", border: "none", color: "var(--text-muted)", fontSize: "12px", cursor: "pointer" }}
+                    >
+                      Change ✕
+                    </button>
+                  </div>
+                  <div className="selected-patient-name">
+                    {selectedPatient.first_name} {selectedPatient.last_name}
+                  </div>
+                  <div className="selected-patient-meta">
+                    <div>ID: {selectedPatient.patient_number}</div>
+                    <div>Phone: {selectedPatient.phone}</div>
+                    <div>Age: {selectedPatient.age ? `${selectedPatient.age} yrs` : "—"}</div>
+                    <div>Gender: {selectedPatient.gender}</div>
+                  </div>
+                </div>
+              )}
             </div>
 
-            {emergencyOverride && (
-              <div style={{ marginTop: "10px" }}>
-                <p style={{ margin: "0 0 8px", fontSize: "11px", color: "#e11d48", lineHeight: 1.4 }}>
-                  Authorizes immediate clinical care without upfront cashier payment. Must be clinically justified.
-                </p>
-                <textarea
-                  rows="2"
-                  value={overrideReason}
-                  onChange={(e) => setOverrideReason(e.target.value)}
-                  placeholder="Clinical reason (e.g. severe trauma, acute respiratory failure)..."
-                  required
-                />
+            {/* Emergency Override Box */}
+            <div className={`emergency-card ${emergencyOverride ? "active" : ""}`}>
+              <div className="emergency-card-header">
+                <label className="emergency-switch-label">
+                  <input
+                    type="checkbox"
+                    checked={emergencyOverride}
+                    onChange={(e) => setEmergencyOverride(e.target.checked)}
+                    style={{ width: "18px", height: "18px", cursor: "pointer" }}
+                  />
+                  <span>🚨 Emergency Override</span>
+                </label>
               </div>
-            )}
+
+              {emergencyOverride && (
+                <div style={{ marginTop: "10px" }}>
+                  <p style={{ margin: "0 0 8px", fontSize: "11px", color: "#e11d48", lineHeight: 1.4 }}>
+                    Authorizes immediate clinical care without upfront cashier payment. Must be clinically justified.
+                  </p>
+                  <textarea
+                    rows="2"
+                    value={overrideReason}
+                    onChange={(e) => setOverrideReason(e.target.value)}
+                    placeholder="Clinical reason (e.g. severe trauma, acute respiratory failure)..."
+                    required
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Right Column: Catalog & Order Checkout */}
+          <div className="desk-right-col">
+            {/* Service Catalog Selector */}
+            <div className="catalog-card">
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+                <h2 style={{ margin: 0, fontSize: "16px", fontWeight: 700 }}>
+                  🏥 Hospital Service Catalog ({catalog.length} Services)
+                </h2>
+                <span className="badge badge-info">{selectedServices.length} Selected</span>
+              </div>
+
+              {loadingCatalog ? (
+                <div className="loading-state">Loading service catalog...</div>
+              ) : (
+                <div style={{ maxHeight: "360px", overflowY: "auto", paddingRight: "4px" }}>
+                  {categories.map((cat) => (
+                    <div key={cat}>
+                      <div className="catalog-category-header">{cat}</div>
+                      <div className="service-grid">
+                        {catalog
+                          .filter((s) => s.category === cat)
+                          .map((srv) => {
+                            const isSelected = selectedServices.some((s) => s.id === srv.id);
+                            return (
+                              <div
+                                key={srv.id}
+                                onClick={() => toggleServiceSelection(srv)}
+                                className={`service-item-card ${isSelected ? "selected" : ""}`}
+                              >
+                                <div className="service-item-info">
+                                  <div className="service-item-name">
+                                    {isSelected && "✓ "}
+                                    {srv.name}
+                                  </div>
+                                  <div className="service-item-dept">{srv.department_name}</div>
+                                </div>
+                                <div className="service-item-price">
+                                  <div className="service-price-amount">
+                                    {parseFloat(srv.price) === 0 ? "Billed at Rx" : formatCurrency(srv.price)}
+                                  </div>
+                                  <div className="service-price-location">{srv.payment_location}</div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Cashier Payment & Visit Completion */}
+            <div className="checkout-card">
+              <div className="checkout-header">
+                <h2 style={{ margin: 0, fontSize: "16px", fontWeight: 700 }}>
+                  Order Summary & Cashier Payment
+                </h2>
+                <div>
+                  <span style={{ fontSize: "11px", color: "var(--text-secondary)", marginRight: "8px" }}>Total Due:</span>
+                  <span className="checkout-total-value">{formatCurrency(subtotal)}</span>
+                </div>
+              </div>
+
+              {!emergencyOverride && subtotal > 0 && (
+                <div className="checkout-form-row">
+                  <div className="form-field">
+                    <label>Payment Method *</label>
+                    <select
+                      value={paymentMethod}
+                      onChange={(e) => setPaymentMethod(e.target.value)}
+                    >
+                      <option value="CASH">Cash</option>
+                      <option value="TELEBIRR">Telebirr</option>
+                      <option value="CBE_BIRR">CBE Birr</option>
+                      <option value="BANK">Bank Transfer</option>
+                      <option value="CARD">Card / POS</option>
+                      <option value="INSURANCE">Insurance</option>
+                    </select>
+                  </div>
+
+                  <div className="form-field">
+                    <label>Transaction / Ref #</label>
+                    <input
+                      type="text"
+                      value={transactionRef}
+                      onChange={(e) => setTransactionRef(e.target.value)}
+                      placeholder="e.g. TXN-987654"
+                    />
+                  </div>
+
+                  <div className="form-field">
+                    <label>Payment Notes</label>
+                    <input
+                      type="text"
+                      value={payNotes}
+                      onChange={(e) => setPayNotes(e.target.value)}
+                      placeholder="Receipt notes..."
+                    />
+                  </div>
+
+                  <div className="form-field">
+                    <label>Visit Type</label>
+                    <select
+                      value={visitType}
+                      onChange={(e) => setVisitType(e.target.value)}
+                    >
+                      <option value="OUTPATIENT">Outpatient Consultation</option>
+                      <option value="EMERGENCY">Emergency Intake</option>
+                      <option value="INPATIENT">Inpatient Admission</option>
+                    </select>
+                  </div>
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={handleProcessVisitWorkflow}
+                disabled={processing || !selectedPatient || selectedServices.length === 0}
+                className={`button ${emergencyOverride ? "button-danger" : "button-primary"} checkout-action-btn`}
+              >
+                {processing ? (
+                  "Authorizing & Routing Services..."
+                ) : emergencyOverride ? (
+                  "🚨 Authorize Immediate Emergency Care"
+                ) : (
+                  `💳 Collect Payment & Authorize Services (${formatCurrency(subtotal)})`
+                )}
+              </button>
+            </div>
           </div>
         </div>
+      )}
 
-        {/* Right Column: Catalog & Order Checkout */}
-        <div className="desk-right-col">
-          {/* Service Catalog Selector */}
-          <div className="catalog-card">
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
-              <h2 style={{ margin: 0, fontSize: "16px", fontWeight: 700 }}>
-                🏥 Hospital Service Catalog ({catalog.length} Services)
-              </h2>
-              <span className="badge badge-info">{selectedServices.length} Selected</span>
+      {/* Tab 2: Doctor-Ordered Services Cashier Queue */}
+      {activeTab === "PENDING_ORDERS" && (
+        <section className="card">
+          <div className="card-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div>
+              <h2>Doctor-Ordered Services Awaiting Cashier Payment ({pendingOrders.length})</h2>
+              <p>Lab tests, X-rays, Ultrasounds, ECG, and procedures prescribed during doctor consultations.</p>
             </div>
-
-            {loadingCatalog ? (
-              <div className="loading-state">Loading service catalog...</div>
-            ) : (
-              <div style={{ maxHeight: "360px", overflowY: "auto", paddingRight: "4px" }}>
-                {categories.map((cat) => (
-                  <div key={cat}>
-                    <div className="catalog-category-header">{cat}</div>
-                    <div className="service-grid">
-                      {catalog
-                        .filter((s) => s.category === cat)
-                        .map((srv) => {
-                          const isSelected = selectedServices.some((s) => s.id === srv.id);
-                          return (
-                            <div
-                              key={srv.id}
-                              onClick={() => toggleServiceSelection(srv)}
-                              className={`service-item-card ${isSelected ? "selected" : ""}`}
-                            >
-                              <div className="service-item-info">
-                                <div className="service-item-name">
-                                  {isSelected && "✓ "}
-                                  {srv.name}
-                                </div>
-                                <div className="service-item-dept">{srv.department_name}</div>
-                              </div>
-                              <div className="service-item-price">
-                                <div className="service-price-amount">
-                                  {parseFloat(srv.price) === 0 ? "Billed at Rx" : `${srv.price} ${srv.currency}`}
-                                </div>
-                                <div className="service-price-location">{srv.payment_location}</div>
-                              </div>
-                            </div>
-                          );
-                        })}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Cashier Payment & Visit Completion */}
-          <div className="checkout-card">
-            <div className="checkout-header">
-              <h2 style={{ margin: 0, fontSize: "16px", fontWeight: 700 }}>
-                Order Summary & Cashier Payment
-              </h2>
-              <div>
-                <span style={{ fontSize: "11px", color: "var(--text-secondary)", marginRight: "8px" }}>Total Due:</span>
-                <span className="checkout-total-value">{subtotal.toFixed(2)} ETB</span>
-              </div>
-            </div>
-
-            {!emergencyOverride && subtotal > 0 && (
-              <div className="checkout-form-row">
-                <div className="form-field">
-                  <label>Payment Method *</label>
-                  <select
-                    value={paymentMethod}
-                    onChange={(e) => setPaymentMethod(e.target.value)}
-                  >
-                    <option value="CASH">Cash</option>
-                    <option value="TELEBIRR">Telebirr</option>
-                    <option value="CBE_BIRR">CBE Birr</option>
-                    <option value="BANK">Bank Transfer</option>
-                    <option value="CARD">Card / POS</option>
-                    <option value="INSURANCE">Insurance</option>
-                  </select>
-                </div>
-
-                <div className="form-field">
-                  <label>Transaction / Ref #</label>
-                  <input
-                    type="text"
-                    value={transactionRef}
-                    onChange={(e) => setTransactionRef(e.target.value)}
-                    placeholder="e.g. TXN-987654"
-                  />
-                </div>
-
-                <div className="form-field">
-                  <label>Payment Notes</label>
-                  <input
-                    type="text"
-                    value={payNotes}
-                    onChange={(e) => setPayNotes(e.target.value)}
-                    placeholder="Receipt notes..."
-                  />
-                </div>
-
-                <div className="form-field">
-                  <label>Visit Type</label>
-                  <select
-                    value={visitType}
-                    onChange={(e) => setVisitType(e.target.value)}
-                  >
-                    <option value="OUTPATIENT">Outpatient Consultation</option>
-                    <option value="EMERGENCY">Emergency Intake</option>
-                    <option value="INPATIENT">Inpatient Admission</option>
-                  </select>
-                </div>
-              </div>
-            )}
-
             <button
               type="button"
-              onClick={handleProcessVisitWorkflow}
-              disabled={processing || !selectedPatient || selectedServices.length === 0}
-              className={`button ${emergencyOverride ? "button-danger" : "button-primary"} checkout-action-btn`}
+              className="button button-secondary"
+              onClick={() => setRefreshTrigger((k) => k + 1)}
             >
-              {processing ? (
-                "Authorizing & Routing Services..."
-              ) : emergencyOverride ? (
-                "🚨 Authorize Immediate Emergency Care"
-              ) : (
-                `💳 Collect Payment & Authorize Services (${subtotal.toFixed(2)} ETB)`
-              )}
+              🔄 Refresh Orders
             </button>
           </div>
-        </div>
-      </div>
+
+          {pendingOrders.length === 0 ? (
+            <div className="empty-state">
+              <div className="empty-state-icon">✓</div>
+              <h3>No pending doctor orders</h3>
+              <p>All prescribed services have been paid and authorized for department queues.</p>
+            </div>
+          ) : (
+            <div className="table-wrapper">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Order #</th>
+                    <th>Patient</th>
+                    <th>Prescribed Service</th>
+                    <th>Department</th>
+                    <th>Ordering Clinician</th>
+                    <th>Amount Due</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pendingOrders.map((ord) => (
+                    <tr key={ord.service_order_id}>
+                      <td>
+                        <strong style={{ fontFamily: "monospace", color: "var(--primary-dark)" }}>
+                          {ord.order_number}
+                        </strong>
+                      </td>
+                      <td>
+                        <strong>{ord.patient_first_name} {ord.patient_last_name}</strong>
+                        <br />
+                        <small style={{ color: "var(--text-muted)", fontFamily: "monospace" }}>{ord.patient_number}</small>
+                      </td>
+                      <td>
+                        <strong>{ord.service_name}</strong>
+                        <br />
+                        <small style={{ color: "var(--text-muted)" }}>{ord.clinical_notes || "Clinical prescription"}</small>
+                      </td>
+                      <td>
+                        <span className="badge badge-info">{ord.department_name}</span>
+                      </td>
+                      <td>
+                        {ord.doctor_first_name ? `Dr. ${ord.doctor_first_name} ${ord.doctor_last_name}` : "General OPD"}
+                      </td>
+                      <td>
+                        <strong style={{ color: "var(--success)", fontFamily: "monospace" }}>
+                          {formatCurrency(ord.price)}
+                        </strong>
+                      </td>
+                      <td>
+                        <button
+                          type="button"
+                          className="button button-primary"
+                          onClick={() => {
+                            setSelectedPendingOrder(ord);
+                            setShowPayOrderModal(true);
+                          }}
+                        >
+                          💳 Collect & Authorize →
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* Pay Single Order Modal */}
+      <Modal
+        isOpen={showPayOrderModal}
+        onClose={() => {
+          setShowPayOrderModal(false);
+          setSelectedPendingOrder(null);
+        }}
+        title={selectedPendingOrder ? `Authorize Prescribed Service: ${selectedPendingOrder.service_name}` : "Cashier Payment"}
+      >
+        {selectedPendingOrder && (
+          <form onSubmit={handlePayDoctorOrderSubmit}>
+            <div style={{ background: "var(--primary-light)", padding: "14px", borderRadius: "8px", marginBottom: "16px" }}>
+              <div><strong>Patient:</strong> {selectedPendingOrder.patient_first_name} {selectedPendingOrder.patient_last_name} ({selectedPendingOrder.patient_number})</div>
+              <div><strong>Prescribed Service:</strong> {selectedPendingOrder.service_name} ({selectedPendingOrder.department_name})</div>
+              <div><strong>Total Due:</strong> <strong style={{ color: "var(--success)", fontSize: "16px" }}>{formatCurrency(selectedPendingOrder.price)}</strong></div>
+            </div>
+
+            <div className="form-grid" style={{ marginBottom: "16px" }}>
+              <div className="form-field">
+                <label>Payment Method *</label>
+                <select
+                  value={orderPayMethod}
+                  onChange={(e) => setOrderPayMethod(e.target.value)}
+                >
+                  <option value="CASH">Cash</option>
+                  <option value="TELEBIRR">Telebirr</option>
+                  <option value="CBE_BIRR">CBE Birr</option>
+                  <option value="BANK">Bank Transfer</option>
+                  <option value="CARD">Card / POS</option>
+                </select>
+              </div>
+
+              <div className="form-field">
+                <label>Transaction Reference #</label>
+                <input
+                  type="text"
+                  placeholder="e.g. TXN-123456"
+                  value={orderTxnRef}
+                  onChange={(e) => setOrderTxnRef(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px" }}>
+              <button
+                type="button"
+                className="button button-secondary"
+                onClick={() => setShowPayOrderModal(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="button button-primary"
+                disabled={processing}
+              >
+                {processing ? "Authorizing..." : `✓ Authorize Payment (${formatCurrency(selectedPendingOrder.price)})`}
+              </button>
+            </div>
+          </form>
+        )}
+      </Modal>
 
       {/* New Patient Registration Modal */}
       <Modal
@@ -547,12 +904,14 @@ export default function RegistrarVisitDesk() {
             </div>
 
             <div className="form-field">
-              <label>Date of Birth *</label>
+              <label>Age (Years) *</label>
               <input
-                type="date"
+                type="number"
+                min="0"
+                max="130"
                 required
-                value={newPatient.dateOfBirth}
-                onChange={(e) => setNewPatient({ ...newPatient, dateOfBirth: e.target.value })}
+                value={newPatient.age}
+                onChange={(e) => setNewPatient({ ...newPatient, age: e.target.value })}
               />
             </div>
             <div className="form-field">
@@ -568,16 +927,17 @@ export default function RegistrarVisitDesk() {
             </div>
 
             <div className="form-field">
-              <label>Phone Number *</label>
+              <label>Phone Number (Ethiopian) *</label>
               <input
                 type="text"
                 required
+                placeholder="09XXXXXXXX or +2519XXXXXXXX"
                 value={newPatient.phone}
                 onChange={(e) => setNewPatient({ ...newPatient, phone: e.target.value })}
               />
             </div>
             <div className="form-field">
-              <label>Address / City</label>
+              <label>Address / Sub-City</label>
               <input
                 type="text"
                 value={newPatient.address}
@@ -595,10 +955,98 @@ export default function RegistrarVisitDesk() {
               Cancel
             </button>
             <button type="submit" className="button button-primary" disabled={processing}>
-              {processing ? "Saving..." : "Save Patient"}
+              {processing ? "Saving..." : "Save Patient & Offer Appointment →"}
             </button>
           </div>
         </form>
+      </Modal>
+
+      {/* Post-Registration Consultation Offer Modal */}
+      <Modal
+        isOpen={showAppointmentModal}
+        onClose={() => setShowAppointmentModal(false)}
+        title="✓ Patient Registered — Book Consultation Slot"
+      >
+        {selectedPatient && (
+          <div>
+            <p style={{ fontSize: "13px", color: "var(--text-secondary)", marginBottom: "14px" }}>
+              Recommend an available general physician consultation for today ({today}):
+            </p>
+
+            <div className="form-field" style={{ marginBottom: "14px" }}>
+              <label>Available Doctor Today</label>
+              <select
+                value={selectedDocId}
+                onChange={(e) => setSelectedDocId(e.target.value)}
+              >
+                {todayDoctors.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    Dr. {d.first_name} {d.last_name} ({d.specialty || d.department || "General"})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {loadingSlots ? (
+              <div className="loading-state">Checking available times...</div>
+            ) : availableSlots.length === 0 ? (
+              <div className="empty-state">No slots available for this doctor today.</div>
+            ) : (
+              <div style={{ marginBottom: "16px" }}>
+                <label style={{ fontSize: "12px", fontWeight: 700, display: "block", marginBottom: "6px" }}>
+                  Select Time Slot:
+                </label>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(100px, 1fr))", gap: "6px" }}>
+                  {availableSlots.map((slot) => {
+                    const isSel = selectedSlot && selectedSlot.startTime === slot.startTime;
+                    return (
+                      <button
+                        key={slot.startTime}
+                        type="button"
+                        onClick={() => setSelectedSlot(slot)}
+                        style={{
+                          padding: "6px",
+                          borderRadius: "6px",
+                          border: `1px solid ${isSel ? "var(--primary)" : "#cbd5e1"}`,
+                          background: isSel ? "var(--primary)" : "#ffffff",
+                          color: isSel ? "#ffffff" : "var(--text)",
+                          fontSize: "12px",
+                          fontWeight: isSel ? 700 : 500,
+                          cursor: "pointer",
+                        }}
+                      >
+                        {slot.startTime}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <div style={{ display: "flex", justifyContent: "space-between", gap: "8px", borderTop: "1px solid var(--border)", paddingTop: "14px" }}>
+              <Link to={`/appointments/availability?patientId=${selectedPatient.id}`} className="button button-secondary">
+                Choose Another Date
+              </Link>
+              <div style={{ display: "flex", gap: "8px" }}>
+                <button
+                  type="button"
+                  className="button button-secondary"
+                  onClick={() => setShowAppointmentModal(false)}
+                >
+                  Skip
+                </button>
+                <button
+                  type="button"
+                  className="button button-primary"
+                  disabled={processing || !selectedSlot}
+                  onClick={handleBookConsultationAppointment}
+                >
+                  {processing ? "Booking..." : "Confirm Today Appointment →"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </Modal>
     </AppShell>
   );

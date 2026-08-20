@@ -1,10 +1,12 @@
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import AppShell from "../components/layout/AppShell";
 import Pagination from "../components/common/Pagination";
 import Modal from "../components/common/Modal";
 import { getMedications, addMedication, updateStock } from "../services/pharmacyService";
 import { useAuth } from "../context/useAuth";
+import { formatCurrency } from "../utils/currency";
+import { useDebounce } from "../hooks/useDebounce";
 
 const INITIAL_MED_FORM = {
   name: "",
@@ -30,8 +32,7 @@ function PharmacyInventory() {
   const [total, setTotal] = useState(0);
   const [lowStockOnly, setLowStockOnly] = useState(false);
   const [searchInput, setSearchInput] = useState("");
-  const [searchTerm, setSearchTerm] = useState("");
-  const [, startTransition] = useTransition();
+  const debouncedSearch = useDebounce(searchInput, 300);
 
   // Modals
   const [showAddModal, setShowAddModal] = useState(false);
@@ -52,7 +53,7 @@ function PharmacyInventory() {
         const res = await getMedications({
           page,
           limit: 15,
-          search: searchTerm,
+          search: debouncedSearch.trim(),
           lowStock: lowStockOnly ? "true" : undefined,
         });
         if (!cancelled && res.data) {
@@ -73,14 +74,11 @@ function PharmacyInventory() {
     return () => {
       cancelled = true;
     };
-  }, [page, searchTerm, lowStockOnly, reloadKey]);
+  }, [page, debouncedSearch, lowStockOnly, reloadKey]);
 
   function handleSearchSubmit(e) {
     e.preventDefault();
     setPage(1);
-    startTransition(() => {
-      setSearchTerm(searchInput.trim());
-    });
   }
 
   async function handleAddSubmit(e) {
@@ -229,7 +227,9 @@ function PharmacyInventory() {
                         )}
                       </td>
                       <td>{m.reorder_level} units</td>
-                      <td><strong>${m.unit_price}</strong></td>
+                      <td>
+                        <strong style={{ color: "var(--primary-dark)" }}>{formatCurrency(m.unit_price)}</strong>
+                      </td>
                       <td>
                         {["ADMIN", "PHARMACIST"].includes(user?.role) && (
                           <button
@@ -326,11 +326,12 @@ function PharmacyInventory() {
             </div>
 
             <div className="form-field">
-              <label>Unit Selling Price ($) *</label>
+              <label>Unit Selling Price (ETB) *</label>
               <input
                 type="number"
                 step="0.01"
-                placeholder="15.00"
+                min="0"
+                placeholder="e.g. 15.00"
                 value={addForm.unitPrice}
                 onChange={(e) => setAddForm({ ...addForm, unitPrice: e.target.value })}
                 required
