@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import AppShell from "../components/layout/AppShell";
 import StatusBadge from "../components/common/StatusBadge";
 import Pagination from "../components/common/Pagination";
@@ -16,22 +16,30 @@ import { useDebounce } from "../hooks/useDebounce";
 
 function AppointmentsList() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { user } = useAuth();
+
+  const todayStr = new Date().toISOString().split("T")[0];
+  const initialDate = searchParams.get("date") === "today"
+    ? todayStr
+    : (searchParams.get("date") || "");
+  const initialStatus = searchParams.get("status") || "";
 
   const [appointments, setAppointments] = useState([]);
   const [doctors, setDoctors] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [statusUpdatingId, setStatusUpdatingId] = useState(null);
   const [reloadKey, setReloadKey] = useState(0);
 
   // Filters
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [total, setTotal] = useState(0);
-  const [statusFilter, setStatusFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState(initialStatus);
   const [doctorFilter, setDoctorFilter] = useState("");
-  const [dateFilter, setDateFilter] = useState("");
+  const [dateFilter, setDateFilter] = useState(initialDate);
   const [searchInput, setSearchInput] = useState("");
   const debouncedSearch = useDebounce(searchInput, 300);
 
@@ -93,14 +101,21 @@ function AppointmentsList() {
   }, []);
 
   async function handleStatusUpdate(id, newStatus, notes = "") {
+    if (statusUpdatingId) return; // guard against a double-click firing two status updates
+    if (newStatus === "CANCELLED" && !window.confirm("Cancel this appointment? This cannot be undone.")) {
+      return;
+    }
     setError("");
     setSuccess("");
     try {
+      setStatusUpdatingId(id);
       await updateAppointmentStatus(id, newStatus, notes);
       setSuccess(`Appointment status changed to ${newStatus}.`);
       setReloadKey((prev) => prev + 1);
     } catch (err) {
       setError(err.message || "Failed to update appointment status.");
+    } finally {
+      setStatusUpdatingId(null);
     }
   }
 
@@ -328,14 +343,16 @@ function AppointmentsList() {
                               type="button"
                               className="button button-primary"
                               style={{ padding: "4px 8px", fontSize: "11px" }}
+                              disabled={statusUpdatingId === a.id}
                               onClick={() => handleStatusUpdate(a.id, "CHECKED_IN")}
                             >
-                              Check In
+                              {statusUpdatingId === a.id ? "..." : "Check In"}
                             </button>
                             <button
                               type="button"
                               className="button button-secondary"
                               style={{ padding: "4px 8px", fontSize: "11px" }}
+                              disabled={statusUpdatingId === a.id}
                               onClick={() => {
                                 setRescheduleTarget(a);
                                 setRescheduleDate(a.appointment_date);
@@ -349,17 +366,19 @@ function AppointmentsList() {
                               type="button"
                               className="button button-danger"
                               style={{ padding: "4px 8px", fontSize: "11px" }}
+                              disabled={statusUpdatingId === a.id}
                               onClick={() => handleStatusUpdate(a.id, "CANCELLED", "Cancelled by user")}
                             >
-                              Cancel
+                              {statusUpdatingId === a.id ? "..." : "Cancel"}
                             </button>
                             <button
                               type="button"
                               className="button button-secondary"
                               style={{ padding: "4px 8px", fontSize: "11px" }}
+                              disabled={statusUpdatingId === a.id}
                               onClick={() => handleStatusUpdate(a.id, "NO_SHOW")}
                             >
-                              No Show
+                              {statusUpdatingId === a.id ? "..." : "No Show"}
                             </button>
                           </>
                         )}

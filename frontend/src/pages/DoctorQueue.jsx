@@ -15,6 +15,7 @@ function DoctorQueue() {
   const [appointmentQueue, setAppointmentQueue] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [callingNext, setCallingNext] = useState(false);
   const today = new Date().toISOString().split("T")[0];
 
   useEffect(() => {
@@ -50,7 +51,10 @@ function DoctorQueue() {
   }, [doctorId, today]);
 
   async function handleCallNext() {
+    if (callingNext) return; // guard against double-click calling two patients at once
     try {
+      setCallingNext(true);
+      setError("");
       const nextPat = await queueService.callNext("CLINICAL");
       if (nextPat) {
         // reload
@@ -58,7 +62,9 @@ function DoctorQueue() {
         setClinicalQueue(qData || []);
       }
     } catch (err) {
-      console.error("Call next error:", err);
+      setError(err.message || "Failed to call next patient.");
+    } finally {
+      setCallingNext(false);
     }
   }
 
@@ -76,11 +82,11 @@ function DoctorQueue() {
         <button
           type="button"
           onClick={handleCallNext}
-          disabled={clinicalQueue.filter((q) => q.queue_status === "WAITING").length === 0}
+          disabled={callingNext || clinicalQueue.filter((q) => q.queue_status === "WAITING").length === 0}
           className="button button-primary"
           style={{ padding: "10px 18px", fontWeight: 700 }}
         >
-          📢 Call Next Authorized Patient
+          {callingNext ? "Calling..." : "📢 Call Next Authorized Patient"}
         </button>
       </div>
 

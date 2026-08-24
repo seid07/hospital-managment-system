@@ -44,7 +44,7 @@ async function getRadiologyQueue({ status } = {}) {
     JOIN patients p ON qe.patient_id = p.id
     LEFT JOIN staff doc ON so.doctor_id = doc.id
     LEFT JOIN radiology_orders ro ON ro.service_order_id = so.id
-    WHERE d.code = 'RADIOLOGY'
+    WHERE d.code = 'RADIOLOGY' AND p.is_active = TRUE
   `;
   const params = [];
 

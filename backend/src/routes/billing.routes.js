@@ -42,6 +42,18 @@ router.post(
   billingController.recordPayment
 );
 
+router.post(
+  "/payments/selective",
+  authorizeRoles("ADMIN", "FINANCE", "REGISTRAR"),
+  billingController.recordSelectivePayment
+);
+
+router.post(
+  "/payments/:id/reverse",
+  authorizeRoles("ADMIN", "FINANCE"),
+  billingController.reversePayment
+);
+
 router.get(
   "/pending-orders",
   authorizeRoles("ADMIN", "FINANCE", "REGISTRAR"),

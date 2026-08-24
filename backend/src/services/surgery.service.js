@@ -45,7 +45,7 @@ async function getSurgeryQueue({ status } = {}) {
     JOIN patients p ON qe.patient_id = p.id
     LEFT JOIN staff doc ON so.doctor_id = doc.id
     LEFT JOIN surgery_orders surg ON surg.service_order_id = so.id
-    WHERE d.code = 'SURGERY'
+    WHERE d.code = 'SURGERY' AND p.is_active = TRUE
   `;
   const params = [];
 

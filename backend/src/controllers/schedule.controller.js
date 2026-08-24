@@ -2,8 +2,8 @@ const scheduleService = require("../services/schedule.service");
 
 async function getDoctors(req, res) {
   try {
-    const { date, specialty } = req.query;
-    const doctors = await scheduleService.getDoctors({ date, specialty });
+    const { date, specialty, allStaff } = req.query;
+    const doctors = await scheduleService.getDoctors({ date, specialty, allStaff: allStaff === "true" });
 
     res.json({
       success: true,

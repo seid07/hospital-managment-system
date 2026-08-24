@@ -35,7 +35,7 @@ async function addService(req, res) {
       });
     }
 
-    const service = await billingService.addBillableService(req.body, req.user?.userId);
+    const service = await billingService.addBillableService(req.body, req.user?.id || req.user?.userId);
 
     return res.status(201).json({
       success: true,
@@ -77,7 +77,7 @@ async function createInvoice(req, res) {
 
     const invoice = await billingService.createInvoice({
       ...req.body,
-      createdBy: req.user?.userId,
+      createdBy: req.user?.id || req.user?.userId,
     });
 
     return res.status(201).json({
@@ -127,7 +127,7 @@ async function recordPayment(req, res) {
 
     const result = await billingService.recordPayment({
       ...req.body,
-      receivedBy: req.user?.userId,
+      receivedBy: req.user?.id || req.user?.userId,
     });
 
     return res.status(201).json({
@@ -156,6 +156,48 @@ async function recordPayment(req, res) {
     return res.status(500).json({
       success: false,
       message: "Unable to record payment.",
+    });
+  }
+}
+
+async function recordSelectivePayment(req, res) {
+  try {
+    const { serviceOrderIds, paymentMethod } = req.body;
+
+    if (!serviceOrderIds || !Array.isArray(serviceOrderIds) || serviceOrderIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Please select at least one service order to pay.",
+      });
+    }
+
+    const result = await billingService.recordSelectivePayment({
+      ...req.body,
+      receivedBy: req.user?.id || req.user?.userId,
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: "Selective payment processed and services authorized successfully.",
+      data: result,
+    });
+  } catch (error) {
+    console.error("Record selective payment error:", error);
+    if (
+      error.message.startsWith("NO_SERVICES_SELECTED") ||
+      error.message.startsWith("INVALID_SERVICE_SELECTION") ||
+      error.message.startsWith("PHARMACY_SERVICE_DISALLOWED") ||
+      error.message.startsWith("SERVICE_ALREADY_PAID") ||
+      error.message.startsWith("INVALID_TOTAL_AMOUNT")
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: error.message,
+      });
+    }
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Unable to process selective payment.",
     });
   }
 }
@@ -231,13 +273,49 @@ async function getPendingCashierOrders(req, res) {
   }
 }
 
+async function reversePayment(req, res) {
+  try {
+    const { id } = req.params;
+    const { reason } = req.body;
+
+    if (!isValidUUID(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid payment ID format.",
+      });
+    }
+
+    const result = await billingService.reversePayment(id, { reason }, req.user?.id || req.user?.userId);
+    return res.status(200).json(result);
+  } catch (error) {
+    console.error("Reverse payment error:", error);
+    if (error.message.startsWith("REVERSAL_REASON_REQUIRED")) {
+      return res.status(400).json({
+        success: false,
+        message: error.message,
+      });
+    }
+    if (error.message === "PAYMENT_NOT_FOUND") {
+      return res.status(404).json({
+        success: false,
+        message: "Payment record not found.",
+      });
+    }
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Unable to reverse payment.",
+    });
+  }
+}
+
 module.exports = {
   getServices,
   addService,
   createInvoice,
   recordPayment,
+  recordSelectivePayment,
   getInvoices,
   getInvoice,
   getPendingCashierOrders,
+  reversePayment,
 };
-

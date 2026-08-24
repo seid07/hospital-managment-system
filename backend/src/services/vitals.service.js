@@ -137,6 +137,7 @@ async function getTriageQueue() {
     JOIN staff s ON a.doctor_id = s.id
     WHERE a.appointment_date = CURRENT_DATE
       AND a.status IN ('CHECKED_IN', 'IN_PROGRESS')
+      AND p.is_active = TRUE
     ORDER BY a.start_time ASC
   `);
 

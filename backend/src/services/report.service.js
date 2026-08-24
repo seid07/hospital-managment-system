@@ -5,19 +5,52 @@ async function getDashboardKPIs(role, staffId) {
 
   // Base metrics that can be queried in parallel
   if (role === "ADMIN") {
-    const [staffRes, docRes, patRes, aptTodayRes, aptSchedRes, revRes, unpRes, labRes, rxRes, auditRes] =
+    const [staffRes, docRes, patRes, aptTodayRes, aptSchedRes, revRes, unpRes, labRes, rxRes, pendingOrdersRes, auditRes] =
       await Promise.all([
         pool.query("SELECT COUNT(*) AS count FROM staff WHERE is_active = TRUE"),
         pool.query(
           "SELECT COUNT(*) AS count FROM staff s JOIN roles r ON s.role_id = r.id WHERE r.name = 'DOCTOR' AND s.is_active = TRUE"
         ),
         pool.query("SELECT COUNT(*) AS count FROM patients WHERE is_active = TRUE"),
-        pool.query("SELECT COUNT(*) AS count FROM appointments WHERE appointment_date = $1", [today]),
-        pool.query("SELECT COUNT(*) AS count FROM appointments WHERE status = 'SCHEDULED'"),
+        pool.query(
+          `SELECT COUNT(*) AS count
+           FROM appointments a
+           JOIN patients p ON a.patient_id = p.id
+           WHERE a.appointment_date = $1 AND p.is_active = TRUE`,
+          [today]
+        ),
+        pool.query(
+          `SELECT COUNT(*) AS count
+           FROM appointments a
+           JOIN patients p ON a.patient_id = p.id
+           WHERE a.status = 'SCHEDULED' AND p.is_active = TRUE`
+        ),
         pool.query("SELECT COALESCE(SUM(amount), 0) AS total FROM payments"),
-        pool.query("SELECT COALESCE(SUM(balance_amount), 0) AS total FROM invoices WHERE status IN ('PENDING', 'PARTIALLY_PAID')"),
-        pool.query("SELECT COUNT(*) AS count FROM lab_orders WHERE status IN ('ORDERED', 'SPECIMEN_COLLECTED', 'PROCESSING')"),
-        pool.query("SELECT COUNT(*) AS count FROM prescriptions WHERE status = 'ACTIVE'"),
+        pool.query(
+          `SELECT COALESCE(SUM(i.balance_amount), 0) AS total
+           FROM invoices i
+           JOIN patients p ON i.patient_id = p.id
+           WHERE i.status IN ('PENDING', 'PARTIALLY_PAID') AND p.is_active = TRUE`
+        ),
+        pool.query(
+          `SELECT COUNT(*) AS count
+           FROM lab_orders l
+           JOIN patients p ON l.patient_id = p.id
+           WHERE l.status IN ('ORDERED', 'SPECIMEN_COLLECTED', 'PROCESSING') AND p.is_active = TRUE`
+        ),
+        pool.query(
+          `SELECT COUNT(*) AS count
+           FROM prescriptions rx
+           JOIN patients p ON rx.patient_id = p.id
+           WHERE rx.status = 'ACTIVE' AND p.is_active = TRUE`
+        ),
+        pool.query(
+          `SELECT COUNT(*) AS count
+           FROM service_orders so
+           JOIN patients p ON so.patient_id = p.id
+           JOIN services s ON so.service_id = s.id
+           WHERE so.status = 'WAITING_PAYMENT' AND s.payment_location != 'PHARMACY' AND p.is_active = TRUE`
+        ),
         pool.query(
           `SELECT a.*, u.username
            FROM audit_logs a
@@ -37,17 +70,43 @@ async function getDashboardKPIs(role, staffId) {
       unpaidInvoicesBalance: parseFloat(unpRes.rows[0].total),
       labWorkload: parseInt(labRes.rows[0].count, 10),
       pharmacyWorkload: parseInt(rxRes.rows[0].count, 10),
+      pendingDoctorOrders: parseInt(pendingOrdersRes.rows[0].count, 10),
       recentAuditLogs: auditRes.rows,
     };
   }
 
   if (role === "REGISTRAR") {
-    const [todayApts, checkedInApts, totalPats, regToday, noShows] = await Promise.all([
-      pool.query("SELECT COUNT(*) AS count FROM appointments WHERE appointment_date = $1", [today]),
-      pool.query("SELECT COUNT(*) AS count FROM appointments WHERE appointment_date = $1 AND status = 'CHECKED_IN'", [today]),
+    const [todayApts, checkedInApts, totalPats, regToday, noShows, pendingOrders] = await Promise.all([
+      pool.query(
+        `SELECT COUNT(*) AS count
+         FROM appointments a
+         JOIN patients p ON a.patient_id = p.id
+         WHERE a.appointment_date = $1 AND p.is_active = TRUE`,
+        [today]
+      ),
+      pool.query(
+        `SELECT COUNT(*) AS count
+         FROM appointments a
+         JOIN patients p ON a.patient_id = p.id
+         WHERE a.appointment_date = $1 AND a.status = 'CHECKED_IN' AND p.is_active = TRUE`,
+        [today]
+      ),
       pool.query("SELECT COUNT(*) AS count FROM patients WHERE is_active = TRUE"),
-      pool.query("SELECT COUNT(*) AS count FROM patients WHERE DATE(created_at) = $1", [today]),
-      pool.query("SELECT COUNT(*) AS count FROM appointments WHERE appointment_date = $1 AND status = 'NO_SHOW'", [today]),
+      pool.query("SELECT COUNT(*) AS count FROM patients WHERE DATE(created_at) = $1 AND is_active = TRUE", [today]),
+      pool.query(
+        `SELECT COUNT(*) AS count
+         FROM appointments a
+         JOIN patients p ON a.patient_id = p.id
+         WHERE a.appointment_date = $1 AND a.status = 'NO_SHOW' AND p.is_active = TRUE`,
+        [today]
+      ),
+      pool.query(
+        `SELECT COUNT(*) AS count
+         FROM service_orders so
+         JOIN patients p ON so.patient_id = p.id
+         JOIN services s ON so.service_id = s.id
+         WHERE so.status = 'WAITING_PAYMENT' AND s.payment_location != 'PHARMACY' AND p.is_active = TRUE`
+      ),
     ]);
 
     return {
@@ -56,15 +115,40 @@ async function getDashboardKPIs(role, staffId) {
       totalPatients: parseInt(totalPats.rows[0].count, 10),
       registeredToday: parseInt(regToday.rows[0].count, 10),
       todayNoShows: parseInt(noShows.rows[0].count, 10),
+      pendingDoctorOrders: parseInt(pendingOrders.rows[0].count, 10),
     };
   }
 
   if (role === "DOCTOR") {
     const [myToday, myQueue, myCompleted, myPendingLabs] = await Promise.all([
-      pool.query("SELECT COUNT(*) AS count FROM appointments WHERE doctor_id = $1 AND appointment_date = $2", [staffId, today]),
-      pool.query("SELECT COUNT(*) AS count FROM appointments WHERE doctor_id = $1 AND appointment_date = $2 AND status IN ('CHECKED_IN', 'IN_PROGRESS')", [staffId, today]),
-      pool.query("SELECT COUNT(*) AS count FROM encounters WHERE doctor_id = $1 AND visit_date = $2 AND status = 'COMPLETED'", [staffId, today]),
-      pool.query("SELECT COUNT(*) AS count FROM lab_orders WHERE doctor_id = $1 AND status IN ('ORDERED', 'PROCESSING')", [staffId]),
+      pool.query(
+        `SELECT COUNT(*) AS count
+         FROM appointments a
+         JOIN patients p ON a.patient_id = p.id
+         WHERE a.doctor_id = $1 AND a.appointment_date = $2 AND p.is_active = TRUE`,
+        [staffId, today]
+      ),
+      pool.query(
+        `SELECT COUNT(*) AS count
+         FROM appointments a
+         JOIN patients p ON a.patient_id = p.id
+         WHERE a.doctor_id = $1 AND a.appointment_date = $2 AND a.status IN ('CHECKED_IN', 'IN_PROGRESS') AND p.is_active = TRUE`,
+        [staffId, today]
+      ),
+      pool.query(
+        `SELECT COUNT(*) AS count
+         FROM encounters e
+         JOIN patients p ON e.patient_id = p.id
+         WHERE e.doctor_id = $1 AND e.visit_date = $2 AND e.status = 'COMPLETED' AND p.is_active = TRUE`,
+        [staffId, today]
+      ),
+      pool.query(
+        `SELECT COUNT(*) AS count
+         FROM lab_orders l
+         JOIN patients p ON l.patient_id = p.id
+         WHERE l.doctor_id = $1 AND l.status IN ('ORDERED', 'PROCESSING') AND p.is_active = TRUE`,
+        [staffId]
+      ),
     ]);
 
     return {
@@ -77,9 +161,27 @@ async function getDashboardKPIs(role, staffId) {
 
   if (role === "NURSE") {
     const [triageQueue, vitalsToday, checkedIn] = await Promise.all([
-      pool.query("SELECT COUNT(*) AS count FROM appointments WHERE appointment_date = $1 AND status IN ('CHECKED_IN', 'IN_PROGRESS')", [today]),
-      pool.query("SELECT COUNT(*) AS count FROM vitals WHERE DATE(recorded_at) = $1", [today]),
-      pool.query("SELECT COUNT(*) AS count FROM appointments WHERE appointment_date = $1 AND status = 'CHECKED_IN'", [today]),
+      pool.query(
+        `SELECT COUNT(*) AS count
+         FROM appointments a
+         JOIN patients p ON a.patient_id = p.id
+         WHERE a.appointment_date = $1 AND a.status IN ('CHECKED_IN', 'IN_PROGRESS') AND p.is_active = TRUE`,
+        [today]
+      ),
+      pool.query(
+        `SELECT COUNT(*) AS count
+         FROM vitals v
+         JOIN patients p ON v.patient_id = p.id
+         WHERE DATE(v.recorded_at) = $1 AND p.is_active = TRUE`,
+        [today]
+      ),
+      pool.query(
+        `SELECT COUNT(*) AS count
+         FROM appointments a
+         JOIN patients p ON a.patient_id = p.id
+         WHERE a.appointment_date = $1 AND a.status = 'CHECKED_IN' AND p.is_active = TRUE`,
+        [today]
+      ),
     ]);
 
     return {
@@ -91,9 +193,20 @@ async function getDashboardKPIs(role, staffId) {
 
   if (role === "PHARMACIST") {
     const [pendingRx, dispensedToday, lowStock, totalMeds] = await Promise.all([
-      pool.query("SELECT COUNT(*) AS count FROM prescriptions WHERE status = 'ACTIVE'"),
-      pool.query("SELECT COUNT(*) AS count FROM prescriptions WHERE status = 'DISPENSED' AND DATE(dispensed_at) = $1", [today]),
-      pool.query("SELECT COUNT(*) AS count FROM medications WHERE stock_quantity <= reorder_level AND is_active = TRUE"),
+      pool.query(
+        `SELECT COUNT(*) AS count
+         FROM prescriptions rx
+         JOIN patients p ON rx.patient_id = p.id
+         WHERE rx.status = 'ACTIVE' AND p.is_active = TRUE`
+      ),
+      pool.query(
+        `SELECT COUNT(*) AS count
+         FROM prescriptions rx
+         JOIN patients p ON rx.patient_id = p.id
+         WHERE rx.status = 'DISPENSED' AND DATE(rx.dispensed_at) = $1 AND p.is_active = TRUE`,
+        [today]
+      ),
+      pool.query("SELECT COUNT(*) AS count FROM medications WHERE stock_quantity < 15 AND is_active = TRUE"),
       pool.query("SELECT COUNT(*) AS count FROM medications WHERE is_active = TRUE"),
     ]);
 
@@ -107,10 +220,31 @@ async function getDashboardKPIs(role, staffId) {
 
   if (role === "LAB_TECH") {
     const [pendingOrders, specimensCollected, resultedToday, statOrders] = await Promise.all([
-      pool.query("SELECT COUNT(*) AS count FROM lab_orders WHERE status IN ('ORDERED', 'SPECIMEN_COLLECTED', 'PROCESSING')"),
-      pool.query("SELECT COUNT(*) AS count FROM lab_orders WHERE status = 'SPECIMEN_COLLECTED'"),
-      pool.query("SELECT COUNT(*) AS count FROM lab_orders WHERE status = 'VERIFIED' AND DATE(verified_at) = $1", [today]),
-      pool.query("SELECT COUNT(*) AS count FROM lab_orders WHERE priority = 'STAT' AND status != 'VERIFIED'"),
+      pool.query(
+        `SELECT COUNT(*) AS count
+         FROM lab_orders l
+         JOIN patients p ON l.patient_id = p.id
+         WHERE l.status IN ('ORDERED', 'SPECIMEN_COLLECTED', 'PROCESSING') AND p.is_active = TRUE`
+      ),
+      pool.query(
+        `SELECT COUNT(*) AS count
+         FROM lab_orders l
+         JOIN patients p ON l.patient_id = p.id
+         WHERE l.status = 'SPECIMEN_COLLECTED' AND p.is_active = TRUE`
+      ),
+      pool.query(
+        `SELECT COUNT(*) AS count
+         FROM lab_orders l
+         JOIN patients p ON l.patient_id = p.id
+         WHERE l.status = 'VERIFIED' AND DATE(l.verified_at) = $1 AND p.is_active = TRUE`,
+        [today]
+      ),
+      pool.query(
+        `SELECT COUNT(*) AS count
+         FROM lab_orders l
+         JOIN patients p ON l.patient_id = p.id
+         WHERE l.priority = 'STAT' AND l.status != 'VERIFIED' AND p.is_active = TRUE`
+      ),
     ]);
 
     return {
@@ -122,11 +256,40 @@ async function getDashboardKPIs(role, staffId) {
   }
 
   if (role === "FINANCE") {
-    const [revToday, unpInvoices, paidToday, totalOutstanding] = await Promise.all([
-      pool.query("SELECT COALESCE(SUM(amount), 0) AS total FROM payments WHERE DATE(created_at) = $1", [today]),
-      pool.query("SELECT COUNT(*) AS count FROM invoices WHERE status IN ('PENDING', 'PARTIALLY_PAID')"),
-      pool.query("SELECT COUNT(*) AS count FROM payments WHERE DATE(created_at) = $1", [today]),
-      pool.query("SELECT COALESCE(SUM(balance_amount), 0) AS total FROM invoices WHERE status IN ('PENDING', 'PARTIALLY_PAID')"),
+    const [revToday, unpInvoices, paidToday, totalOutstanding, pendingOrders] = await Promise.all([
+      pool.query(
+        `SELECT COALESCE(SUM(pm.amount), 0) AS total
+         FROM payments pm
+         JOIN patients p ON pm.patient_id = p.id
+         WHERE DATE(pm.created_at) = $1 AND p.is_active = TRUE`,
+        [today]
+      ),
+      pool.query(
+        `SELECT COUNT(*) AS count
+         FROM invoices i
+         JOIN patients p ON i.patient_id = p.id
+         WHERE i.status IN ('PENDING', 'PARTIALLY_PAID') AND p.is_active = TRUE`
+      ),
+      pool.query(
+        `SELECT COUNT(*) AS count
+         FROM payments pm
+         JOIN patients p ON pm.patient_id = p.id
+         WHERE DATE(pm.created_at) = $1 AND p.is_active = TRUE`,
+        [today]
+      ),
+      pool.query(
+        `SELECT COALESCE(SUM(i.balance_amount), 0) AS total
+         FROM invoices i
+         JOIN patients p ON i.patient_id = p.id
+         WHERE i.status IN ('PENDING', 'PARTIALLY_PAID') AND p.is_active = TRUE`
+      ),
+      pool.query(
+        `SELECT COUNT(*) AS count
+         FROM service_orders so
+         JOIN patients p ON so.patient_id = p.id
+         JOIN services s ON so.service_id = s.id
+         WHERE so.status = 'WAITING_PAYMENT' AND s.payment_location != 'PHARMACY' AND p.is_active = TRUE`
+      ),
     ]);
 
     return {
@@ -134,6 +297,7 @@ async function getDashboardKPIs(role, staffId) {
       unpaidInvoicesCount: parseInt(unpInvoices.rows[0].count, 10),
       paymentsRecordedToday: parseInt(paidToday.rows[0].count, 10),
       totalOutstandingBalance: parseFloat(totalOutstanding.rows[0].total),
+      pendingDoctorOrders: parseInt(pendingOrders.rows[0].count, 10),
     };
   }
 

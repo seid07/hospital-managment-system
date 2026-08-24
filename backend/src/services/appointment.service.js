@@ -261,7 +261,7 @@ async function getAppointments(query = {}) {
   const { page, limit, offset } = parsePagination(query);
   const { date, doctorId, patientId, status, startDate, endDate, search } = query;
 
-  const conditions = [];
+  const conditions = ["p.is_active = TRUE"];
   const params = [];
 
   if (date) {

@@ -11,6 +11,7 @@ import {
   enterResults,
   verifyResults,
 } from "../services/laboratoryService";
+import { post } from "../services/api";
 import { useAuth } from "../context/useAuth";
 import { useDebounce } from "../hooks/useDebounce";
 
@@ -42,8 +43,16 @@ function LaboratoryOrders() {
   const [resultSubmitting, setResultSubmitting] = useState(false);
   const [resultError, setResultError] = useState("");
 
+  // Timeline / Details modal
+  const [detailOrder, setDetailOrder] = useState(null);
+
   // Print modal
   const [printTarget, setPrintTarget] = useState(null);
+
+  // Tracks the order ID currently mid-request for a row action (collect
+  // specimen / start processing / verify), so the triggering button can be
+  // disabled and a double-click can't fire the same action twice.
+  const [actionInFlight, setActionInFlight] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -82,19 +91,41 @@ function LaboratoryOrders() {
   }
 
   async function handleCollectSpecimen(orderId) {
+    if (actionInFlight) return; // guard against a double-click firing this twice
     try {
+      setActionInFlight(orderId);
       setError("");
       setSuccess("");
       await collectSpecimen(orderId);
-      setSuccess("Specimen collected and registered in lab.");
+      setSuccess("Specimen collected and registered in laboratory.");
       setReloadKey((prev) => prev + 1);
     } catch (err) {
       setError(err.message || "Failed to collect specimen.");
+    } finally {
+      setActionInFlight(null);
+    }
+  }
+
+  async function handleStartProcessing(orderId) {
+    if (actionInFlight) return;
+    try {
+      setActionInFlight(orderId);
+      setError("");
+      setSuccess("");
+      await post(`/laboratory/orders/${orderId}/process`);
+      setSuccess("Laboratory analyzer processing initiated.");
+      setReloadKey((prev) => prev + 1);
+    } catch (err) {
+      setError(err.message || "Failed to start processing.");
+    } finally {
+      setActionInFlight(null);
     }
   }
 
   async function handleVerify(orderId) {
+    if (actionInFlight) return;
     try {
+      setActionInFlight(orderId);
       setError("");
       setSuccess("");
       await verifyResults(orderId);
@@ -102,6 +133,8 @@ function LaboratoryOrders() {
       setReloadKey((prev) => prev + 1);
     } catch (err) {
       setError(err.message || "Failed to verify lab result.");
+    } finally {
+      setActionInFlight(null);
     }
   }
 
@@ -111,7 +144,7 @@ function LaboratoryOrders() {
     try {
       setResultSubmitting(true);
       await enterResults(resultTarget.id, resultForm);
-      setSuccess(`Results recorded for Order #${resultTarget.order_number}.`);
+      setSuccess(`Results recorded and actual turnaround time calculated for Order #${resultTarget.order_number}.`);
       setResultTarget(null);
       setReloadKey((prev) => prev + 1);
     } catch (err) {
@@ -128,7 +161,7 @@ function LaboratoryOrders() {
           <p className="page-eyebrow">Diagnostic Services</p>
           <h1>Laboratory Orders & Diagnostics Queue</h1>
           <p className="page-description">
-            Process specimen collection, record findings, and verify diagnostic reports.
+            Process specimen collection, record findings, track real turnaround times (TAT), and verify diagnostic reports.
           </p>
         </div>
 
@@ -147,7 +180,7 @@ function LaboratoryOrders() {
         <form onSubmit={handleSearchSubmit} className="form-grid" style={{ gridTemplateColumns: "1fr 180px 180px 100px", gap: "10px" }}>
           <input
             type="search"
-            placeholder="Search by order #, test, patient name..."
+            placeholder="Live search by order #, test, patient name..."
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
           />
@@ -205,9 +238,11 @@ function LaboratoryOrders() {
                   <th>Patient</th>
                   <th>Test & Category</th>
                   <th>Ordering Doctor</th>
+                  <th>Payment Auth</th>
                   <th>Priority</th>
                   <th>Status</th>
                   <th>Result / Finding</th>
+                  <th>Turnaround Time (TAT)</th>
                   <th>Actions</th>
                 </tr>
               </thead>
@@ -235,6 +270,17 @@ function LaboratoryOrders() {
                     </td>
                     <td>Dr. {o.doctor_first_name} {o.doctor_last_name}</td>
                     <td>
+                      <span
+                        className={`badge ${
+                          o.service_payment_status === "PAID" || o.payment_authorized_at
+                            ? "badge-success"
+                            : "badge-warning"
+                        }`}
+                      >
+                        {o.service_payment_status === "PAID" || o.payment_authorized_at ? "✓ Authorized" : "Waiting Pay"}
+                      </span>
+                    </td>
+                    <td>
                       <StatusBadge status={o.priority} />
                     </td>
                     <td>
@@ -257,24 +303,60 @@ function LaboratoryOrders() {
                       )}
                     </td>
                     <td>
+                      {o.actual_turnaround_formatted ? (
+                        <div>
+                          <strong style={{ color: "#38bdf8", fontSize: "12px" }}>
+                            ⏱️ {o.actual_turnaround_formatted}
+                          </strong>
+                          <div style={{ fontSize: "10px", color: "var(--text-muted)" }}>
+                            Target: ~{o.expected_turnaround_hours || 24}h
+                          </div>
+                        </div>
+                      ) : (
+                        <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>
+                          Target: ~{o.expected_turnaround_hours || 24}h
+                          <div style={{ fontSize: "10px", color: "#f59e0b" }}>In Progress</div>
+                        </div>
+                      )}
+                    </td>
+                    <td>
                       <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
                         {o.status === "ORDERED" && ["ADMIN", "LAB_TECH", "NURSE"].includes(user?.role) && (
+                          (o.service_payment_status === "PAID" || o.payment_authorized_at) ? (
+                            <button
+                              type="button"
+                              className="button button-primary button-sm"
+                              disabled={actionInFlight === o.id}
+                              onClick={() => handleCollectSpecimen(o.id)}
+                            >
+                              {actionInFlight === o.id ? "Collecting..." : "Collect Specimen"}
+                            </button>
+                          ) : (
+                            <span
+                              className="badge badge-warning"
+                              title="This test has not been paid for at the cashier yet. Refer the patient to Registrar Finance."
+                            >
+                              🔒 Awaiting Payment
+                            </span>
+                          )
+                        )}
+
+                        {o.status === "SPECIMEN_COLLECTED" && ["ADMIN", "LAB_TECH"].includes(user?.role) && (
                           <button
                             type="button"
-                            className="button button-primary"
-                            style={{ padding: "4px 8px", fontSize: "11px" }}
-                            onClick={() => handleCollectSpecimen(o.id)}
+                            className="button button-secondary button-sm"
+                            disabled={actionInFlight === o.id}
+                            onClick={() => handleStartProcessing(o.id)}
                           >
-                            Collect Specimen
+                            {actionInFlight === o.id ? "Starting..." : "Start Processing"}
                           </button>
                         )}
 
-                        {["ORDERED", "SPECIMEN_COLLECTED", "PROCESSING"].includes(o.status) &&
+                        {["SPECIMEN_COLLECTED", "PROCESSING", "ORDERED"].includes(o.status) &&
                           ["ADMIN", "LAB_TECH"].includes(user?.role) && (
                             <button
                               type="button"
-                              className="button button-primary"
-                              style={{ padding: "4px 8px", fontSize: "11px" }}
+                              className="button button-primary button-sm"
                               onClick={() => {
                                 setResultTarget(o);
                                 setResultForm({
@@ -293,22 +375,30 @@ function LaboratoryOrders() {
                         {o.status === "RESULTED" && ["ADMIN", "LAB_TECH", "DOCTOR"].includes(user?.role) && (
                           <button
                             type="button"
-                            className="button button-primary"
-                            style={{ padding: "4px 8px", fontSize: "11px" }}
+                            className="button button-primary button-sm"
+                            disabled={actionInFlight === o.id}
                             onClick={() => handleVerify(o.id)}
                           >
-                            ✓ Verify & Release
+                            {actionInFlight === o.id ? "Verifying..." : "✓ Verify & Release"}
                           </button>
                         )}
+
+                        <button
+                          type="button"
+                          className="button button-secondary button-sm"
+                          onClick={() => setDetailOrder(o)}
+                          title="View Turnaround Timestamps"
+                        >
+                          ⏱️ Details
+                        </button>
 
                         {o.status === "VERIFIED" && (
                           <button
                             type="button"
-                            className="button button-secondary"
-                            style={{ padding: "4px 8px", fontSize: "11px" }}
+                            className="button button-secondary button-sm"
                             onClick={() => setPrintTarget(o)}
                           >
-                            Print Report
+                            🖨️ Report
                           </button>
                         )}
                       </div>
@@ -328,26 +418,30 @@ function LaboratoryOrders() {
         />
       </section>
 
-      {/* Modal: Enter Results */}
+      {/* Enter Results Modal */}
       <Modal
         isOpen={Boolean(resultTarget)}
         onClose={() => setResultTarget(null)}
-        title="Enter Laboratory Diagnostics Result"
+        title={resultTarget ? `Enter Results for ${resultTarget.test_name} (${resultTarget.order_number})` : "Enter Results"}
       >
         {resultError && <div className="alert alert-error">{resultError}</div>}
         {resultTarget && (
           <form onSubmit={handleResultSubmit}>
-            <div style={{ background: "var(--primary-light)", padding: "12px", borderRadius: "var(--radius-sm)", marginBottom: "14px", fontSize: "13px" }}>
-              <div><strong>Test:</strong> {resultTarget.test_name} ({resultTarget.test_code})</div>
+            <div style={{ background: "var(--primary-light)", padding: "12px", borderRadius: "var(--radius-sm)", marginBottom: "16px", fontSize: "13px" }}>
               <div><strong>Patient:</strong> {resultTarget.patient_first_name} {resultTarget.patient_last_name} ({resultTarget.patient_number})</div>
-              <div><strong>Ordering Doctor:</strong> Dr. {resultTarget.doctor_first_name} {resultTarget.doctor_last_name}</div>
+              <div><strong>Ordered By:</strong> Dr. {resultTarget.doctor_first_name} {resultTarget.doctor_last_name}</div>
+              <div><strong>Standard Reference:</strong> {resultTarget.standard_reference_range || "N/A"} {resultTarget.standard_unit || ""}</div>
+              {resultTarget.sample_collected_at && (
+                <div><strong>Sample Collected:</strong> {new Date(resultTarget.sample_collected_at).toLocaleTimeString()}</div>
+              )}
             </div>
 
             <div className="form-grid">
               <div className="form-field">
-                <label>Observed Result Value *</label>
+                <label>Test Result Value *</label>
                 <input
-                  placeholder="e.g. 138 mg/dL or Negative"
+                  type="text"
+                  placeholder="e.g. 14.5, Negative, 120"
                   value={resultForm.resultValue}
                   onChange={(e) => setResultForm({ ...resultForm, resultValue: e.target.value })}
                   required
@@ -357,22 +451,24 @@ function LaboratoryOrders() {
               <div className="form-field">
                 <label>Measurement Unit</label>
                 <input
-                  placeholder="e.g. mg/dL, mmol/L, %"
+                  type="text"
+                  placeholder="e.g. g/dL, mg/dL, %"
                   value={resultForm.unit}
                   onChange={(e) => setResultForm({ ...resultForm, unit: e.target.value })}
                 />
               </div>
 
               <div className="form-field">
-                <label>Reference Normal Range</label>
+                <label>Reference Range</label>
                 <input
-                  placeholder="e.g. 70 - 99 mg/dL"
+                  type="text"
+                  placeholder="e.g. 13.5 - 17.5"
                   value={resultForm.referenceRange}
                   onChange={(e) => setResultForm({ ...resultForm, referenceRange: e.target.value })}
                 />
               </div>
 
-              <div className="form-field" style={{ display: "flex", alignItems: "center", paddingTop: "24px" }}>
+              <div className="form-field" style={{ display: "flex", alignItems: "center", paddingTop: "20px" }}>
                 <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }}>
                   <input
                     type="checkbox"
@@ -380,17 +476,17 @@ function LaboratoryOrders() {
                     onChange={(e) => setResultForm({ ...resultForm, isAbnormal: e.target.checked })}
                   />
                   <strong style={{ color: resultForm.isAbnormal ? "var(--danger)" : "inherit" }}>
-                    Flag as Clinically Abnormal
+                    Flag as Critical / Abnormal
                   </strong>
                 </label>
               </div>
             </div>
 
             <div className="form-field" style={{ marginTop: "14px" }}>
-              <label>Technician Comments / Method Notes</label>
+              <label>Technician Comments / Observations</label>
               <textarea
-                rows="2"
-                placeholder="Methodology, specimen condition, remarks..."
+                rows="3"
+                placeholder="Diagnostic observations, analyzer calibration notes, or follow-up recommendations..."
                 value={resultForm.comments}
                 onChange={(e) => setResultForm({ ...resultForm, comments: e.target.value })}
               />
@@ -401,26 +497,77 @@ function LaboratoryOrders() {
                 Cancel
               </button>
               <button type="submit" className="button button-primary" disabled={resultSubmitting}>
-                {resultSubmitting ? "Saving..." : "Save Findings"}
+                {resultSubmitting ? "Calculating TAT & Saving..." : "Save Result (Compute TAT)"}
               </button>
             </div>
           </form>
         )}
       </Modal>
 
-      {/* Modal: Print Lab Report */}
-      <Modal
-        isOpen={Boolean(printTarget)}
-        onClose={() => setPrintTarget(null)}
-        title="Print Diagnostic Laboratory Report"
-        maxWidth="750px"
-      >
+      {/* Details / TAT Timeline Modal */}
+      {detailOrder && (
+        <Modal
+          isOpen={true}
+          onClose={() => setDetailOrder(null)}
+          title={`Order #${detailOrder.order_number} Diagnostic Lifecycle & TAT`}
+        >
+          <div>
+            <div style={{ background: "var(--surface-muted)", padding: "14px", borderRadius: "8px", marginBottom: "16px" }}>
+              <div style={{ fontSize: "15px", fontWeight: 700, color: "var(--text-primary)", marginBottom: "4px" }}>
+                {detailOrder.test_name} ({detailOrder.test_code})
+              </div>
+              <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>
+                Patient: {detailOrder.patient_first_name} {detailOrder.patient_last_name} ({detailOrder.patient_number}) • Clinician: Dr. {detailOrder.doctor_first_name} {detailOrder.doctor_last_name}
+              </div>
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: "12px", marginBottom: "20px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 12px", background: "#f8fafc", borderRadius: "6px" }}>
+                <span>1. Order Placed</span>
+                <strong>{detailOrder.created_at ? new Date(detailOrder.created_at).toLocaleString() : "—"}</strong>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 12px", background: "#f8fafc", borderRadius: "6px" }}>
+                <span>2. Specimen Collected</span>
+                <strong>{detailOrder.sample_collected_at || detailOrder.specimen_collected_at ? new Date(detailOrder.sample_collected_at || detailOrder.specimen_collected_at).toLocaleString() : "Pending"}</strong>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 12px", background: "#f8fafc", borderRadius: "6px" }}>
+                <span>3. Processing Started</span>
+                <strong>{detailOrder.processing_started_at ? new Date(detailOrder.processing_started_at).toLocaleString() : "—"}</strong>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 12px", background: "#f8fafc", borderRadius: "6px" }}>
+                <span>4. Result Completed</span>
+                <strong>{detailOrder.result_completed_at || detailOrder.resulted_at ? new Date(detailOrder.result_completed_at || detailOrder.resulted_at).toLocaleString() : "Pending"}</strong>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 12px", background: "#f8fafc", borderRadius: "6px" }}>
+                <span>5. Verified & Released</span>
+                <strong>{detailOrder.result_verified_at || detailOrder.verified_at ? new Date(detailOrder.result_verified_at || detailOrder.verified_at).toLocaleString() : "Pending"}</strong>
+              </div>
+            </div>
+
+            <div style={{ background: "rgba(56, 189, 248, 0.1)", border: "1px solid #38bdf8", borderRadius: "8px", padding: "12px", textAlign: "center" }}>
+              <div style={{ fontSize: "11px", color: "var(--text-secondary)" }}>Actual Elapsed Turnaround Time (TAT)</div>
+              <div style={{ fontSize: "18px", fontWeight: 700, color: "#38bdf8" }}>
+                {detailOrder.actual_turnaround_formatted || "In Progress (Awaiting Result)"}
+              </div>
+            </div>
+
+            <div style={{ marginTop: "18px", textAlign: "right" }}>
+              <button type="button" className="button button-secondary" onClick={() => setDetailOrder(null)}>
+                Close
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Print Report Modal */}
+      <Modal isOpen={Boolean(printTarget)} onClose={() => setPrintTarget(null)} title="Print Laboratory Report" maxWidth="750px">
         {printTarget && (
           <PrintableDocument
-            title="OFFICIAL LABORATORY DIAGNOSTIC REPORT"
-            subtitle="Department of Pathology & Clinical Laboratory"
+            title="OFFICIAL LABORATORY REPORT"
+            subtitle="Department of Pathology & Clinical Diagnostics"
             documentNumber={printTarget.order_number}
-            date={new Date(printTarget.result_entered_at || printTarget.created_at).toLocaleDateString()}
+            date={new Date(printTarget.verified_at || printTarget.resulted_at || new Date()).toLocaleDateString()}
           >
             <div style={{ borderBottom: "1px solid #eee", paddingBottom: "12px", marginBottom: "16px" }}>
               <table style={{ width: "100%", fontSize: "13px" }}>
@@ -437,49 +584,38 @@ function LaboratoryOrders() {
               </table>
             </div>
 
-            <div style={{ margin: "16px 0" }}>
-              <h3 style={{ margin: "0 0 10px", fontSize: "16px", color: "#1769aa" }}>
-                Test: {printTarget.test_name} ({printTarget.test_code})
-              </h3>
+            <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: "20px" }}>
+              <thead>
+                <tr style={{ background: "#f8f9fa", borderBottom: "2px solid #dee2e6", textAlign: "left" }}>
+                  <th style={{ padding: "8px" }}>Test Name</th>
+                  <th style={{ padding: "8px" }}>Result</th>
+                  <th style={{ padding: "8px" }}>Reference Range</th>
+                  <th style={{ padding: "8px" }}>Unit</th>
+                  <th style={{ padding: "8px" }}>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr style={{ borderBottom: "1px solid #eee" }}>
+                  <td style={{ padding: "8px" }}>{printTarget.test_name}</td>
+                  <td style={{ padding: "8px", fontWeight: "bold", color: printTarget.is_abnormal ? "#dc3545" : "inherit" }}>
+                    {printTarget.result_value}
+                  </td>
+                  <td style={{ padding: "8px" }}>{printTarget.result_reference_range || printTarget.standard_reference_range || "—"}</td>
+                  <td style={{ padding: "8px" }}>{printTarget.result_unit || printTarget.standard_unit || "—"}</td>
+                  <td style={{ padding: "8px" }}>{printTarget.is_abnormal ? "ABNORMAL" : "NORMAL"}</td>
+                </tr>
+              </tbody>
+            </table>
 
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px", marginTop: "8px" }}>
-                <thead>
-                  <tr style={{ background: "#f1f5f9", textAlign: "left" }}>
-                    <th style={{ padding: "8px", border: "1px solid #cbd5e1" }}>Observed Value</th>
-                    <th style={{ padding: "8px", border: "1px solid #cbd5e1" }}>Unit</th>
-                    <th style={{ padding: "8px", border: "1px solid #cbd5e1" }}>Reference Range</th>
-                    <th style={{ padding: "8px", border: "1px solid #cbd5e1" }}>Flag</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr>
-                    <td style={{ padding: "8px", border: "1px solid #cbd5e1", fontWeight: 700 }}>
-                      {printTarget.result_value}
-                    </td>
-                    <td style={{ padding: "8px", border: "1px solid #cbd5e1" }}>{printTarget.result_unit || "—"}</td>
-                    <td style={{ padding: "8px", border: "1px solid #cbd5e1" }}>{printTarget.result_reference_range || "—"}</td>
-                    <td style={{ padding: "8px", border: "1px solid #cbd5e1", color: printTarget.is_abnormal ? "red" : "green", fontWeight: 700 }}>
-                      {printTarget.is_abnormal ? "ABNORMAL" : "NORMAL"}
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-
-              {printTarget.result_comments && (
-                <p style={{ marginTop: "12px", fontSize: "12px", color: "#475569" }}>
-                  <strong>Technician Remarks:</strong> {printTarget.result_comments}
-                </p>
-              )}
-            </div>
-
-            <div style={{ marginTop: "32px", fontSize: "12px", display: "flex", justifyContent: "space-between" }}>
-              <div>
-                <div>Entered By: {printTarget.entered_by_username || "Lab Technician"}</div>
+            {printTarget.result_comments && (
+              <div style={{ background: "#f8f9fa", padding: "10px", borderRadius: "4px", marginBottom: "20px", fontSize: "13px" }}>
+                <strong>Comments:</strong> {printTarget.result_comments}
               </div>
-              <div style={{ textAlign: "right" }}>
-                <div>Verified By: <strong>{printTarget.verified_by_username || "Pathologist"}</strong></div>
-                <div style={{ color: "#64748b" }}>Status: RELEASED</div>
-              </div>
+            )}
+
+            <div style={{ marginTop: "30px", display: "flex", justifyContent: "space-between", fontSize: "12px", borderTop: "1px solid #eee", paddingTop: "12px" }}>
+              <div>Turnaround Time: <strong>{printTarget.actual_turnaround_formatted || "Completed"}</strong></div>
+              <div>Verified By: <strong>{printTarget.verified_by_username || "Verified Laboratory Specialist"}</strong></div>
             </div>
           </PrintableDocument>
         )}

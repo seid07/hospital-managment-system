@@ -11,6 +11,7 @@ function ReceptionQueue() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
+  const [checkingInId, setCheckingInId] = useState(null);
 
   const today = new Date().toISOString().split("T")[0];
 
@@ -44,7 +45,9 @@ function ReceptionQueue() {
   }, [today, reloadKey]);
 
   async function handleCheckIn(id) {
+    if (checkingInId) return; // guard against a double-click checking in twice
     try {
+      setCheckingInId(id);
       setError("");
       setSuccess("");
       await updateAppointmentStatus(id, "CHECKED_IN", "Patient arrived at reception front desk");
@@ -52,6 +55,8 @@ function ReceptionQueue() {
       setReloadKey((prev) => prev + 1);
     } catch (err) {
       setError(err.message || "Failed to check in patient.");
+    } finally {
+      setCheckingInId(null);
     }
   }
 
@@ -186,9 +191,10 @@ function ReceptionQueue() {
                         <button
                           type="button"
                           className="button button-primary"
+                          disabled={checkingInId === a.id}
                           onClick={() => handleCheckIn(a.id)}
                         >
-                          ✓ Check In Patient
+                          {checkingInId === a.id ? "Checking In..." : "✓ Check In Patient"}
                         </button>
                       )}
                       {a.status === "CHECKED_IN" && (

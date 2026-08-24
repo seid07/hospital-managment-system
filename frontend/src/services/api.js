@@ -70,6 +70,14 @@ export function del(endpoint, options = {}) {
   });
 }
 
+export async function checkSystemStatus() {
+  return get("/auth/status");
+}
+
+export async function setupAdmin(data) {
+  return post("/auth/setup-admin", data);
+}
+
 export async function login(username, password) {
   return post("/auth/login", {
     username,
@@ -77,8 +85,8 @@ export async function login(username, password) {
   });
 }
 
-export async function forgotPassword(username) {
-  return post("/auth/forgot-password", { username });
+export async function forgotPassword(identityData) {
+  return post("/auth/forgot-password", typeof identityData === "string" ? { username: identityData } : identityData);
 }
 
 export async function resetPassword(token, newPassword) {
@@ -89,5 +97,39 @@ export async function getProtectedData() {
   return get("/test/protected");
 }
 
-const api = { get, post, put, patch, del, request, login, forgotPassword, resetPassword };
+export async function recordSelectivePayment(paymentData) {
+  return post("/billing/payments/selective", paymentData);
+}
+
+export async function reversePayment(paymentId, reason) {
+  return post(`/billing/payments/${paymentId}/reverse`, { reason });
+}
+
+export async function getInventoryTransactions(params = {}) {
+  const query = new URLSearchParams(params).toString();
+  return get(`/pharmacy/inventory-transactions${query ? `?${query}` : ""}`);
+}
+
+export async function getServicePriceHistory(serviceId) {
+  return get(`/services/${serviceId}/history`);
+}
+
+const api = {
+  get,
+  post,
+  put,
+  patch,
+  del,
+  request,
+  checkSystemStatus,
+  setupAdmin,
+  login,
+  forgotPassword,
+  resetPassword,
+  recordSelectivePayment,
+  reversePayment,
+  getInventoryTransactions,
+  getServicePriceHistory,
+};
+
 export default api;

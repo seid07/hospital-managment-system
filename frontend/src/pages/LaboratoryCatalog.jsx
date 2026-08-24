@@ -3,7 +3,8 @@ import { Link } from "react-router-dom";
 import AppShell from "../components/layout/AppShell";
 import Pagination from "../components/common/Pagination";
 import Modal from "../components/common/Modal";
-import { getTestCatalog, addCatalogTest } from "../services/laboratoryService";
+import { getTestCatalog, addCatalogTest, linkCatalogTestService } from "../services/laboratoryService";
+import { serviceCatalogService } from "../services/serviceCatalogService";
 import { useAuth } from "../context/useAuth";
 import { formatCurrency } from "../utils/currency";
 import { useDebounce } from "../hooks/useDebounce";
@@ -16,6 +17,7 @@ const INITIAL_TEST_FORM = {
   unit: "",
   price: "",
   turnaroundTimeHours: 24,
+  serviceId: "",
 };
 
 function LaboratoryCatalog() {
@@ -38,6 +40,34 @@ function LaboratoryCatalog() {
   const [addForm, setAddForm] = useState(INITIAL_TEST_FORM);
   const [addSubmitting, setAddSubmitting] = useState(false);
   const [addError, setAddError] = useState("");
+
+  // Billable services available for linking (Laboratory department only)
+  const [billableServices, setBillableServices] = useState([]);
+
+  // Quick-link modal for existing, unlinked tests
+  const [linkingTest, setLinkingTest] = useState(null);
+  const [linkServiceId, setLinkServiceId] = useState("");
+  const [linkSubmitting, setLinkSubmitting] = useState(false);
+  const [linkError, setLinkError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadServices() {
+      try {
+        const services = await serviceCatalogService.getServices({
+          department: "LABORATORY",
+          activeOnly: true,
+        });
+        if (!cancelled) setBillableServices(services || []);
+      } catch {
+        // Non-fatal: the add/link forms will just show no options.
+      }
+    }
+    loadServices();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -77,6 +107,10 @@ function LaboratoryCatalog() {
   async function handleAddSubmit(e) {
     e.preventDefault();
     setAddError("");
+    if (!addForm.serviceId) {
+      setAddError("Please select the billable service this test should charge against.");
+      return;
+    }
     try {
       setAddSubmitting(true);
       await addCatalogTest(addForm);
@@ -88,6 +122,28 @@ function LaboratoryCatalog() {
       setAddError(err.message || "Failed to add laboratory test.");
     } finally {
       setAddSubmitting(false);
+    }
+  }
+
+  async function handleLinkSubmit(e) {
+    e.preventDefault();
+    if (!linkingTest) return;
+    if (!linkServiceId) {
+      setLinkError("Please select a billable service.");
+      return;
+    }
+    try {
+      setLinkSubmitting(true);
+      setLinkError("");
+      await linkCatalogTestService(linkingTest.id, linkServiceId);
+      setSuccess(`"${linkingTest.name}" is now linked to a billable service.`);
+      setLinkingTest(null);
+      setLinkServiceId("");
+      setReloadKey((prev) => prev + 1);
+    } catch (err) {
+      setLinkError(err.message || "Failed to link test to a billable service.");
+    } finally {
+      setLinkSubmitting(false);
     }
   }
 
@@ -177,6 +233,7 @@ function LaboratoryCatalog() {
                   <th>Unit</th>
                   <th>Turnaround Time</th>
                   <th>Fee / Price</th>
+                  <th>Billing Link</th>
                 </tr>
               </thead>
               <tbody>
@@ -193,6 +250,32 @@ function LaboratoryCatalog() {
                     <td>{t.unit || "—"}</td>
                     <td>{t.turnaround_time_hours} hours</td>
                     <td><strong>{formatCurrency(t.price)}</strong></td>
+                    <td>
+                      {t.linked_service_code ? (
+                        <span className="badge badge-success" title={t.linked_service_name}>
+                          ✓ {t.linked_service_code}
+                        </span>
+                      ) : (
+                        <>
+                          <span className="badge badge-warning" style={{ marginRight: "6px" }}>
+                            Not linked
+                          </span>
+                          {["ADMIN", "LAB_TECH"].includes(user?.role) && (
+                            <button
+                              type="button"
+                              className="button button-secondary button-sm"
+                              onClick={() => {
+                                setLinkingTest(t);
+                                setLinkServiceId("");
+                                setLinkError("");
+                              }}
+                            >
+                              Link
+                            </button>
+                          )}
+                        </>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -288,6 +371,26 @@ function LaboratoryCatalog() {
                 required
               />
             </div>
+
+            <div className="form-field" style={{ gridColumn: "1 / -1" }}>
+              <label>Linked Billable Service *</label>
+              <select
+                value={addForm.serviceId}
+                onChange={(e) => setAddForm({ ...addForm, serviceId: e.target.value })}
+                required
+              >
+                <option value="">Select the service this test charges against...</option>
+                {billableServices.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name} ({s.code}) — {formatCurrency(s.price)}
+                  </option>
+                ))}
+              </select>
+              <small style={{ color: "var(--text-muted)" }}>
+                Doctors can only order this test once it's linked — the order won't appear in the
+                cashier queue and can't proceed to specimen collection otherwise.
+              </small>
+            </div>
           </div>
 
           <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px", marginTop: "18px" }}>
@@ -296,6 +399,55 @@ function LaboratoryCatalog() {
             </button>
             <button type="submit" className="button button-primary" disabled={addSubmitting}>
               {addSubmitting ? "Saving..." : "Add Test to Catalog"}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Modal: Link Existing Test to a Billable Service */}
+      <Modal
+        isOpen={Boolean(linkingTest)}
+        onClose={() => {
+          setLinkingTest(null);
+          setLinkServiceId("");
+        }}
+        title={linkingTest ? `Link "${linkingTest.name}" to a Billable Service` : "Link Test"}
+      >
+        {linkError && <div className="alert alert-error">{linkError}</div>}
+        <form onSubmit={handleLinkSubmit}>
+          <div className="form-field">
+            <label>Billable Service *</label>
+            <select
+              value={linkServiceId}
+              onChange={(e) => setLinkServiceId(e.target.value)}
+              required
+            >
+              <option value="">Select a service...</option>
+              {billableServices.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name} ({s.code}) — {formatCurrency(s.price)}
+                </option>
+              ))}
+            </select>
+            <small style={{ color: "var(--text-muted)" }}>
+              Until this is linked, this test cannot be ordered by doctors — it has no route into
+              the cashier payment queue.
+            </small>
+          </div>
+
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px", marginTop: "18px" }}>
+            <button
+              type="button"
+              className="button button-secondary"
+              onClick={() => {
+                setLinkingTest(null);
+                setLinkServiceId("");
+              }}
+            >
+              Cancel
+            </button>
+            <button type="submit" className="button button-primary" disabled={linkSubmitting}>
+              {linkSubmitting ? "Linking..." : "Link Service"}
             </button>
           </div>
         </form>

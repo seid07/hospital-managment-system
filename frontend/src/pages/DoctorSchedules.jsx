@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import AppShell from "../components/layout/AppShell";
 import { useAuth } from "../context/useAuth";
 import {
@@ -27,10 +28,14 @@ const INITIAL_FORM = {
 
 function DoctorSchedules({ isDoctorSelfView = false }) {
   const { user } = useAuth();
+  const [searchParams] = useSearchParams();
+  const preselectedStaffId = searchParams.get("staffId");
   const isDoctor = user?.role === "DOCTOR" || isDoctorSelfView;
 
   const [doctors, setDoctors] = useState([]);
-  const [selectedDoctor, setSelectedDoctor] = useState(isDoctor ? user?.staff_id : "");
+  const [selectedDoctor, setSelectedDoctor] = useState(
+    isDoctor ? user?.staff_id : preselectedStaffId || ""
+  );
   const [schedules, setSchedules] = useState([]);
   const [form, setForm] = useState(INITIAL_FORM);
   const [error, setError] = useState("");
@@ -51,7 +56,9 @@ function DoctorSchedules({ isDoctorSelfView = false }) {
 
       try {
         setError("");
-        const res = await getDoctors();
+        // Admins manage schedules for every staff member (doctors, nurses,
+        // lab techs, etc.), not just doctors.
+        const res = await getDoctors({ allStaff: true });
         if (cancelled) return;
         const list = res.data || [];
         setDoctors(list);
@@ -61,7 +68,7 @@ function DoctorSchedules({ isDoctorSelfView = false }) {
         }
       } catch (err) {
         if (!cancelled) {
-          setError(err.message || "Unable to load doctors.");
+          setError(err.message || "Unable to load staff members.");
           setDoctorsLoading(false);
         }
       }
@@ -160,11 +167,11 @@ function DoctorSchedules({ isDoctorSelfView = false }) {
       <div className="page-header">
         <div>
           <p className="page-eyebrow">{isDoctor ? "Doctor Workspace" : "Administration & Capacity"}</p>
-          <h1>{isDoctor ? "My Clinic Schedule & Hours" : "Doctor Schedules & Consultation Hours"}</h1>
+          <h1>{isDoctor ? "My Clinic Schedule & Hours" : "Staff Schedules & Consultation Hours"}</h1>
           <p className="page-description">
             {isDoctor
               ? "View your assigned recurring weekly clinic hours and consultation appointment intervals."
-              : "Define recurring weekly clinic schedules and appointment slot durations."}
+              : "Define recurring weekly schedules and available consultation slots for any staff member — doctors, nurses, lab techs, and more."}
           </p>
         </div>
       </div>
@@ -176,12 +183,12 @@ function DoctorSchedules({ isDoctorSelfView = false }) {
       {!isDoctor && (
         <section className="card">
           <div className="card-header">
-            <h2>Select Physician</h2>
-            <p>Choose the doctor whose schedules you wish to manage.</p>
+            <h2>Select Staff Member</h2>
+            <p>Choose the staff member whose schedules you wish to manage.</p>
           </div>
 
           <div className="form-field">
-            <label htmlFor="doctorSelect">Doctor</label>
+            <label htmlFor="doctorSelect">Staff Member</label>
             <select
               id="doctorSelect"
               value={selectedDoctor}
@@ -190,7 +197,9 @@ function DoctorSchedules({ isDoctorSelfView = false }) {
             >
               {doctors.map((doctor) => (
                 <option key={doctor.id} value={doctor.id}>
-                  Dr. {doctor.first_name} {doctor.last_name} ({doctor.specialty || doctor.department || "General"})
+                  {doctor.role === "DOCTOR" ? "Dr. " : ""}
+                  {doctor.first_name} {doctor.last_name} ({doctor.role ? `${doctor.role} — ` : ""}
+                  {doctor.specialty || doctor.department || "General"})
                 </option>
               ))}
             </select>
@@ -203,8 +212,8 @@ function DoctorSchedules({ isDoctorSelfView = false }) {
         <section className="card">
           <div className="card-header">
             <h2>
-              Add Weekly Schedule for Dr. {selectedDoctorDetails?.first_name}{" "}
-              {selectedDoctorDetails?.last_name}
+              Add Weekly Schedule for {selectedDoctorDetails?.role === "DOCTOR" ? "Dr. " : ""}
+              {selectedDoctorDetails?.first_name} {selectedDoctorDetails?.last_name}
             </h2>
             <p>
               Configure weekday, hours, and slot intervals. The database prevents overlapping shifts.

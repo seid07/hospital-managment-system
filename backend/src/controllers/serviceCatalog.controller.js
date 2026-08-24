@@ -1,55 +1,71 @@
 const serviceCatalog = require("../services/serviceCatalog.service");
 
-async function getServices(req, res, next) {
+async function getServices(req, res) {
   try {
-    const { category, department, activeOnly } = req.query;
-    const data = await serviceCatalog.getServices({
+    const { category, department, activeOnly, search } = req.query;
+    const services = await serviceCatalog.getServices({
       category,
       departmentCode: department,
-      activeOnly: activeOnly === "false" ? false : true,
+      activeOnly: activeOnly === "true",
+      search,
     });
-    res.json({ success: true, data });
+    return res.json({ success: true, data: services });
   } catch (error) {
-    next(error);
+    console.error("Error fetching services:", error);
+    return res.status(500).json({ success: false, message: error.message });
   }
 }
 
-async function getDepartments(req, res, next) {
+async function getDepartments(req, res) {
   try {
-    const data = await serviceCatalog.getDepartments();
-    res.json({ success: true, data });
+    const departments = await serviceCatalog.getDepartments();
+    return res.json({ success: true, data: departments });
   } catch (error) {
-    next(error);
+    console.error("Error fetching departments:", error);
+    return res.status(500).json({ success: false, message: error.message });
   }
 }
 
-async function getServiceById(req, res, next) {
+async function getServiceById(req, res) {
   try {
-    const data = await serviceCatalog.getServiceById(req.params.id);
-    if (!data) {
-      return res.status(404).json({ success: false, message: "Service not found in catalog." });
+    const service = await serviceCatalog.getServiceById(req.params.id);
+    if (!service) {
+      return res.status(404).json({ success: false, message: "Service not found" });
     }
-    res.json({ success: true, data });
+    return res.json({ success: true, data: service });
   } catch (error) {
-    next(error);
+    console.error("Error fetching service:", error);
+    return res.status(500).json({ success: false, message: error.message });
   }
 }
 
-async function createService(req, res, next) {
+async function createService(req, res) {
   try {
-    const data = await serviceCatalog.createService(req.body, req.user.id);
-    res.status(201).json({ success: true, data, message: "Service created in catalog." });
+    const service = await serviceCatalog.createService(req.body, req.user?.id || req.user?.userId);
+    return res.status(201).json({ success: true, data: service });
   } catch (error) {
-    next(error);
+    console.error("Error creating service:", error);
+    return res.status(400).json({ success: false, message: error.message });
   }
 }
 
-async function updateService(req, res, next) {
+async function updateService(req, res) {
   try {
-    const data = await serviceCatalog.updateService(req.params.id, req.body, req.user.id);
-    res.json({ success: true, data, message: "Service updated successfully." });
+    const service = await serviceCatalog.updateService(req.params.id, req.body, req.user?.id || req.user?.userId);
+    return res.json({ success: true, data: service });
   } catch (error) {
-    next(error);
+    console.error("Error updating service:", error);
+    return res.status(400).json({ success: false, message: error.message });
+  }
+}
+
+async function getServicePriceHistory(req, res) {
+  try {
+    const history = await serviceCatalog.getServicePriceHistory(req.params.id);
+    return res.json({ success: true, data: history });
+  } catch (error) {
+    console.error("Error fetching service price history:", error);
+    return res.status(500).json({ success: false, message: error.message });
   }
 }
 
@@ -59,4 +75,5 @@ module.exports = {
   getServiceById,
   createService,
   updateService,
+  getServicePriceHistory,
 };

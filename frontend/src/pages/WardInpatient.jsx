@@ -7,6 +7,8 @@ export default function WardInpatient() {
   const [beds, setBeds] = useState([]);
   const [queue, setQueue] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
 
   // Admission Modal
   const [showAdmitModal, setShowAdmitModal] = useState(false);
@@ -19,11 +21,14 @@ export default function WardInpatient() {
   const [showDischargeModal, setShowDischargeModal] = useState(false);
   const [activeAdmission, setActiveAdmission] = useState(null);
   const [dischargeSummary, setDischargeSummary] = useState("");
+  const [searchInput, setSearchInput] = useState("");
 
   useEffect(() => {
     let cancelled = false;
     async function loadData() {
       try {
+        setLoading(true);
+        setError("");
         const [bedsData, queueData] = await Promise.all([
           wardService.getBeds(),
           wardService.getWardQueue(),
@@ -35,7 +40,7 @@ export default function WardInpatient() {
         }
       } catch (err) {
         if (!cancelled) {
-          console.error("Failed to load ward data:", err);
+          setError(err.message || "Unable to load ward data.");
           setLoading(false);
         }
       }
@@ -50,6 +55,7 @@ export default function WardInpatient() {
   async function reloadData() {
     try {
       setLoading(true);
+      setError("");
       const [bedsData, queueData] = await Promise.all([
         wardService.getBeds(),
         wardService.getWardQueue(),
@@ -57,7 +63,7 @@ export default function WardInpatient() {
       setBeds(bedsData || []);
       setQueue(queueData || []);
     } catch (err) {
-      console.error("Error reloading ward data:", err);
+      setError(err.message || "Unable to reload ward data.");
     } finally {
       setLoading(false);
     }
@@ -73,9 +79,10 @@ export default function WardInpatient() {
 
   async function handleAdmitSubmit(e) {
     e.preventDefault();
-    if (!selectedQueueItem) return;
+    if (!selectedQueueItem || submitting) return;
     try {
       setSubmitting(true);
+      setError("");
       await wardService.admitPatient({
         visitId: selectedQueueItem.visit_id,
         patientId: selectedQueueItem.patient_id,
@@ -83,10 +90,11 @@ export default function WardInpatient() {
         doctorId: null,
         admissionReason,
       });
+      setSuccess("Patient admitted to ward.");
       setShowAdmitModal(false);
       reloadData();
     } catch (err) {
-      console.error("Failed to admit patient:", err);
+      setError(err.message || "Failed to admit patient.");
     } finally {
       setSubmitting(false);
     }
@@ -100,14 +108,16 @@ export default function WardInpatient() {
 
   async function handleDischargeSubmit(e) {
     e.preventDefault();
-    if (!activeAdmission) return;
+    if (!activeAdmission || submitting) return;
     try {
       setSubmitting(true);
+      setError("");
       await wardService.dischargePatient(activeAdmission.id, { dischargeSummary });
+      setSuccess("Patient discharged.");
       setShowDischargeModal(false);
       reloadData();
     } catch (err) {
-      console.error("Failed to discharge patient:", err);
+      setError(err.message || "Failed to discharge patient.");
     } finally {
       setSubmitting(false);
     }
@@ -115,6 +125,18 @@ export default function WardInpatient() {
 
   const availableBeds = beds.filter((b) => b.status === "AVAILABLE");
   const occupiedBeds = beds.filter((b) => b.status === "OCCUPIED");
+  const filteredQueue = searchInput.trim()
+    ? queue.filter((item) => {
+        const q = searchInput.trim().toLowerCase();
+        return (
+          item.patient_first_name?.toLowerCase().includes(q) ||
+          item.patient_last_name?.toLowerCase().includes(q) ||
+          item.patient_number?.toLowerCase().includes(q) ||
+          item.service_name?.toLowerCase().includes(q) ||
+          item.queue_number?.toLowerCase?.().includes(q)
+        );
+      })
+    : queue;
 
   return (
     <AppShell>
@@ -132,6 +154,18 @@ export default function WardInpatient() {
           <span className="badge badge-warning">{occupiedBeds.length} Occupied</span>
         </div>
       </div>
+
+      {error && (
+        <div className="alert alert-error" role="alert">
+          {error}
+        </div>
+      )}
+
+      {success && (
+        <div className="alert alert-success" role="status">
+          {success}
+        </div>
+      )}
 
       {/* Bed Grid Section */}
       <section className="card">
@@ -200,7 +234,7 @@ export default function WardInpatient() {
       <section className="card">
         <div className="card-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div>
-            <h2>Authorized Admission Queue ({queue.length})</h2>
+            <h2>Authorized Admission Queue ({filteredQueue.length})</h2>
             <p>Patients waiting for bed allocation and ward check-in.</p>
           </div>
           <button type="button" className="button button-secondary" onClick={reloadData}>
@@ -208,13 +242,23 @@ export default function WardInpatient() {
           </button>
         </div>
 
+        <div style={{ padding: "0 0 14px 0" }}>
+          <input
+            type="search"
+            placeholder="Live search by patient name, PAT #, or service..."
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            style={{ width: "100%", padding: "10px 14px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)" }}
+          />
+        </div>
+
         {loading ? (
           <div className="loading-state">Loading ward queue...</div>
-        ) : queue.length === 0 ? (
+        ) : filteredQueue.length === 0 ? (
           <div className="empty-state">
             <div className="empty-state-icon">🛏️</div>
-            <h3>No pending admissions</h3>
-            <p>Authorized bed admission orders will appear here automatically.</p>
+            <h3>{searchInput ? "No matching admissions found" : "No pending admissions"}</h3>
+            <p>{searchInput ? "Try a different search term." : "Authorized bed admission orders will appear here automatically."}</p>
           </div>
         ) : (
           <div className="table-wrapper">
@@ -230,7 +274,7 @@ export default function WardInpatient() {
                 </tr>
               </thead>
               <tbody>
-                {queue.map((item) => (
+                {filteredQueue.map((item) => (
                   <tr key={item.queue_entry_id}>
                     <td>
                       <span

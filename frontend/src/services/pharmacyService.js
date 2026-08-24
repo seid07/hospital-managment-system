@@ -22,6 +22,10 @@ export async function dispensePrescription(id, data = {}) {
   return post(`/pharmacy/prescriptions/${id}/dispense`, data);
 }
 
+export async function dispenseMultiplePrescriptions(data) {
+  return post("/pharmacy/prescriptions/dispense-multiple", data);
+}
+
 export async function getMedications(query = {}) {
   const params = new URLSearchParams();
   if (query.page) params.append("page", query.page);

@@ -170,6 +170,92 @@ async function createStaff(data, createdByUserId) {
   }
 }
 
+async function updateStaff(id, data, updatedByUserId) {
+  let phone = data.phone ? data.phone.trim() : "";
+  if (phone) {
+    if (!validateEthiopianPhone(phone)) {
+      throw new Error("INVALID_PHONE_FORMAT");
+    }
+    phone = normalizeEthiopianPhone(phone);
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    let roleId = null;
+    if (data.role) {
+      const roleResult = await client.query(
+        `SELECT id FROM roles WHERE name = $1`,
+        [data.role]
+      );
+
+      if (roleResult.rows.length === 0) {
+        throw new Error("ROLE_NOT_FOUND");
+      }
+
+      roleId = roleResult.rows[0].id;
+    }
+
+    const result = await client.query(
+      `
+        UPDATE staff
+        SET
+          first_name = COALESCE($1, first_name),
+          last_name = COALESCE($2, last_name),
+          email = COALESCE($3, email),
+          phone = COALESCE($4, phone),
+          department = COALESCE($5, department),
+          specialty = COALESCE($6, specialty),
+          role_id = COALESCE($7, role_id),
+          updated_at = CURRENT_TIMESTAMP
+        WHERE id = $8
+        RETURNING id, first_name, last_name, email, phone, department, specialty, is_active
+      `,
+      [
+        data.firstName ? data.firstName.trim() : null,
+        data.lastName ? data.lastName.trim() : null,
+        data.email ? data.email.trim().toLowerCase() : null,
+        phone || null,
+        data.department !== undefined ? (data.department ? data.department.trim() : "") : null,
+        data.specialty !== undefined ? (data.specialty ? data.specialty.trim() : "") : null,
+        roleId,
+        id,
+      ]
+    );
+
+    if (result.rows.length === 0) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    const staff = result.rows[0];
+
+    await recordAuditLog(client, {
+      userId: updatedByUserId,
+      action: "STAFF_UPDATED",
+      entity: "staff",
+      entityId: id,
+      details: { name: `${staff.first_name} ${staff.last_name}`, role: data.role },
+    });
+
+    await client.query("COMMIT");
+
+    return staff;
+  } catch (error) {
+    await client.query("ROLLBACK");
+
+    if (error.code === "23505") {
+      throw new Error("DUPLICATE_STAFF");
+    }
+
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 async function updateStaffStatus(id, isActive, updatedByUserId) {
   const result = await pool.query(
     `
@@ -204,5 +290,6 @@ module.exports = {
   getRoles,
   getStaff,
   createStaff,
+  updateStaff,
   updateStaffStatus,
 };

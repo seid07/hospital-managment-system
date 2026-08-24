@@ -452,7 +452,9 @@ a {
   background: #ffffff;
   color: var(--text);
   font-size: 13px;
-  transition: border-color 150ms ease, box-shadow 150ms ease;
+  transition:
+    border-color 150ms ease,
+    box-shadow 150ms ease;
 }
 
 .form-field input:focus,
@@ -897,7 +899,8 @@ a {
   align-items: center;
   justify-content: center;
   padding: 24px 16px;
-  background: radial-gradient(circle at top right, #1a365d, #0f172a 60%, #090d16 100%);
+  /* background: radial-gradient(circle at top right, #1a365d, #0f172a 60%, #090d16 100%); */
+  background: white;
   position: relative;
   overflow: hidden;
 }
@@ -933,7 +936,9 @@ a {
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 18px;
   padding: 36px 32px;
-  box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.05);
+  box-shadow:
+    0 20px 40px -10px rgba(0, 0, 0, 0.6),
+    0 0 0 1px rgba(255, 255, 255, 0.05);
   backdrop-filter: blur(16px);
   position: relative;
   z-index: 10;
@@ -1412,4 +1417,3 @@ a {
   display: inline-block;
   margin-top: 6px;
 }
-

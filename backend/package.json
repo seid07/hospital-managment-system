@@ -9,8 +9,9 @@
     "migrate": "node src/migrate.js",
     "seed": "node seeds/seed-all.js",
     "seed:admin": "node seeds/seed-admin.js",
+    "reset:clean": "node scripts/reset-clean-db.js",
     "test:db": "node src/test-db.js",
-    "test": "node --test test/**/*.test.js"
+    "test": "node --test --test-concurrency=1 test/**/*.test.js"
   },
   "keywords": [],
   "type": "commonjs",

@@ -13,6 +13,7 @@ import { getPatientRecord } from "../services/patientService";
 import { getMedications, createPrescription } from "../services/pharmacyService";
 import { getTestCatalog, createLabOrder } from "../services/laboratoryService";
 import { useAuth } from "../context/useAuth";
+import { formatCurrency } from "../utils/currency";
 
 function ClinicalEncounter() {
   const { id } = useParams();
@@ -70,6 +71,8 @@ function ClinicalEncounter() {
   const [labsCreated, setLabsCreated] = useState([]);
 
   const [saving, setSaving] = useState(false);
+  const [rxSubmitting, setRxSubmitting] = useState(false);
+  const [labSubmitting, setLabSubmitting] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -240,7 +243,10 @@ function ClinicalEncounter() {
       setError("Please save the encounter first before prescribing medications.");
       return;
     }
+    if (rxSubmitting) return; // guard against a double-click creating a duplicate prescription
     try {
+      setRxSubmitting(true);
+      setError("");
       const res = await createPrescription({
         encounterId,
         patientId,
@@ -262,6 +268,8 @@ function ClinicalEncounter() {
       setSuccess("Prescription recorded for pharmacy queue.");
     } catch (err) {
       setError(err.message || "Failed to create prescription.");
+    } finally {
+      setRxSubmitting(false);
     }
   }
 
@@ -271,7 +279,10 @@ function ClinicalEncounter() {
       setError("Please save the encounter first before ordering lab tests.");
       return;
     }
+    if (labSubmitting) return; // guard against a double-click creating a duplicate lab order
     try {
+      setLabSubmitting(true);
+      setError("");
       const res = await createLabOrder({
         encounterId,
         patientId,
@@ -284,6 +295,8 @@ function ClinicalEncounter() {
       setSuccess("Laboratory test order submitted to lab queue.");
     } catch (err) {
       setError(err.message || "Failed to order laboratory test.");
+    } finally {
+      setLabSubmitting(false);
     }
   }
 
@@ -718,8 +731,8 @@ function ClinicalEncounter() {
             <button type="button" className="button button-secondary" onClick={() => setShowRxModal(false)}>
               Cancel
             </button>
-            <button type="submit" className="button button-primary">
-              Add Prescription
+            <button type="submit" className="button button-primary" disabled={rxSubmitting}>
+              {rxSubmitting ? "Adding..." : "Add Prescription"}
             </button>
           </div>
         </form>
@@ -736,12 +749,20 @@ function ClinicalEncounter() {
               required
             >
               <option value="">-- Choose Lab Test --</option>
-              {labCatalog.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name} ({t.code}) - Category: {t.category} (${t.price})
-                </option>
-              ))}
+              {labCatalog
+                .filter((t) => t.linked_service_code)
+                .map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name} ({t.code}) - Category: {t.category} ({formatCurrency(t.price)})
+                  </option>
+                ))}
             </select>
+            {labCatalog.some((t) => !t.linked_service_code) && (
+              <small style={{ color: "var(--text-muted)" }}>
+                Some catalog tests are hidden here because they aren't linked to a billable
+                service yet. Ask an administrator to link them in Laboratory &gt; Catalog.
+              </small>
+            )}
           </div>
 
           <div className="form-field" style={{ marginBottom: "14px" }}>
@@ -769,8 +790,8 @@ function ClinicalEncounter() {
             <button type="button" className="button button-secondary" onClick={() => setShowLabModal(false)}>
               Cancel
             </button>
-            <button type="submit" className="button button-primary" disabled={!labForm.testId}>
-              Submit Lab Order
+            <button type="submit" className="button button-primary" disabled={!labForm.testId || labSubmitting}>
+              {labSubmitting ? "Ordering..." : "Submit Lab Order"}
             </button>
           </div>
         </form>

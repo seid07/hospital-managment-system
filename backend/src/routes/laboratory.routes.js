@@ -1,7 +1,7 @@
 const express = require("express");
 const { authenticateToken } = require("../middleware/auth.middleware");
 const { authorizeRoles } = require("../middleware/rbac.middleware");
-const laboratoryController = require("../controllers/laboratory.controller");
+const labController = require("../controllers/laboratory.controller");
 
 const router = express.Router();
 
@@ -9,50 +9,67 @@ router.use(authenticateToken);
 
 router.get(
   "/catalog",
-  authorizeRoles("ADMIN", "LAB_TECH", "DOCTOR", "NURSE"),
-  laboratoryController.getTestCatalog
+  labController.getCatalog
 );
 
 router.post(
   "/catalog",
   authorizeRoles("ADMIN", "LAB_TECH"),
-  laboratoryController.addCatalogTest
+  labController.addCatalogTest
+);
+
+router.put(
+  "/catalog/:id/link-service",
+  authorizeRoles("ADMIN", "LAB_TECH"),
+  labController.linkCatalogTestService
 );
 
 router.post(
   "/orders",
   authorizeRoles("ADMIN", "DOCTOR"),
-  laboratoryController.createLabOrder
+  labController.createLabOrder
 );
 
 router.get(
   "/orders",
   authorizeRoles("ADMIN", "LAB_TECH", "DOCTOR", "NURSE"),
-  laboratoryController.getLabOrders
+  labController.getOrdersQueue
 );
 
 router.get(
   "/orders/:id",
   authorizeRoles("ADMIN", "LAB_TECH", "DOCTOR", "NURSE"),
-  laboratoryController.getLabOrder
+  labController.getOrderById
+);
+
+router.post(
+  "/orders/:id/collect",
+  authorizeRoles("ADMIN", "LAB_TECH", "NURSE"),
+  labController.collectSpecimen
 );
 
 router.post(
   "/orders/:id/specimen",
   authorizeRoles("ADMIN", "LAB_TECH", "NURSE"),
-  laboratoryController.collectSpecimen
+  labController.collectSpecimen
+);
+
+router.post(
+  "/orders/:id/process",
+  authorizeRoles("ADMIN", "LAB_TECH"),
+  labController.startProcessing
 );
 
 router.post(
   "/orders/:id/results",
   authorizeRoles("ADMIN", "LAB_TECH"),
-  laboratoryController.enterResults
+  labController.enterResults
 );
 
 router.post(
   "/orders/:id/verify",
-  authorizeRoles("ADMIN", "LAB_TECH", "DOCTOR"),
-  laboratoryController.verifyResults
+  authorizeRoles("ADMIN", "LAB_TECH"),
+  labController.verifyResults
 );
 
 module.exports = router;

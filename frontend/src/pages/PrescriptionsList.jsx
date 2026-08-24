@@ -7,11 +7,11 @@ import Modal from "../components/common/Modal";
 import PrintableDocument from "../components/common/PrintableDocument";
 import {
   getPrescriptions,
-  recordPharmacyPayment,
-  dispensePrescription,
+  dispenseMultiplePrescriptions,
 } from "../services/pharmacyService";
 import { useAuth } from "../context/useAuth";
 import { useDebounce } from "../hooks/useDebounce";
+import { formatCurrency } from "../utils/currency";
 
 function PrescriptionsList() {
   const { user } = useAuth();
@@ -28,10 +28,12 @@ function PrescriptionsList() {
   const [searchInput, setSearchInput] = useState("");
   const debouncedSearch = useDebounce(searchInput, 300);
 
-  // Payment & Dispense modal
-  const [dispenseTarget, setDispenseTarget] = useState(null);
+  // Multi-dispense selection per patient: { [patientId]: Set<rxId> }
+  const [selectedRxsByPatient, setSelectedRxsByPatient] = useState({});
+
+  // Payment & Dispense modal for grouped selection
+  const [groupDispenseTarget, setGroupDispenseTarget] = useState(null); // { patient, rxs: [...] }
   const [payMethod, setPayMethod] = useState("CASH");
-  const [payAmount, setPayAmount] = useState(0);
   const [txRef, setTxRef] = useState("");
   const [dispenseNotes, setDispenseNotes] = useState("");
   const [dispensing, setDispensing] = useState(false);
@@ -47,7 +49,7 @@ function PrescriptionsList() {
         setError("");
         const res = await getPrescriptions({
           page,
-          limit: 15,
+          limit: 30,
           status: statusFilter,
           search: debouncedSearch.trim(),
         });
@@ -76,47 +78,114 @@ function PrescriptionsList() {
     setPage(1);
   }
 
-  function handleOpenDispense(rx) {
-    setDispenseTarget(rx);
-    const unitPrice = parseFloat(rx.unit_price || 25);
-    const totalEst = unitPrice * parseInt(rx.quantity || 1, 10);
-    setPayAmount(totalEst);
+  // Toggle selection of an individual prescription for a patient
+  function handleToggleRx(patientId, rxId) {
+    setSelectedRxsByPatient((prev) => {
+      const currentSet = new Set(prev[patientId] || []);
+      if (currentSet.has(rxId)) {
+        currentSet.delete(rxId);
+      } else {
+        currentSet.add(rxId);
+      }
+      return { ...prev, [patientId]: currentSet };
+    });
+  }
+
+  // Toggle select all active prescriptions for a patient
+  function handleToggleSelectAll(patientId, patientRxs) {
+    const activeRxs = patientRxs.filter((r) => ["ACTIVE", "PAID"].includes(r.status));
+    setSelectedRxsByPatient((prev) => {
+      const currentSet = prev[patientId] || new Set();
+      const allSelected = activeRxs.length > 0 && activeRxs.every((r) => currentSet.has(r.id));
+      if (allSelected) {
+        return { ...prev, [patientId]: new Set() };
+      }
+      return { ...prev, [patientId]: new Set(activeRxs.map((r) => r.id)) };
+    });
+  }
+
+  function handleOpenGroupDispense(patientGroup) {
+    const selectedIds = selectedRxsByPatient[patientGroup.patient_id] || new Set();
+    const activeSelected = patientGroup.prescriptions.filter((r) => selectedIds.has(r.id));
+    if (activeSelected.length === 0) return;
+
+    setGroupDispenseTarget({
+      patient: patientGroup,
+      rxs: activeSelected,
+    });
     setPayMethod("CASH");
     setTxRef("");
     setDispenseNotes("");
     setDispenseError("");
   }
 
-  async function handleDispenseSubmit(e) {
+  async function handleGroupDispenseSubmit(e) {
     e.preventDefault();
     setDispenseError("");
-    if (!dispenseTarget) return;
+    if (!groupDispenseTarget || groupDispenseTarget.rxs.length === 0) return;
 
     try {
       setDispensing(true);
+      const rxIds = groupDispenseTarget.rxs.map((r) => r.id);
+      await dispenseMultiplePrescriptions({
+        prescriptionIds: rxIds,
+        paymentMethod: payMethod,
+        transactionReference: txRef || null,
+        dispensedNotes: dispenseNotes || `Dispensed ${rxIds.length} medications`,
+      });
 
-      // If prescription is active and not yet marked paid, collect pharmacy payment
-      if (dispenseTarget.status === "ACTIVE" && payAmount > 0) {
-        await recordPharmacyPayment({
-          prescriptionId: dispenseTarget.id,
-          amount: payAmount,
-          paymentMethod: payMethod,
-          transactionReference: txRef || null,
-          notes: `Pharmacy counter payment: ${payMethod}`,
-        });
-      }
-
-      // Then dispense medication
-      await dispensePrescription(dispenseTarget.id, { dispensedNotes: dispenseNotes });
-      setSuccess(`Prescription #${dispenseTarget.prescription_number} paid & dispensed successfully.`);
-      setDispenseTarget(null);
+      setSuccess(`Successfully dispensed ${rxIds.length} medication(s) for ${groupDispenseTarget.patient.patient_first_name} ${groupDispenseTarget.patient.patient_last_name}.`);
+      setGroupDispenseTarget(null);
+      // Clear patient selection
+      setSelectedRxsByPatient((prev) => ({ ...prev, [groupDispenseTarget.patient.patient_id]: new Set() }));
       setReloadKey((prev) => prev + 1);
     } catch (err) {
-      setDispenseError(err.response?.data?.message || err.message || "Failed to dispense medication.");
+      setDispenseError(err.response?.data?.message || err.message || "Failed to dispense medications.");
     } finally {
       setDispensing(false);
     }
   }
+
+  function handleOpenDispense(rx) {
+    // Route single-row "Pay & Dispense" through the same working group-dispense
+    // modal used for multi-select, just pre-selected to this one prescription.
+    setGroupDispenseTarget({
+      patient: {
+        patient_id: rx.patient_id,
+        patient_number: rx.patient_number,
+        patient_first_name: rx.patient_first_name,
+        patient_last_name: rx.patient_last_name,
+        doctor_first_name: rx.doctor_first_name,
+        doctor_last_name: rx.doctor_last_name,
+      },
+      rxs: [rx],
+    });
+    setPayMethod("CASH");
+    setTxRef("");
+    setDispenseNotes("");
+    setDispenseError("");
+  }
+
+  // Group prescriptions by patient
+  const patientGroups = prescriptions.reduce((acc, rx) => {
+    const key = rx.patient_id;
+    if (!acc[key]) {
+      acc[key] = {
+        patient_id: rx.patient_id,
+        patient_number: rx.patient_number,
+        patient_first_name: rx.patient_first_name,
+        patient_last_name: rx.patient_last_name,
+        doctor_first_name: rx.doctor_first_name,
+        doctor_last_name: rx.doctor_last_name,
+        created_at: rx.created_at,
+        prescriptions: [],
+      };
+    }
+    acc[key].prescriptions.push(rx);
+    return acc;
+  }, {});
+
+  const groupedList = Object.values(patientGroups);
 
   return (
     <AppShell>
@@ -125,7 +194,7 @@ function PrescriptionsList() {
           <p className="page-eyebrow">Pharmacy & Formulary Station</p>
           <h1>Medication Prescriptions & Dispensing</h1>
           <p className="page-description">
-            Independent pharmacy counter payment processing, dosage validation, and medication dispensing.
+            Grouped patient prescriptions, partial selection payment, dosage validation, and inventory deduction.
           </p>
         </div>
 
@@ -144,7 +213,7 @@ function PrescriptionsList() {
         <form onSubmit={handleSearchSubmit} className="form-grid" style={{ gridTemplateColumns: "1fr 200px 100px", gap: "10px" }}>
           <input
             type="search"
-            placeholder="Search Rx #, medication, or patient name..."
+            placeholder="Live search by patient name, PAT #, Rx #, or medication..."
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
           />
@@ -169,85 +238,188 @@ function PrescriptionsList() {
         </form>
       </section>
 
-      {/* Table */}
-      <section className="card">
+      {/* Grouped Prescription Cards by Patient */}
+      <section>
         {loading ? (
           <div className="loading-state">Loading pharmacy queue...</div>
-        ) : prescriptions.length === 0 ? (
-          <div className="empty-state">
-            <div className="empty-state-icon">💊</div>
-            <h3>No prescriptions found</h3>
-            <p>New doctor orders will appear here automatically.</p>
+        ) : groupedList.length === 0 ? (
+          <div className="card">
+            <div className="empty-state">
+              <div className="empty-state-icon">💊</div>
+              <h3>No prescriptions found</h3>
+              <p>Doctor prescribed medications will appear here automatically grouped by patient.</p>
+            </div>
           </div>
         ) : (
-          <div className="table-wrapper">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Prescription #</th>
-                  <th>Patient Details</th>
-                  <th>Medication & Regimen</th>
-                  <th>Qty</th>
-                  <th>Doctor</th>
-                  <th>Status</th>
-                  <th>Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {prescriptions.map((rx) => (
-                  <tr key={rx.id}>
-                    <td>
-                      <strong style={{ fontFamily: "monospace", color: "var(--primary)" }}>
-                        {rx.prescription_number}
-                      </strong>
-                    </td>
-                    <td>
-                      <Link to={`/patients/${rx.patient_id}`} style={{ fontWeight: 600 }}>
-                        {rx.patient_first_name} {rx.patient_last_name}
-                      </Link>
-                      <br />
-                      <small style={{ color: "var(--text-muted)", fontFamily: "monospace" }}>
-                        {rx.patient_number}
-                      </small>
-                    </td>
-                    <td>
-                      <strong>{rx.medication_name}</strong> ({rx.dosage})
-                      <br />
-                      <small style={{ color: "var(--text-muted)" }}>
-                        {rx.frequency} • {rx.route} • {rx.duration || "as directed"}
-                      </small>
-                    </td>
-                    <td style={{ fontWeight: 700 }}>{rx.quantity}</td>
-                    <td>Dr. {rx.doctor_first_name} {rx.doctor_last_name}</td>
-                    <td>
-                      <StatusBadge status={rx.status} />
-                    </td>
-                    <td>
-                      <div style={{ display: "flex", gap: "6px" }}>
-                        {["ACTIVE", "PAID"].includes(rx.status) && ["ADMIN", "PHARMACIST"].includes(user?.role) && (
-                          <button
-                            type="button"
-                            className="button button-primary"
-                            style={{ padding: "4px 8px", fontSize: "11px", fontWeight: 700 }}
-                            onClick={() => handleOpenDispense(rx)}
-                          >
-                            {rx.status === "ACTIVE" ? "Pay & Dispense →" : "Dispense →"}
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          className="button button-secondary"
-                          style={{ padding: "4px 8px", fontSize: "11px" }}
-                          onClick={() => setPrintTarget(rx)}
-                        >
-                          Print Rx
-                        </button>
+          <div style={{ display: "flex", flexDirection: "column", gap: "18px" }}>
+            {groupedList.map((group) => {
+              const selectedIds = selectedRxsByPatient[group.patient_id] || new Set();
+              const activeRxs = group.prescriptions.filter((r) => ["ACTIVE", "PAID"].includes(r.status));
+              const selectedRxs = group.prescriptions.filter((r) => selectedIds.has(r.id));
+              const selectedTotal = selectedRxs.reduce((sum, r) => {
+                const price = parseFloat(r.unit_price || 25);
+                const qty = parseInt(r.quantity || 1, 10);
+                return sum + price * qty;
+              }, 0);
+              const allActiveSelected = activeRxs.length > 0 && activeRxs.every((r) => selectedIds.has(r.id));
+
+              return (
+                <div key={group.patient_id} className="card" style={{ borderLeft: "4px solid var(--primary)", padding: "18px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "14px", flexWrap: "wrap", gap: "10px" }}>
+                    <div>
+                      <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                        <h2 style={{ margin: 0, fontSize: "17px", fontWeight: 700 }}>
+                          <Link to={`/patients/${group.patient_id}`} style={{ color: "var(--text)" }}>
+                            {group.patient_first_name} {group.patient_last_name}
+                          </Link>
+                        </h2>
+                        <span style={{ fontFamily: "monospace", fontSize: "12px", background: "var(--primary-light)", color: "var(--primary)", padding: "2px 6px", borderRadius: "4px", fontWeight: 600 }}>
+                          {group.patient_number}
+                        </span>
                       </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                      <div style={{ fontSize: "12px", color: "var(--text-muted)", marginTop: "4px" }}>
+                        Prescribing Doctor: <strong>Dr. {group.doctor_first_name} {group.doctor_last_name}</strong> • Order Date: {new Date(group.created_at).toLocaleDateString()}
+                      </div>
+                    </div>
+
+                    {activeRxs.length > 1 && ["ADMIN", "PHARMACIST"].includes(user?.role) && (
+                      <button
+                        type="button"
+                        className="button button-secondary"
+                        style={{ fontSize: "11px", padding: "4px 8px" }}
+                        onClick={() => handleToggleSelectAll(group.patient_id, group.prescriptions)}
+                      >
+                        {allActiveSelected ? "Deselect All" : "Select All Active"}
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="table-wrapper">
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          {["ADMIN", "PHARMACIST"].includes(user?.role) && <th style={{ width: "40px" }}>Select</th>}
+                          <th>Rx #</th>
+                          <th>Medication & Regimen</th>
+                          <th>Qty</th>
+                          <th>Stock Available</th>
+                          <th>Unit Price</th>
+                          <th>Total Due</th>
+                          <th>Status</th>
+                          <th>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {group.prescriptions.map((rx) => {
+                          const unitPrice = parseFloat(rx.unit_price || 25);
+                          const qty = parseInt(rx.quantity || 1, 10);
+                          const lineTotal = unitPrice * qty;
+                          const isSelected = selectedIds.has(rx.id);
+                          const isLowStock = rx.current_stock !== undefined && rx.current_stock !== null && rx.current_stock < 15;
+                          const canSelect = ["ACTIVE", "PAID"].includes(rx.status) && ["ADMIN", "PHARMACIST"].includes(user?.role);
+
+                          return (
+                            <tr key={rx.id} style={{ background: isSelected ? "var(--primary-light)" : "transparent" }}>
+                              {["ADMIN", "PHARMACIST"].includes(user?.role) && (
+                                <td>
+                                  {canSelect ? (
+                                    <input
+                                      type="checkbox"
+                                      checked={isSelected}
+                                      onChange={() => handleToggleRx(group.patient_id, rx.id)}
+                                      style={{ width: "16px", height: "16px", cursor: "pointer" }}
+                                    />
+                                  ) : (
+                                    <span style={{ color: "var(--text-muted)" }}>—</span>
+                                  )}
+                                </td>
+                              )}
+                              <td>
+                                <strong style={{ fontFamily: "monospace", color: "var(--primary)" }}>
+                                  {rx.prescription_number}
+                                </strong>
+                              </td>
+                              <td>
+                                <strong>{rx.medication_name}</strong> {rx.dosage && `(${rx.dosage})`}
+                                <br />
+                                <small style={{ color: "var(--text-muted)" }}>
+                                  {rx.frequency} • {rx.route} • {rx.duration || "as directed"}
+                                  {rx.instructions && ` • Note: ${rx.instructions}`}
+                                </small>
+                              </td>
+                              <td style={{ fontWeight: 700 }}>{rx.quantity}</td>
+                              <td>
+                                {rx.current_stock !== undefined && rx.current_stock !== null ? (
+                                  <span style={{ fontWeight: 600, color: isLowStock ? "var(--danger)" : "var(--success)" }}>
+                                    {rx.current_stock} {isLowStock && <span className="badge badge-danger" style={{ fontSize: "9px", marginLeft: "4px" }}>LOW &lt; 15</span>}
+                                  </span>
+                                ) : (
+                                  <span style={{ color: "var(--text-muted)" }}>—</span>
+                                )}
+                              </td>
+                              <td style={{ fontFamily: "monospace" }}>{formatCurrency(unitPrice)}</td>
+                              <td>
+                                <strong style={{ color: "var(--success)", fontFamily: "monospace" }}>
+                                  {formatCurrency(lineTotal)}
+                                </strong>
+                              </td>
+                              <td>
+                                <StatusBadge status={rx.status} />
+                              </td>
+                              <td>
+                                <div style={{ display: "flex", gap: "6px" }}>
+                                  {["ACTIVE", "PAID"].includes(rx.status) && ["ADMIN", "PHARMACIST"].includes(user?.role) && (
+                                    <button
+                                      type="button"
+                                      className="button button-primary"
+                                      style={{ padding: "3px 8px", fontSize: "11px", fontWeight: 600 }}
+                                      onClick={() => handleOpenDispense(rx)}
+                                    >
+                                      {rx.status === "ACTIVE" ? "Pay & Dispense" : "Dispense"}
+                                    </button>
+                                  )}
+                                  <button
+                                    type="button"
+                                    className="button button-secondary"
+                                    style={{ padding: "3px 8px", fontSize: "11px" }}
+                                    onClick={() => setPrintTarget(rx)}
+                                  >
+                                    Print
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Summary & Group Actions for Patient */}
+                  {["ADMIN", "PHARMACIST"].includes(user?.role) && activeRxs.length > 0 && (
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "14px", padding: "10px 14px", background: "var(--surface-sunken)", borderRadius: "6px", flexWrap: "wrap", gap: "10px" }}>
+                      <div style={{ fontSize: "13px" }}>
+                        Selected Medications: <strong>{selectedRxs.length}</strong> of {activeRxs.length}
+                        {selectedRxs.length > 0 && (
+                          <span style={{ marginLeft: "14px" }}>
+                            Selected Total Due: <strong style={{ color: "var(--success)", fontSize: "15px", fontFamily: "monospace" }}>{formatCurrency(selectedTotal)}</strong>
+                          </span>
+                        )}
+                      </div>
+
+                      <button
+                        type="button"
+                        className="button button-primary"
+                        disabled={selectedRxs.length === 0 || dispensing}
+                        onClick={() => handleOpenGroupDispense(group)}
+                      >
+                        💳 Pay & Dispense Selected ({selectedRxs.length}) →
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
 
@@ -259,74 +431,87 @@ function PrescriptionsList() {
         />
       </section>
 
-      {/* Modal: Independent Pharmacy Payment & Dispense */}
-      <Modal isOpen={Boolean(dispenseTarget)} onClose={() => setDispenseTarget(null)} title="Pharmacy Counter Payment & Dispensing">
+      {/* Modal: Group Dispensing & Pharmacy Counter Payment */}
+      <Modal
+        isOpen={Boolean(groupDispenseTarget)}
+        onClose={() => setGroupDispenseTarget(null)}
+        title="Collect Pharmacy Payment & Dispense Medications"
+        maxWidth="650px"
+      >
         {dispenseError && <div className="alert alert-error">{dispenseError}</div>}
-        {dispenseTarget && (
-          <form onSubmit={handleDispenseSubmit}>
+        {groupDispenseTarget && (
+          <form onSubmit={handleGroupDispenseSubmit}>
             <div style={{ background: "var(--primary-light)", padding: "14px", borderRadius: "var(--radius-sm)", marginBottom: "14px", fontSize: "13px" }}>
-              <div className="flex justify-between">
-                <div><strong>Rx #:</strong> {dispenseTarget.prescription_number}</div>
-                <div><strong>Current State:</strong> <span className="font-bold text-indigo-400">{dispenseTarget.status}</span></div>
+              <div style={{ fontWeight: 700, fontSize: "15px", marginBottom: "4px" }}>
+                Patient: {groupDispenseTarget.patient.patient_first_name} {groupDispenseTarget.patient.patient_last_name} ({groupDispenseTarget.patient.patient_number})
               </div>
-              <div><strong>Medication:</strong> {dispenseTarget.medication_name} ({dispenseTarget.dosage})</div>
-              <div><strong>Patient:</strong> {dispenseTarget.patient_first_name} {dispenseTarget.patient_last_name} ({dispenseTarget.patient_number})</div>
-              <div><strong>Prescribed Quantity:</strong> {dispenseTarget.quantity} units</div>
+              <div style={{ color: "var(--text-muted)" }}>
+                Doctor: Dr. {groupDispenseTarget.patient.doctor_first_name} {groupDispenseTarget.patient.doctor_last_name}
+              </div>
             </div>
 
-            {dispenseTarget.status === "ACTIVE" && (
-              <div style={{ border: "1px solid var(--border-color)", padding: "12px", borderRadius: "8px", marginBottom: "14px" }}>
-                <h4 style={{ margin: "0 0 10px 0", fontSize: "13px", color: "var(--primary)" }}>Pharmacy Counter Payment Collection</h4>
-                <div className="form-grid" style={{ gridTemplateColumns: "1fr 1fr 1fr", gap: "10px" }}>
-                  <div className="form-field">
-                    <label>Payment Amount (ETB) *</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      value={payAmount}
-                      onChange={(e) => setPayAmount(parseFloat(e.target.value) || 0)}
-                      required
-                    />
-                  </div>
-                  <div className="form-field">
-                    <label>Payment Method *</label>
-                    <select value={payMethod} onChange={(e) => setPayMethod(e.target.value)}>
-                      <option value="CASH">Cash</option>
-                      <option value="TELEBIRR">Telebirr</option>
-                      <option value="CBE_BIRR">CBE Birr</option>
-                      <option value="CARD">Card / POS</option>
-                      <option value="BANK">Bank Transfer</option>
-                    </select>
-                  </div>
-                  <div className="form-field">
-                    <label>Transaction / Ref #</label>
-                    <input
-                      placeholder="e.g. TB-123456"
-                      value={txRef}
-                      onChange={(e) => setTxRef(e.target.value)}
-                    />
-                  </div>
+            <div style={{ marginBottom: "14px" }}>
+              <h4 style={{ margin: "0 0 8px 0", fontSize: "13px" }}>Selected Medications to Dispense ({groupDispenseTarget.rxs.length}):</h4>
+              <ul style={{ margin: 0, paddingLeft: "18px", fontSize: "13px", lineHeight: "1.6" }}>
+                {groupDispenseTarget.rxs.map((r) => {
+                  const unitPrice = parseFloat(r.unit_price || 25);
+                  const qty = parseInt(r.quantity || 1, 10);
+                  return (
+                    <li key={r.id}>
+                      <strong>{r.medication_name}</strong> ({r.dosage || "Standard"}) — {qty} units @ {formatCurrency(unitPrice)} = <strong style={{ color: "var(--success)" }}>{formatCurrency(unitPrice * qty)}</strong>
+                    </li>
+                  );
+                })}
+              </ul>
+              <div style={{ marginTop: "10px", textAlign: "right", fontSize: "15px" }}>
+                Total Payment Due: <strong style={{ color: "var(--success)", fontSize: "17px", fontFamily: "monospace" }}>
+                  {formatCurrency(
+                    groupDispenseTarget.rxs.reduce((sum, r) => sum + (parseFloat(r.unit_price || 25) * parseInt(r.quantity || 1, 10)), 0)
+                  )}
+                </strong>
+              </div>
+            </div>
+
+            <div style={{ border: "1px solid var(--border)", padding: "12px", borderRadius: "8px", marginBottom: "14px" }}>
+              <h4 style={{ margin: "0 0 10px 0", fontSize: "13px", color: "var(--primary)" }}>Payment Collection Details</h4>
+              <div className="form-grid" style={{ gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                <div className="form-field">
+                  <label>Payment Method *</label>
+                  <select value={payMethod} onChange={(e) => setPayMethod(e.target.value)}>
+                    <option value="CASH">Cash</option>
+                    <option value="TELEBIRR">Telebirr</option>
+                    <option value="CBE_BIRR">CBE Birr</option>
+                    <option value="CARD">Card / POS</option>
+                    <option value="BANK">Bank Transfer</option>
+                  </select>
+                </div>
+                <div className="form-field">
+                  <label>Transaction / Ref #</label>
+                  <input
+                    placeholder="e.g. TXN-123456"
+                    value={txRef}
+                    onChange={(e) => setTxRef(e.target.value)}
+                  />
                 </div>
               </div>
-            )}
+            </div>
 
             <div className="form-field">
-              <label>Pharmacist Verification Notes & Batch ID</label>
+              <label>Pharmacist Verification Notes</label>
               <textarea
                 rows="2"
-                placeholder="Batch #EXP-2027 verified. Patient instructed on frequency and precautions."
+                placeholder="Dosage verified. Patient instructed on administration precautions."
                 value={dispenseNotes}
                 onChange={(e) => setDispenseNotes(e.target.value)}
               />
             </div>
 
             <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px", marginTop: "18px" }}>
-              <button type="button" className="button button-secondary" onClick={() => setDispenseTarget(null)}>
+              <button type="button" className="button button-secondary" onClick={() => setGroupDispenseTarget(null)}>
                 Cancel
               </button>
               <button type="submit" className="button button-primary" disabled={dispensing}>
-                {dispensing ? "Processing..." : "✓ Confirm Payment & Dispense Medicine"}
+                {dispensing ? "Processing Dispense..." : "✓ Confirm Payment & Dispense Selected"}
               </button>
             </div>
           </form>

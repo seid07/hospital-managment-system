@@ -86,7 +86,7 @@ function Dashboard() {
               to="/admin/schedules"
             />
             <StatCard
-              label="Registered Patients"
+              label="Total Patients"
               value={loading ? "..." : kpis?.registeredPatients}
               icon="♙"
               description="Total patient records"
@@ -97,7 +97,14 @@ function Dashboard() {
               value={loading ? "..." : kpis?.todayAppointments}
               icon="□"
               description="Scheduled for today"
-              to="/appointments"
+              to="/appointments?date=today"
+            />
+            <StatCard
+              label="Pending Doctor Orders"
+              value={loading ? "..." : kpis?.pendingDoctorOrders}
+              icon="⏳"
+              description="Orders awaiting cashier"
+              to="/billing"
             />
             <StatCard
               label="Total Revenue"
@@ -133,18 +140,11 @@ function Dashboard() {
         {role === "REGISTRAR" && (
           <>
             <StatCard
-              label="Registrar Visit Desk"
-              value="ACTIVE"
-              icon="📋"
-              description="Intake, Cashier & Routing Hub"
-              to="/registrar/desk"
-            />
-            <StatCard
               label="Today's Appointments"
               value={loading ? "..." : kpis?.todayAppointments}
               icon="□"
               description="Total booked for today"
-              to="/appointments"
+              to="/appointments?date=today"
             />
             <StatCard
               label="Checked In"
@@ -154,11 +154,32 @@ function Dashboard() {
               to="/reception/queue"
             />
             <StatCard
+              label="Registered Today"
+              value={loading ? "..." : kpis?.registeredToday}
+              icon="+"
+              description="New patient intakes today"
+              to="/patients?registered=today"
+            />
+            <StatCard
               label="Total Patients"
               value={loading ? "..." : kpis?.totalPatients}
               icon="♙"
               description="Active patient database"
               to="/patients"
+            />
+            <StatCard
+              label="Pending Doctor Orders"
+              value={loading ? "..." : kpis?.pendingDoctorOrders}
+              icon="⏳"
+              description="Doctor orders awaiting cashier"
+              to="/registrar/desk?tab=PENDING_ORDERS"
+            />
+            <StatCard
+              label="Registrar Visit Desk"
+              value="ACTIVE"
+              icon="📋"
+              description="Intake, Cashier & Routing Hub"
+              to="/registrar/desk"
             />
           </>
         )}

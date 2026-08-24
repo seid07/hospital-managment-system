@@ -1,9 +1,9 @@
-const laboratoryService = require("../services/laboratory.service");
+const labService = require("../services/laboratory.service");
 const { isValidUUID } = require("../validators");
 
-async function getTestCatalog(req, res) {
+async function getCatalog(req, res) {
   try {
-    const result = await laboratoryService.getTestCatalog(req.query);
+    const result = await labService.getTestCatalog(req.query);
 
     return res.status(200).json({
       success: true,
@@ -19,7 +19,7 @@ async function getTestCatalog(req, res) {
     console.error("Get lab catalog error:", error);
     return res.status(500).json({
       success: false,
-      message: "Unable to retrieve laboratory test catalog.",
+      message: "Unable to retrieve laboratory catalog.",
     });
   }
 }
@@ -35,7 +35,7 @@ async function addCatalogTest(req, res) {
       });
     }
 
-    const test = await laboratoryService.addCatalogTest(req.body, req.user?.userId);
+    const test = await labService.addCatalogTest(req.body, req.user?.id || req.user?.userId);
 
     return res.status(201).json({
       success: true,
@@ -43,23 +43,57 @@ async function addCatalogTest(req, res) {
       data: test,
     });
   } catch (error) {
-    console.error("Add lab test error:", error);
+    console.error("Add lab catalog test error:", error);
     if (error.code === "23505") {
       return res.status(409).json({
         success: false,
-        message: "A lab test with this code already exists.",
+        message: "A test with this code already exists.",
       });
     }
     return res.status(500).json({
       success: false,
-      message: "Unable to add lab test to catalog.",
+      message: "Unable to add laboratory test.",
+    });
+  }
+}
+
+async function linkCatalogTestService(req, res) {
+  try {
+    const { id } = req.params;
+    const { serviceId } = req.body;
+
+    if (!isValidUUID(id) || !serviceId || !isValidUUID(serviceId)) {
+      return res.status(400).json({
+        success: false,
+        message: "A valid lab test ID and serviceId are required.",
+      });
+    }
+
+    const test = await labService.linkCatalogTestService(id, serviceId, req.user?.id || req.user?.userId);
+
+    return res.status(200).json({
+      success: true,
+      message: "Laboratory test linked to billable service.",
+      data: test,
+    });
+  } catch (error) {
+    console.error("Link lab catalog test error:", error);
+    if (error.message === "SERVICE_NOT_FOUND" || error.message === "LAB_TEST_NOT_FOUND") {
+      return res.status(404).json({
+        success: false,
+        message: error.message === "SERVICE_NOT_FOUND" ? "Billable service not found." : "Laboratory test not found.",
+      });
+    }
+    return res.status(500).json({
+      success: false,
+      message: "Unable to link laboratory test to a billable service.",
     });
   }
 }
 
 async function createLabOrder(req, res) {
   try {
-    const { patientId, doctorId, testId, clinicalIndication, priority } = req.body;
+    const { patientId, doctorId, testId } = req.body;
 
     if (!patientId || !doctorId || !testId) {
       return res.status(400).json({
@@ -75,27 +109,33 @@ async function createLabOrder(req, res) {
       });
     }
 
-    const order = await laboratoryService.createLabOrder({
+    const order = await labService.createLabOrder({
       ...req.body,
-      createdBy: req.user?.userId,
+      createdBy: req.user?.id || req.user?.userId,
     });
 
     return res.status(201).json({
       success: true,
-      message: "Laboratory test ordered successfully.",
+      message: "Laboratory order created successfully.",
       data: order,
     });
   } catch (error) {
     console.error("Create lab order error:", error);
+    if (error.message?.startsWith("LAB_TEST_NOT_LINKED_TO_BILLABLE_SERVICE")) {
+      return res.status(409).json({
+        success: false,
+        message: error.message.replace("LAB_TEST_NOT_LINKED_TO_BILLABLE_SERVICE: ", ""),
+      });
+    }
     if (error.message === "LAB_TEST_NOT_FOUND") {
       return res.status(404).json({
         success: false,
-        message: "Selected lab test was not found.",
+        message: "Laboratory test not found in the catalog.",
       });
     }
     return res.status(500).json({
       success: false,
-      message: "Unable to create laboratory order.",
+      message: error.message || "Unable to create laboratory order.",
     });
   }
 }
@@ -110,18 +150,56 @@ async function collectSpecimen(req, res) {
       });
     }
 
-    const order = await laboratoryService.collectSpecimen(id, req.user?.userId);
+    const order = await labService.collectSpecimen(id, req.user?.id || req.user?.userId);
 
     return res.status(200).json({
       success: true,
-      message: "Specimen collected.",
+      message: "Specimen collection recorded successfully.",
       data: order,
     });
   } catch (error) {
     console.error("Collect specimen error:", error);
+    if (error.message === "ORDER_NOT_FOUND_OR_INVALID_STATUS") {
+      return res.status(400).json({
+        success: false,
+        message: "Order not found or specimen already collected.",
+      });
+    }
+    if (error.message?.startsWith("PAYMENT_REQUIRED")) {
+      return res.status(402).json({
+        success: false,
+        message: error.message.replace("PAYMENT_REQUIRED: ", ""),
+      });
+    }
     return res.status(500).json({
       success: false,
-      message: error.message || "Unable to update specimen status.",
+      message: "Unable to record specimen collection.",
+    });
+  }
+}
+
+async function startProcessing(req, res) {
+  try {
+    const { id } = req.params;
+    if (!isValidUUID(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid lab order ID format.",
+      });
+    }
+
+    const order = await labService.startProcessing(id, req.user?.id || req.user?.userId);
+
+    return res.status(200).json({
+      success: true,
+      message: "Processing started recorded.",
+      data: order,
+    });
+  } catch (error) {
+    console.error("Start processing error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Unable to start processing.",
     });
   }
 }
@@ -138,25 +216,31 @@ async function enterResults(req, res) {
       });
     }
 
-    if (!resultValue || !resultValue.trim()) {
+    if (!resultValue || typeof resultValue !== "string" || !resultValue.trim()) {
       return res.status(400).json({
         success: false,
-        message: "Result value is required.",
+        message: "A non-empty resultValue string is required.",
       });
     }
 
-    const order = await laboratoryService.enterResults(id, req.body, req.user?.userId);
+    const order = await labService.enterResults(id, req.body, req.user?.id || req.user?.userId);
 
     return res.status(200).json({
       success: true,
-      message: "Laboratory result entered successfully.",
+      message: "Laboratory results entered and turnaround time calculated successfully.",
       data: order,
     });
   } catch (error) {
     console.error("Enter lab results error:", error);
+    if (error.message === "LAB_ORDER_NOT_FOUND") {
+      return res.status(404).json({
+        success: false,
+        message: "Laboratory order not found.",
+      });
+    }
     return res.status(500).json({
       success: false,
-      message: error.message || "Unable to enter lab results.",
+      message: "Unable to record laboratory results.",
     });
   }
 }
@@ -171,25 +255,37 @@ async function verifyResults(req, res) {
       });
     }
 
-    const order = await laboratoryService.verifyResults(id, req.user?.userId);
+    const order = await labService.verifyResults(id, req.user?.id || req.user?.userId);
 
     return res.status(200).json({
       success: true,
-      message: "Laboratory results verified and released.",
+      message: "Laboratory results verified and released successfully.",
       data: order,
     });
   } catch (error) {
     console.error("Verify lab results error:", error);
+    if (error.message.startsWith("ORDER_NOT_RESULTED")) {
+      return res.status(400).json({
+        success: false,
+        message: error.message,
+      });
+    }
+    if (error.message === "LAB_ORDER_NOT_FOUND") {
+      return res.status(404).json({
+        success: false,
+        message: "Laboratory order not found.",
+      });
+    }
     return res.status(500).json({
       success: false,
-      message: error.message || "Unable to verify lab results.",
+      message: "Unable to verify laboratory results.",
     });
   }
 }
 
-async function getLabOrders(req, res) {
+async function getOrdersQueue(req, res) {
   try {
-    const result = await laboratoryService.getLabOrdersQueue(req.query);
+    const result = await labService.getLabOrdersQueue(req.query);
 
     return res.status(200).json({
       success: true,
@@ -202,15 +298,15 @@ async function getLabOrders(req, res) {
       },
     });
   } catch (error) {
-    console.error("Get lab orders error:", error);
+    console.error("Get lab orders queue error:", error);
     return res.status(500).json({
       success: false,
-      message: "Unable to retrieve lab orders queue.",
+      message: "Unable to retrieve laboratory orders queue.",
     });
   }
 }
 
-async function getLabOrder(req, res) {
+async function getOrderById(req, res) {
   try {
     const { id } = req.params;
     if (!isValidUUID(id)) {
@@ -220,12 +316,11 @@ async function getLabOrder(req, res) {
       });
     }
 
-    const order = await laboratoryService.getLabOrderById(id);
-
+    const order = await labService.getLabOrderById(id);
     if (!order) {
       return res.status(404).json({
         success: false,
-        message: "Lab order not found.",
+        message: "Laboratory order not found.",
       });
     }
 
@@ -237,18 +332,20 @@ async function getLabOrder(req, res) {
     console.error("Get lab order error:", error);
     return res.status(500).json({
       success: false,
-      message: "Unable to retrieve lab order.",
+      message: "Unable to retrieve laboratory order.",
     });
   }
 }
 
 module.exports = {
-  getTestCatalog,
+  getCatalog,
   addCatalogTest,
+  linkCatalogTestService,
   createLabOrder,
   collectSpecimen,
+  startProcessing,
   enterResults,
   verifyResults,
-  getLabOrders,
-  getLabOrder,
+  getOrdersQueue,
+  getOrderById,
 };

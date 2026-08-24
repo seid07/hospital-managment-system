@@ -42,7 +42,7 @@ async function getProcedureQueue({ status } = {}) {
     JOIN patients p ON qe.patient_id = p.id
     LEFT JOIN staff doc ON so.doctor_id = doc.id
     LEFT JOIN procedure_orders po ON po.service_order_id = so.id
-    WHERE d.code = 'PROCEDURE'
+    WHERE d.code = 'PROCEDURE' AND p.is_active = TRUE
   `;
   const params = [];
 

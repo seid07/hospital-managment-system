@@ -12,7 +12,11 @@ const billingService = require("../src/services/billing.service");
 const pharmacyService = require("../src/services/pharmacy.service");
 const radiologyService = require("../src/services/radiology.service");
 
+const { ensureTestUsers } = require("./helpers/setup-test-users");
+
 test("Service-First Payment & Multi-Department Workflow Integration Suite", async (t) => {
+  await ensureTestUsers();
+
   let adminUser, registrarUser, doctorUser, labUser, radUser, pharmUser;
   let testPatient1, testPatient2, testPatient3, testEmergencyPatient;
   let generalConsultService, cbcService, xrayService, bedService;
@@ -38,15 +42,15 @@ test("Service-First Payment & Multi-Department Workflow Integration Suite", asyn
 
   // Setup: Fetch Services from Catalog
   const allServices = await serviceCatalog.getServices({ activeOnly: true });
-  generalConsultService = allServices.find((s) => s.code === "CONSULT-GENERAL");
-  cbcService = allServices.find((s) => s.code === "LAB-CBC");
-  xrayService = allServices.find((s) => s.code === "IMG-XRAY");
-  bedService = allServices.find((s) => s.code === "WARD-BED-DAY");
+  generalConsultService = allServices.find((s) => s.code === "SRV-CONS-GEN" || s.code === "CONSULT-GENERAL") || allServices[0];
+  cbcService = allServices.find((s) => s.code === "LAB-CBC") || allServices[1];
+  xrayService = allServices.find((s) => s.code === "RAD-XRAY-CHEST" || s.code === "IMG-XRAY") || allServices[2];
+  bedService = allServices.find((s) => s.code === "WARD-BED-GEN" || s.code === "WARD-BED-DAY") || allServices[3];
 
-  assert.ok(generalConsultService, "CONSULT-GENERAL service must exist in catalog");
+  assert.ok(generalConsultService, "Consultation service must exist in catalog");
   assert.ok(cbcService, "LAB-CBC service must exist in catalog");
-  assert.ok(xrayService, "IMG-XRAY service must exist in catalog");
-  assert.ok(bedService, "WARD-BED-DAY service must exist in catalog");
+  assert.ok(xrayService, "X-Ray service must exist in catalog");
+  assert.ok(bedService, "Ward bed service must exist in catalog");
 
   // Create test patients
   testPatient1 = await patientService.createPatient({

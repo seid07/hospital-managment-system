@@ -6,7 +6,10 @@ import { surgeryService } from "../services/clinicalDepartmentServices";
 export default function SurgeryQueue() {
   const [queue, setQueue] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
+  const [searchInput, setSearchInput] = useState("");
 
   // Surgery update modal
   const [showModal, setShowModal] = useState(false);
@@ -26,6 +29,8 @@ export default function SurgeryQueue() {
     let cancelled = false;
     async function loadData() {
       try {
+        setLoading(true);
+        setError("");
         const data = await surgeryService.getSurgeryQueue();
         if (!cancelled) {
           setQueue(data || []);
@@ -33,7 +38,7 @@ export default function SurgeryQueue() {
         }
       } catch (err) {
         if (!cancelled) {
-          console.error("Failed to load surgery queue:", err);
+          setError(err.message || "Unable to load the surgery queue.");
           setLoading(false);
         }
       }
@@ -61,18 +66,33 @@ export default function SurgeryQueue() {
 
   async function handleSubmit(e) {
     e.preventDefault();
-    if (!selectedOrder) return;
+    if (!selectedOrder || submitting) return;
     try {
       setSubmitting(true);
+      setError("");
       await surgeryService.updateSurgeryStatus(selectedOrder.service_order_id, formData);
+      setSuccess("Surgical record updated.");
       setShowModal(false);
       setRefreshKey((k) => k + 1);
     } catch (err) {
-      console.error("Failed to update surgery record:", err);
+      setError(err.message || "Failed to update surgery record.");
     } finally {
       setSubmitting(false);
     }
   }
+
+  const filteredQueue = searchInput.trim()
+    ? queue.filter((item) => {
+        const q = searchInput.trim().toLowerCase();
+        return (
+          item.patient_first_name?.toLowerCase().includes(q) ||
+          item.patient_last_name?.toLowerCase().includes(q) ||
+          item.patient_number?.toLowerCase().includes(q) ||
+          item.service_name?.toLowerCase().includes(q) ||
+          item.queue_number?.toLowerCase?.().includes(q)
+        );
+      })
+    : queue;
 
   return (
     <AppShell>
@@ -96,19 +116,41 @@ export default function SurgeryQueue() {
         </div>
       </div>
 
+      {error && (
+        <div className="alert alert-error" role="alert">
+          {error}
+        </div>
+      )}
+
+      {success && (
+        <div className="alert alert-success" role="status">
+          {success}
+        </div>
+      )}
+
+      <section className="card" style={{ marginBottom: "16px" }}>
+        <input
+          type="search"
+          placeholder="Live search by patient name, PAT #, or procedure..."
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
+          style={{ width: "100%", padding: "10px 14px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)" }}
+        />
+      </section>
+
       <section className="card">
         <div className="card-header">
-          <h2>Authorized Surgical Queue ({queue.length})</h2>
+          <h2>Authorized Surgical Queue ({filteredQueue.length})</h2>
           <p>Patients scheduled for operating theatre procedures.</p>
         </div>
 
         {loading ? (
           <div className="loading-state">Loading surgery queue...</div>
-        ) : queue.length === 0 ? (
+        ) : filteredQueue.length === 0 ? (
           <div className="empty-state">
             <div className="empty-state-icon">🔪</div>
-            <h3>No surgical procedures in queue</h3>
-            <p>Authorized surgery orders will appear here automatically.</p>
+            <h3>{searchInput ? "No matching procedures found" : "No surgical procedures in queue"}</h3>
+            <p>{searchInput ? "Try a different search term." : "Authorized surgery orders will appear here automatically."}</p>
           </div>
         ) : (
           <div className="table-wrapper">
@@ -125,7 +167,7 @@ export default function SurgeryQueue() {
                 </tr>
               </thead>
               <tbody>
-                {queue.map((item) => (
+                {filteredQueue.map((item) => (
                   <tr key={item.queue_entry_id}>
                     <td>
                       <span

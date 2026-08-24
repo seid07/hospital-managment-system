@@ -1,9 +1,11 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const authService = require("../src/services/auth.service");
-const pool = require("../src/config/database");
+const { ensureTestUsers } = require("./helpers/setup-test-users");
 
 test("Authentication Service", async (t) => {
+  await ensureTestUsers();
+
   await t.test("should login successfully with valid admin credentials", async () => {
     const result = await authService.login("admin", "Admin@12345");
     assert.ok(result.token, "Token should be returned");

@@ -63,7 +63,7 @@ async function addBillableService(data, userId) {
       is_active
     )
     VALUES (
-      $1, $2, $3, 
+      $1, $2, $3,
       (SELECT id FROM departments WHERE code = 'CLINICAL' LIMIT 1),
       $4, 'ETB', TRUE
     )
@@ -244,6 +244,238 @@ async function createInvoice({
   }
 }
 
+/**
+ * Requirement 5 & 6: Selective / Partial Payment Processing
+ * - Server is the sole authority for amounts, calculated from database so.price
+ * - Authorizes only selected service orders
+ * - Leaves unselected service orders as WAITING_PAYMENT
+ * - Enqueues only paid services into department queues
+ * - Updates invoice status to PARTIALLY_PAID or PAID
+ */
+async function recordSelectivePayment({
+  patientId,
+  visitId,
+  invoiceId,
+  serviceOrderIds = [],
+  paymentMethod = "CASH",
+  transactionReference,
+  notes,
+  receivedBy,
+}) {
+  if (!serviceOrderIds || !Array.isArray(serviceOrderIds) || serviceOrderIds.length === 0) {
+    throw new Error("NO_SERVICES_SELECTED: Please select at least one service to pay.");
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    // 1. Lock and fetch selected service orders
+    const ordersRes = await client.query(
+      `
+      SELECT
+        so.*,
+        s.name AS service_name,
+        s.code AS service_code,
+        s.queue_enabled,
+        s.payment_location,
+        d.code AS department_code,
+        d.name AS department_name
+      FROM service_orders so
+      JOIN services s ON so.service_id = s.id
+      JOIN departments d ON so.department_id = d.id
+      WHERE so.id = ANY($1::uuid[])
+      FOR UPDATE
+      `,
+      [serviceOrderIds]
+    );
+
+    if (ordersRes.rows.length !== serviceOrderIds.length) {
+      throw new Error("INVALID_SERVICE_SELECTION: Some selected services could not be found.");
+    }
+
+    // Verify all selected services are payable at cashier and unpaid
+    let calculatedTotal = 0;
+    for (const order of ordersRes.rows) {
+      if (order.payment_location === "PHARMACY") {
+        throw new Error(`PHARMACY_SERVICE_DISALLOWED: Service "${order.service_name}" must be paid at the Pharmacy cashier.`);
+      }
+      if (order.status === "PAID" || order.status === "COMPLETED") {
+        throw new Error(`SERVICE_ALREADY_PAID: Service "${order.service_name}" (${order.order_number}) is already paid.`);
+      }
+      calculatedTotal += parseFloat(order.price);
+    }
+
+    calculatedTotal = parseFloat(calculatedTotal.toFixed(2));
+    if (calculatedTotal <= 0) {
+      throw new Error("INVALID_TOTAL_AMOUNT: Selected services total must be greater than zero.");
+    }
+
+    const effectivePatientId = patientId || ordersRes.rows[0].patient_id;
+    const effectiveVisitId = visitId || ordersRes.rows[0].visit_id;
+    const effectiveInvoiceId = invoiceId || ordersRes.rows[0].invoice_id;
+
+    // 2. Generate payment record
+    const paymentNumber = await generatePaymentNumber(client);
+
+    const paymentRes = await client.query(
+      `
+      INSERT INTO payments (
+        payment_number,
+        invoice_id,
+        patient_id,
+        amount,
+        payment_method,
+        transaction_reference,
+        notes,
+        received_by
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      RETURNING *;
+      `,
+      [
+        paymentNumber,
+        effectiveInvoiceId || null,
+        effectivePatientId,
+        calculatedTotal,
+        paymentMethod || "CASH",
+        transactionReference || null,
+        notes || `Selective service payment for ${ordersRes.rows.length} item(s)`,
+        receivedBy,
+      ]
+    );
+
+    const payment = paymentRes.rows[0];
+    const authorizedOrders = [];
+    const authorizedAt = new Date();
+
+    // 3. Authorize each selected service order and enqueue into department queue
+    for (const order of ordersRes.rows) {
+      const orderPrice = parseFloat(order.price);
+
+      await client.query(
+        `
+        UPDATE service_orders
+        SET
+          status = 'PAID',
+          paid_amount = $1,
+          authorized_at = $2,
+          authorized_by = $3,
+          authorization_source = 'PAYMENT',
+          updated_at = CURRENT_TIMESTAMP
+        WHERE id = $4
+        `,
+        [orderPrice, authorizedAt, receivedBy, order.id]
+      );
+
+      // Record allocation
+      await client.query(
+        `
+        INSERT INTO payment_allocations (payment_id, service_order_id, invoice_id, amount)
+        VALUES ($1, $2, $3, $4)
+        `,
+        [payment.id, order.id, order.invoice_id || effectiveInvoiceId || null, orderPrice]
+      );
+
+      // Enqueue to department queue if queue_enabled
+      if (order.queue_enabled) {
+        const existingQ = await client.query(
+          `SELECT id FROM queue_entries WHERE service_order_id = $1`,
+          [order.id]
+        );
+
+        if (existingQ.rowCount === 0) {
+          const queueNumber = await generateQueueNumber(client, order.department_code);
+          await client.query(
+            `
+            INSERT INTO queue_entries (
+              department_id, service_order_id, visit_id, patient_id,
+              queue_number, priority, status, authorized_at, queued_at
+            )
+            VALUES ($1, $2, $3, $4, $5, 'NORMAL', 'WAITING', $6, CURRENT_TIMESTAMP)
+            `,
+            [
+              order.department_id,
+              order.id,
+              order.visit_id,
+              order.patient_id,
+              queueNumber,
+              authorizedAt,
+            ]
+          );
+        }
+      }
+
+      authorizedOrders.push({
+        id: order.id,
+        orderNumber: order.order_number,
+        serviceName: order.service_name,
+        price: orderPrice,
+        status: "PAID",
+      });
+    }
+
+    // 4. Update associated invoice if present
+    let updatedInvoice = null;
+    if (effectiveInvoiceId) {
+      const invRes = await client.query(
+        `SELECT * FROM invoices WHERE id = $1 FOR UPDATE`,
+        [effectiveInvoiceId]
+      );
+
+      if (invRes.rows.length > 0) {
+        const inv = invRes.rows[0];
+        const newPaid = parseFloat((parseFloat(inv.paid_amount) + calculatedTotal).toFixed(2));
+        const newBalance = parseFloat(Math.max(0, parseFloat(inv.total_amount) - newPaid).toFixed(2));
+        const newStatus = newBalance === 0 ? "PAID" : "PARTIALLY_PAID";
+
+        const updateInvRes = await client.query(
+          `
+          UPDATE invoices
+          SET
+            paid_amount = $1,
+            balance_amount = $2,
+            status = $3,
+            updated_at = CURRENT_TIMESTAMP
+          WHERE id = $4
+          RETURNING *
+          `,
+          [newPaid, newBalance, newStatus, effectiveInvoiceId]
+        );
+        updatedInvoice = updateInvRes.rows[0];
+      }
+    }
+
+    await recordAuditLog(client, {
+      userId: receivedBy,
+      action: "SELECTIVE_PAYMENT_RECORDED",
+      entity: "payments",
+      entityId: payment.id,
+      details: {
+        paymentNumber,
+        selectedCount: serviceOrderIds.length,
+        totalAmount: calculatedTotal,
+        paymentMethod,
+        authorizedOrders: authorizedOrders.map((o) => o.orderNumber),
+      },
+    });
+
+    await client.query("COMMIT");
+
+    return {
+      payment,
+      invoice: updatedInvoice,
+      authorizedOrders,
+      totalAmountPaid: calculatedTotal,
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 async function recordPayment({
   invoiceId,
   amount,
@@ -287,7 +519,6 @@ async function recordPayment({
     const newBalance = parseFloat(Math.max(0, parseFloat(invoice.total_amount) - newPaid).toFixed(2));
     const newStatus = newBalance === 0 ? "PAID" : "PARTIALLY_PAID";
 
-    // 1. Generate payment number and insert payment
     const paymentNumber = await generatePaymentNumber(client);
 
     const paymentRes = await client.query(
@@ -319,7 +550,6 @@ async function recordPayment({
 
     const payment = paymentRes.rows[0];
 
-    // 2. Authorize corresponding service orders and enqueue into department queues
     const ordersRes = await client.query(
       `
       SELECT so.*, s.queue_enabled, s.name AS service_name, d.code AS department_code
@@ -341,18 +571,18 @@ async function recordPayment({
         await client.query(
           `
           UPDATE service_orders
-          SET 
+          SET
             status = 'PAID',
-            authorized_at = $1,
-            authorized_by = $2,
+            paid_amount = $1,
+            authorized_at = $2,
+            authorized_by = $3,
             authorization_source = 'PAYMENT',
             updated_at = CURRENT_TIMESTAMP
-          WHERE id = $3
+          WHERE id = $4
           `,
-          [authorizedAt, receivedBy, order.id]
+          [order.price, authorizedAt, receivedBy, order.id]
         );
 
-        // Record payment allocation
         await client.query(
           `
           INSERT INTO payment_allocations (payment_id, service_order_id, invoice_id, amount)
@@ -361,7 +591,6 @@ async function recordPayment({
           [payment.id, order.id, invoiceId, order.price]
         );
 
-        // Enqueue into department queue if queue_enabled
         if (order.queue_enabled) {
           const existingQ = await client.query(
             `SELECT id FROM queue_entries WHERE service_order_id = $1`,
@@ -394,7 +623,6 @@ async function recordPayment({
       }
     }
 
-    // 3. Update invoice status and amounts
     const updateInvoiceRes = await client.query(
       `
       UPDATE invoices
@@ -445,7 +673,7 @@ async function getInvoices(query = {}) {
   const search = query.search ? query.search.trim() : null;
   const patientId = query.patientId || null;
 
-  const conditions = [];
+  const conditions = ["p.is_active = TRUE"];
   const params = [];
 
   if (status && status !== "ALL") {
@@ -539,7 +767,16 @@ async function getInvoiceById(id) {
   const invoice = invoiceRes.rows[0];
 
   const itemsRes = await pool.query(
-    "SELECT * FROM invoice_items WHERE invoice_id = $1 ORDER BY created_at ASC",
+    `
+    SELECT
+      ii.*,
+      so.status AS service_order_status,
+      so.order_number AS service_order_number
+    FROM invoice_items ii
+    LEFT JOIN service_orders so ON ii.reference_id = so.id
+    WHERE ii.invoice_id = $1
+    ORDER BY ii.created_at ASC
+    `,
     [id]
   );
 
@@ -564,9 +801,9 @@ async function getInvoiceById(id) {
 }
 
 async function getPendingCashierOrders(query = {}) {
-  const { search } = query;
+  const { search, patientId } = query;
   let sql = `
-    SELECT 
+    SELECT
       so.id AS service_order_id,
       so.order_number,
       so.price,
@@ -578,6 +815,7 @@ async function getPendingCashierOrders(query = {}) {
       s.code AS service_code,
       s.category AS service_category,
       d.name AS department_name,
+      d.code AS department_code,
       p.id AS patient_id,
       p.patient_number,
       p.first_name AS patient_first_name,
@@ -593,15 +831,140 @@ async function getPendingCashierOrders(query = {}) {
     LEFT JOIN staff doc ON so.doctor_id = doc.id
     WHERE so.status = 'WAITING_PAYMENT'
       AND s.payment_location != 'PHARMACY'
+      AND p.is_active = TRUE
   `;
   const params = [];
+
+  if (patientId) {
+    params.push(patientId);
+    sql += ` AND so.patient_id = $${params.length}`;
+  }
+
   if (search) {
     params.push(`%${search.trim()}%`);
-    sql += ` AND (p.first_name ILIKE $1 OR p.last_name ILIKE $1 OR p.patient_number ILIKE $1 OR so.order_number ILIKE $1)`;
+    sql += ` AND (p.first_name ILIKE $${params.length} OR p.last_name ILIKE $${params.length} OR p.patient_number ILIKE $${params.length} OR so.order_number ILIKE $${params.length})`;
   }
+
   sql += ` ORDER BY so.created_at ASC`;
   const res = await pool.query(sql, params);
   return res.rows;
+}
+
+/**
+ * Requirement 22: Payment Reversal Workflow
+ */
+async function reversePayment(paymentId, { reason }, userId) {
+  if (!reason || !reason.trim()) {
+    throw new Error("REVERSAL_REASON_REQUIRED: A valid justification reason is required to reverse a payment.");
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const paymentRes = await client.query(
+      `SELECT * FROM payments WHERE id = $1 FOR UPDATE`,
+      [paymentId]
+    );
+
+    if (paymentRes.rows.length === 0) {
+      throw new Error("PAYMENT_NOT_FOUND");
+    }
+
+    const payment = paymentRes.rows[0];
+
+    // Find all allocations for this payment
+    const allocsRes = await client.query(
+      `SELECT * FROM payment_allocations WHERE payment_id = $1`,
+      [paymentId]
+    );
+
+    // Rollback service orders to WAITING_PAYMENT and cancel queue entries if not completed
+    for (const alloc of allocsRes.rows) {
+      await client.query(
+        `
+        UPDATE service_orders
+        SET
+          status = 'WAITING_PAYMENT',
+          paid_amount = 0.00,
+          authorized_at = NULL,
+          authorization_source = NULL,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE id = $1 AND status != 'COMPLETED'
+        `,
+        [alloc.service_order_id]
+      );
+
+      await client.query(
+        `
+        DELETE FROM queue_entries
+        WHERE service_order_id = $1 AND status = 'WAITING'
+        `,
+        [alloc.service_order_id]
+      );
+    }
+
+    // Update invoice balance if linked
+    if (payment.invoice_id) {
+      const invRes = await client.query(
+        `SELECT * FROM invoices WHERE id = $1 FOR UPDATE`,
+        [payment.invoice_id]
+      );
+
+      if (invRes.rows.length > 0) {
+        const inv = invRes.rows[0];
+        const newPaid = Math.max(0, parseFloat(inv.paid_amount) - parseFloat(payment.amount));
+        const newBalance = parseFloat((parseFloat(inv.total_amount) - newPaid).toFixed(2));
+        const newStatus = newPaid === 0 ? "PENDING" : "PARTIALLY_PAID";
+
+        await client.query(
+          `
+          UPDATE invoices
+          SET
+            paid_amount = $1,
+            balance_amount = $2,
+            status = $3,
+            updated_at = CURRENT_TIMESTAMP
+          WHERE id = $4
+          `,
+          [newPaid, newBalance, newStatus, payment.invoice_id]
+        );
+      }
+    }
+
+    // Annotate payment record with reversal notes instead of deleting
+    await client.query(
+      `
+      UPDATE payments
+      SET notes = COALESCE(notes, '') || ' [REVERSED: ' || $1 || ' by ' || $2 || ' at ' || CURRENT_TIMESTAMP || ']'
+      WHERE id = $3
+      `,
+      [reason.trim(), userId, paymentId]
+    );
+
+    await recordAuditLog(client, {
+      userId,
+      action: "PAYMENT_REVERSED",
+      entity: "payments",
+      entityId: paymentId,
+      details: {
+        paymentNumber: payment.payment_number,
+        reversedAmount: payment.amount,
+        reason: reason.trim(),
+      },
+    });
+
+    await client.query("COMMIT");
+    return {
+      success: true,
+      message: `Payment ${payment.payment_number} reversed successfully.`,
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 module.exports = {
@@ -609,8 +972,9 @@ module.exports = {
   addBillableService,
   createInvoice,
   recordPayment,
+  recordSelectivePayment,
   getInvoices,
   getInvoiceById,
   getPendingCashierOrders,
+  reversePayment,
 };
-

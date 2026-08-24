@@ -7,8 +7,15 @@ import { queueService } from "../services/queueService";
 export default function RadiologyQueue() {
   const [queue, setQueue] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
   const [statusFilter, setStatusFilter] = useState("WAITING");
   const [refreshKey, setRefreshKey] = useState(0);
+  const [searchInput, setSearchInput] = useState("");
+
+  // Tracks the queue_entry_id currently mid-request for Call/Start, so a
+  // double-click can't fire the same status transition twice.
+  const [actionInFlight, setActionInFlight] = useState(null);
 
   // Report Modal form
   const [showReportModal, setShowReportModal] = useState(false);
@@ -26,6 +33,8 @@ export default function RadiologyQueue() {
     let cancelled = false;
     async function loadData() {
       try {
+        setLoading(true);
+        setError("");
         const data = await radiologyService.getRadiologyQueue({
           status: statusFilter === "ALL" ? undefined : statusFilter,
         });
@@ -35,7 +44,7 @@ export default function RadiologyQueue() {
         }
       } catch (err) {
         if (!cancelled) {
-          console.error("Failed to load radiology queue:", err);
+          setError(err.message || "Unable to load the radiology queue.");
           setLoading(false);
         }
       }
@@ -60,37 +69,66 @@ export default function RadiologyQueue() {
   }
 
   async function handleCallPatient(item) {
+    if (actionInFlight) return;
     try {
+      setActionInFlight(item.queue_entry_id);
+      setError("");
+      setSuccess("");
       await queueService.updateQueueStatus(item.queue_entry_id, { status: "CALLED" });
+      setSuccess(`${item.patient_first_name} ${item.patient_last_name} called for imaging.`);
       setRefreshKey((k) => k + 1);
     } catch (err) {
-      console.error("Error calling patient:", err);
+      setError(err.message || "Failed to call patient.");
+    } finally {
+      setActionInFlight(null);
     }
   }
 
   async function handleStartExam(item) {
+    if (actionInFlight) return;
     try {
+      setActionInFlight(item.queue_entry_id);
+      setError("");
+      setSuccess("");
       await queueService.updateQueueStatus(item.queue_entry_id, { status: "IN_PROGRESS" });
+      setSuccess(`Exam started for ${item.patient_first_name} ${item.patient_last_name}.`);
       setRefreshKey((k) => k + 1);
     } catch (err) {
-      console.error("Error starting exam:", err);
+      setError(err.message || "Failed to start exam.");
+    } finally {
+      setActionInFlight(null);
     }
   }
 
   async function handleSubmitReport(e) {
     e.preventDefault();
-    if (!activeReportOrder) return;
+    if (!activeReportOrder || submitting) return;
     try {
       setSubmitting(true);
+      setError("");
       await radiologyService.recordRadiologyResult(activeReportOrder.service_order_id, reportData);
+      setSuccess("Radiology report signed and completed.");
       setShowReportModal(false);
       setRefreshKey((k) => k + 1);
     } catch (err) {
-      console.error("Failed to submit radiology report:", err);
+      setError(err.message || "Failed to submit radiology report.");
     } finally {
       setSubmitting(false);
     }
   }
+
+  const filteredQueue = searchInput.trim()
+    ? queue.filter((item) => {
+        const q = searchInput.trim().toLowerCase();
+        return (
+          item.patient_first_name?.toLowerCase().includes(q) ||
+          item.patient_last_name?.toLowerCase().includes(q) ||
+          item.patient_number?.toLowerCase().includes(q) ||
+          item.service_name?.toLowerCase().includes(q) ||
+          item.queue_number?.toLowerCase?.().includes(q)
+        );
+      })
+    : queue;
 
   return (
     <AppShell>
@@ -118,10 +156,32 @@ export default function RadiologyQueue() {
         </div>
       </div>
 
+      {error && (
+        <div className="alert alert-error" role="alert">
+          {error}
+        </div>
+      )}
+
+      {success && (
+        <div className="alert alert-success" role="status">
+          {success}
+        </div>
+      )}
+
+      <section className="card" style={{ marginBottom: "16px" }}>
+        <input
+          type="search"
+          placeholder="Live search by patient name, PAT #, or exam..."
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
+          style={{ width: "100%", padding: "10px 14px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)" }}
+        />
+      </section>
+
       <section className="card">
         <div className="card-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div>
-            <h2>Authorized Imaging Queue ({queue.length})</h2>
+            <h2>Authorized Imaging Queue ({filteredQueue.length})</h2>
             <p>Patients waiting for diagnostic imaging procedures.</p>
           </div>
           <button
@@ -135,11 +195,11 @@ export default function RadiologyQueue() {
 
         {loading ? (
           <div className="loading-state">Loading radiology queue...</div>
-        ) : queue.length === 0 ? (
+        ) : filteredQueue.length === 0 ? (
           <div className="empty-state">
             <div className="empty-state-icon">🩻</div>
-            <h3>No imaging exams currently in this status</h3>
-            <p>New authorized radiology orders will appear here automatically.</p>
+            <h3>{searchInput ? "No matching exams found" : "No imaging exams currently in this status"}</h3>
+            <p>{searchInput ? "Try a different search term." : "New authorized radiology orders will appear here automatically."}</p>
           </div>
         ) : (
           <div className="table-wrapper">
@@ -156,7 +216,7 @@ export default function RadiologyQueue() {
                 </tr>
               </thead>
               <tbody>
-                {queue.map((item) => (
+                {filteredQueue.map((item) => (
                   <tr key={item.queue_entry_id}>
                     <td>
                       <span
@@ -200,18 +260,20 @@ export default function RadiologyQueue() {
                           <button
                             type="button"
                             className="button button-secondary"
+                            disabled={actionInFlight === item.queue_entry_id}
                             onClick={() => handleCallPatient(item)}
                           >
-                            Call
+                            {actionInFlight === item.queue_entry_id ? "Calling..." : "Call"}
                           </button>
                         )}
                         {item.queue_status === "CALLED" && (
                           <button
                             type="button"
                             className="button button-secondary"
+                            disabled={actionInFlight === item.queue_entry_id}
                             onClick={() => handleStartExam(item)}
                           >
-                            Start
+                            {actionInFlight === item.queue_entry_id ? "Starting..." : "Start"}
                           </button>
                         )}
                         <button

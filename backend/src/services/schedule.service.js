@@ -2,7 +2,7 @@ const pool = require("../config/database");
 const { generateSlots, timeToMinutes, rangesOverlap } = require("../utils/time");
 
 async function getDoctors(filters = {}) {
-  const { date, specialty } = filters;
+  const { date, specialty, allStaff } = filters;
 
   let query = `
     SELECT DISTINCT
@@ -12,13 +12,17 @@ async function getDoctors(filters = {}) {
       s.email,
       s.phone,
       s.department,
-      s.specialty
+      s.specialty,
+      r.name AS role
     FROM staff s
     INNER JOIN roles r
       ON r.id = s.role_id
   `;
 
-  const conditions = ["r.name = 'DOCTOR'", "s.is_active = TRUE"];
+  // allStaff=true is used by admin schedule management (any staff member can
+  // have a shift/consultation schedule). Without it, callers booking patient
+  // consultations continue to only see DOCTOR role staff, as before.
+  const conditions = allStaff ? ["s.is_active = TRUE"] : ["r.name = 'DOCTOR'", "s.is_active = TRUE"];
   const params = [];
 
   if (specialty) {
@@ -68,13 +72,14 @@ async function getDoctorSchedules(doctorId) {
 }
 
 async function getDoctorUpcomingAvailability(doctorId, daysAhead = 14) {
-  // 1. Verify doctor
+  // 1. Verify staff member (any active role — not just DOCTOR — so admins
+  // can view upcoming availability for nurses, lab techs, etc. as well).
   const docResult = await pool.query(
     `
-    SELECT s.id, s.first_name, s.last_name, s.specialty, s.department
+    SELECT s.id, s.first_name, s.last_name, s.specialty, s.department, r.name AS role
     FROM staff s
     JOIN roles r ON s.role_id = r.id
-    WHERE s.id = $1 AND r.name = 'DOCTOR' AND s.is_active = TRUE
+    WHERE s.id = $1 AND s.is_active = TRUE
     `,
     [doctorId]
   );
@@ -174,14 +179,13 @@ async function getDoctorUpcomingAvailability(doctorId, daysAhead = 14) {
 }
 
 async function createSchedule(doctorId, data) {
+  // Any active staff member can have a schedule created for them (not just
+  // doctors) — admins manage shifts/consultation slots for the whole team.
   const doctorResult = await pool.query(
     `
       SELECT s.id
       FROM staff s
-      INNER JOIN roles r
-        ON r.id = s.role_id
       WHERE s.id = $1
-        AND r.name = 'DOCTOR'
         AND s.is_active = TRUE
     `,
     [doctorId]

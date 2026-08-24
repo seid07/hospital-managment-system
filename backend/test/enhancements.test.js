@@ -10,8 +10,11 @@ const authService = require("../src/services/auth.service.js");
 const patientService = require("../src/services/patient.service.js");
 const scheduleService = require("../src/services/schedule.service.js");
 const billingService = require("../src/services/billing.service.js");
+const { ensureTestUsers } = require("./helpers/setup-test-users");
 
 test("Ethiopian Hospital Enhancements & Security Test Suite", async (t) => {
+  await ensureTestUsers();
+
   await t.test("1. Validator: Ethiopian Phone Numbers", () => {
     assert.equal(validateEthiopianPhone("0911223344"), true);
     assert.equal(validateEthiopianPhone("0711223344"), true);
@@ -50,8 +53,14 @@ test("Ethiopian Hospital Enhancements & Security Test Suite", async (t) => {
   });
 
   await t.test("4. Auth Service: Request and Execute Password Reset Flow", async () => {
-    // Request reset for admin
-    const resetResult = await authService.requestPasswordReset("admin");
+    // Request reset for admin using all 5 required verification fields
+    const resetResult = await authService.requestPasswordReset({
+      username: "admin",
+      lastName: "Administrator",
+      email: "admin@hospital.local",
+      phone: "0911000000",
+      department: "Administration",
+    });
     assert.equal(resetResult.success, true);
     assert.ok(resetResult.resetToken);
     assert.equal(resetResult.resetToken.length, 64);
@@ -75,7 +84,13 @@ test("Ethiopian Hospital Enhancements & Security Test Suite", async (t) => {
     );
 
     // Revert password back to Admin@12345
-    const revertReq = await authService.requestPasswordReset("admin");
+    const revertReq = await authService.requestPasswordReset({
+      username: "admin",
+      lastName: "Administrator",
+      email: "admin@hospital.local",
+      phone: "0911000000",
+      department: "Administration",
+    });
     await authService.resetPassword(revertReq.resetToken, "Admin@12345");
   });
 
@@ -83,6 +98,19 @@ test("Ethiopian Hospital Enhancements & Security Test Suite", async (t) => {
     const doctors = await scheduleService.getDoctors();
     assert.ok(doctors.length > 0);
     const doctor = doctors[0];
+
+    // Ensure schedule exists
+    const schedules = await scheduleService.getDoctorSchedules(doctor.id);
+    if (schedules.length === 0) {
+      for (let day = 0; day <= 6; day++) {
+        await scheduleService.createSchedule(doctor.id, {
+          dayOfWeek: day,
+          startTime: "08:00:00",
+          endTime: "17:00:00",
+          slotDurationMinutes: 30,
+        });
+      }
+    }
 
     const upcoming = await scheduleService.getDoctorUpcomingAvailability(doctor.id, 14);
     assert.ok(upcoming.doctor);
@@ -113,7 +141,7 @@ test("Ethiopian Hospital Enhancements & Security Test Suite", async (t) => {
     assert.equal(deleted.is_active, false);
 
     // Verify search excludes deactivated patient
-    const searchRes = await patientService.searchPatients("TestPatient");
+    const searchRes = await patientService.getPatients({ search: "TestPatient" });
     const found = searchRes.patients.find((p) => p.id === tempPatient.id);
     assert.equal(found, undefined);
   });

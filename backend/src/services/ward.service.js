@@ -11,7 +11,7 @@ async function getBeds() {
       adm.id AS current_admission_id
     FROM beds b
     LEFT JOIN admissions adm ON adm.bed_id = b.id AND adm.status = 'ADMITTED'
-    LEFT JOIN patients p ON adm.patient_id = p.id
+    LEFT JOIN patients p ON adm.patient_id = p.id AND p.is_active = TRUE
     ORDER BY b.ward_name ASC, b.bed_number ASC
   `);
   return result.rows;
@@ -59,7 +59,7 @@ async function getWardQueue({ status } = {}) {
     LEFT JOIN staff doc ON so.doctor_id = doc.id
     LEFT JOIN admissions adm ON adm.visit_id = qe.visit_id AND adm.status = 'ADMITTED'
     LEFT JOIN beds b ON adm.bed_id = b.id
-    WHERE d.code = 'WARD'
+    WHERE d.code = 'WARD' AND p.is_active = TRUE
   `;
   const params = [];
 

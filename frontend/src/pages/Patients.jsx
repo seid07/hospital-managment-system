@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import AppShell from "../components/layout/AppShell";
 import Pagination from "../components/common/Pagination";
 import Modal from "../components/common/Modal";
@@ -9,6 +9,9 @@ import { getPatients, deletePatient } from "../services/patientService";
 
 function Patients() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const registeredFilter = searchParams.get("registered") || searchParams.get("date") || "";
+
   const { user } = useAuth();
   const canManagePatients = user?.role === "ADMIN" || user?.role === "REGISTRAR";
 
@@ -32,7 +35,12 @@ function Patients() {
       try {
         setLoading(true);
         setError("");
-        const res = await getPatients({ page, limit: 15, search: debouncedSearch.trim() });
+        const res = await getPatients({
+          page,
+          limit: 15,
+          search: debouncedSearch.trim(),
+          registered: registeredFilter || undefined,
+        });
         if (!cancelled && res.data) {
           setPatients(res.data);
           setTotal(res.pagination?.total || 0);
@@ -52,7 +60,7 @@ function Patients() {
     return () => {
       cancelled = true;
     };
-  }, [page, debouncedSearch]);
+  }, [page, debouncedSearch, registeredFilter]);
 
   async function handleDeleteConfirm() {
     if (!patientToDelete) return;
@@ -109,6 +117,21 @@ function Patients() {
 
       {/* Live Search Bar */}
       <section className="card" style={{ marginBottom: "20px" }}>
+        {registeredFilter && (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "var(--primary-light)", padding: "8px 12px", borderRadius: "6px", marginBottom: "12px" }}>
+            <span style={{ fontSize: "13px", fontWeight: 600, color: "var(--primary)" }}>
+              📅 Showing patients registered today ({registeredFilter})
+            </span>
+            <button
+              type="button"
+              className="button button-secondary"
+              style={{ fontSize: "11px", padding: "3px 8px" }}
+              onClick={() => setSearchParams({})}
+            >
+              Show All Patients ✕
+            </button>
+          </div>
+        )}
         <div style={{ position: "relative" }}>
           <input
             type="search"
@@ -135,7 +158,7 @@ function Patients() {
                 cursor: "pointer",
               }}
             >
-              ✕ Clear
+              ✕
             </button>
           )}
         </div>

@@ -217,6 +217,46 @@ async function deletePatient(id, userId) {
 
     const patient = result.rows[0];
 
+    // Cascade deactivation to pending appointments
+    await client.query(
+      `UPDATE appointments
+       SET status = 'CANCELLED', notes = 'Patient record deactivated by administrator', updated_at = CURRENT_TIMESTAMP
+       WHERE patient_id = $1 AND status IN ('SCHEDULED', 'CONFIRMED', 'CHECKED_IN', 'IN_PROGRESS')`,
+      [id]
+    );
+
+    // Cancel active queue entries
+    await client.query(
+      `UPDATE queue_entries
+       SET status = 'CANCELLED', updated_at = CURRENT_TIMESTAMP
+       WHERE patient_id = $1 AND status IN ('WAITING', 'IN_PROGRESS')`,
+      [id]
+    );
+
+    // Cancel pending unpaid service orders
+    await client.query(
+      `UPDATE service_orders
+       SET status = 'CANCELLED', updated_at = CURRENT_TIMESTAMP
+       WHERE patient_id = $1 AND status = 'WAITING_PAYMENT'`,
+      [id]
+    );
+
+    // Cancel active prescriptions
+    await client.query(
+      `UPDATE prescriptions
+       SET status = 'CANCELLED', updated_at = CURRENT_TIMESTAMP
+       WHERE patient_id = $1 AND status = 'ACTIVE'`,
+      [id]
+    );
+
+    // Cancel pending lab orders
+    await client.query(
+      `UPDATE lab_orders
+       SET status = 'CANCELLED', updated_at = CURRENT_TIMESTAMP
+       WHERE patient_id = $1 AND status = 'ORDERED'`,
+      [id]
+    );
+
     await recordAuditLog(client, {
       userId,
       action: "PATIENT_DELETED",
@@ -304,6 +344,15 @@ async function getPatients(query = {}) {
   if (search) {
     params.push(`%${search}%`);
     whereClause += ` AND (patient_number ILIKE $${params.length} OR first_name ILIKE $${params.length} OR last_name ILIKE $${params.length} OR phone ILIKE $${params.length})`;
+  }
+
+  if (query.date === "today" || query.registered === "today") {
+    const today = new Date().toISOString().split("T")[0];
+    params.push(today);
+    whereClause += ` AND DATE(created_at) = $${params.length}`;
+  } else if (query.date) {
+    params.push(query.date);
+    whereClause += ` AND DATE(created_at) = $${params.length}`;
   }
 
   const countQuery = `SELECT COUNT(*) AS total FROM patients ${whereClause}`;

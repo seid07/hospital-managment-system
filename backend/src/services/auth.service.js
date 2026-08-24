@@ -3,7 +3,88 @@ const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const pool = require("../config/database");
 const { recordAuditLog } = require("../utils/audit");
-const { validatePasswordStrength } = require("../validators");
+const { validatePasswordStrength, normalizeEthiopianPhone } = require("../validators");
+
+async function checkSystemStatus() {
+  const result = await pool.query("SELECT COUNT(*) AS count FROM staff");
+  const count = parseInt(result.rows[0].count, 10);
+  return {
+    isInitialized: count > 0,
+    staffCount: count,
+  };
+}
+
+async function setupInitialAdmin({ firstName, lastName, email, phone, username, password }) {
+  const status = await checkSystemStatus();
+  if (status.isInitialized) {
+    throw new Error("SYSTEM_ALREADY_INITIALIZED: System already has registered staff. Initial setup is disabled.");
+  }
+
+  const passwordCheck = validatePasswordStrength(password);
+  if (!passwordCheck.isValid) {
+    throw new Error(`WEAK_PASSWORD: ${passwordCheck.message}`);
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const roleRes = await client.query("SELECT id FROM roles WHERE name = 'ADMIN' LIMIT 1");
+    if (roleRes.rows.length === 0) {
+      throw new Error("ADMIN role definition not found.");
+    }
+    const roleId = roleRes.rows[0].id;
+
+    const normalizedPhone = normalizeEthiopianPhone(phone) || phone;
+    const passwordHash = await bcrypt.hash(password, 12);
+
+    const staffRes = await client.query(
+      `
+      INSERT INTO staff (first_name, last_name, email, phone, department, specialty, role_id, is_active)
+      VALUES ($1, $2, $3, $4, 'Administration', 'Hospital System Administrator', $5, TRUE)
+      RETURNING id, first_name, last_name, email, phone, department;
+      `,
+      [firstName.trim(), lastName.trim(), email.trim().toLowerCase(), normalizedPhone, roleId]
+    );
+    const staffId = staffRes.rows[0].id;
+
+    const userRes = await client.query(
+      `
+      INSERT INTO users (staff_id, username, password_hash)
+      VALUES ($1, $2, $3)
+      RETURNING id, username;
+      `,
+      [staffId, username.trim().toLowerCase(), passwordHash]
+    );
+    const user = userRes.rows[0];
+
+    await recordAuditLog(client, {
+      userId: user.id,
+      action: "INITIAL_ADMIN_SETUP",
+      entity: "users",
+      entityId: user.id,
+      details: { username: user.username, email: staffRes.rows[0].email },
+    });
+
+    await client.query("COMMIT");
+
+    return {
+      success: true,
+      message: "System Administrator account successfully created. You can now sign in.",
+      user: {
+        id: user.id,
+        username: user.username,
+        staffId,
+        role: "ADMIN",
+      },
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
 
 async function login(username, password) {
   const query = `
@@ -24,7 +105,7 @@ async function login(username, password) {
     FROM users u
     INNER JOIN staff s ON s.id = u.staff_id
     INNER JOIN roles r ON r.id = s.role_id
-    WHERE u.username = $1
+    WHERE LOWER(u.username) = LOWER($1)
     LIMIT 1
   `;
 
@@ -40,10 +121,7 @@ async function login(username, password) {
     throw new Error("ACCOUNT_INACTIVE");
   }
 
-  const passwordMatches = await bcrypt.compare(
-    password,
-    user.password_hash
-  );
+  const passwordMatches = await bcrypt.compare(password, user.password_hash);
 
   if (!passwordMatches) {
     throw new Error("INVALID_CREDENTIALS");
@@ -79,65 +157,105 @@ async function login(username, password) {
   };
 }
 
-async function requestPasswordReset(identifier) {
-  const genericMessage = "If the account exists, password reset instructions have been sent.";
+/**
+ * Requirement 17: Multi-Field Identity Verification for Forgot Password
+ * Validates that ALL 5 fields match the exact same staff account:
+ * - username
+ * - lastName
+ * - email
+ * - phone
+ * - department
+ */
+async function requestPasswordReset({ username, lastName, email, phone, department }) {
+  const genericFailureMessage = "Unable to verify your identity with the information provided.";
 
-  if (!identifier || typeof identifier !== "string") {
-    return { success: true, message: genericMessage };
+  if (!username || !lastName || !email || !phone || !department) {
+    return {
+      success: false,
+      message: genericFailureMessage,
+    };
   }
 
-  const clean = identifier.trim().toLowerCase();
+  const cleanUsername = username.trim().toLowerCase();
+  const cleanLastName = lastName.trim().toLowerCase();
+  const cleanEmail = email.trim().toLowerCase();
+  const cleanPhone = phone.trim().replace(/[\s-]/g, "");
+  const cleanDept = department.trim().toLowerCase();
 
-  // Find user by username or staff email
+  // Find user by joining users and staff, validating all 5 properties
   const userResult = await pool.query(
     `
-    SELECT u.id, u.username, s.email, s.first_name, s.last_name
+    SELECT
+      u.id AS user_id,
+      u.username,
+      s.id AS staff_id,
+      s.first_name,
+      s.last_name,
+      s.email,
+      s.phone,
+      s.department,
+      s.is_active
     FROM users u
     JOIN staff s ON u.staff_id = s.id
-    WHERE LOWER(u.username) = $1 OR LOWER(s.email) = $1
+    WHERE LOWER(u.username) = $1
+      AND LOWER(s.last_name) = $2
+      AND LOWER(s.email) = $3
+      AND (
+        REPLACE(REPLACE(s.phone, ' ', ''), '-', '') ILIKE $4
+        OR REPLACE(REPLACE(s.phone, ' ', ''), '-', '') ILIKE '%' || RIGHT($4, 9)
+      )
+      AND LOWER(s.department) = $5
+      AND s.is_active = TRUE
     LIMIT 1
     `,
-    [clean]
+    [cleanUsername, cleanLastName, cleanEmail, `%${cleanPhone}%`, cleanDept]
   );
 
   if (userResult.rows.length === 0) {
-    return { success: true, message: genericMessage };
+    // Return generic message to prevent account enumeration / reconnaissance
+    return {
+      success: false,
+      message: genericFailureMessage,
+    };
   }
 
   const user = userResult.rows[0];
 
-  // Generate cryptographically secure random token
+  // Generate cryptographically secure one-time reset token
   const rawToken = crypto.randomBytes(32).toString("hex");
   const tokenHash = await bcrypt.hash(rawToken, 10);
-  const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+  const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour expiration
 
   await pool.query(
     `
     INSERT INTO password_resets (user_id, token_hash, expires_at)
     VALUES ($1, $2, $3)
     `,
-    [user.id, tokenHash, expiresAt]
+    [user.user_id, tokenHash, expiresAt]
   );
 
   await recordAuditLog(pool, {
-    userId: user.id,
+    userId: user.user_id,
     action: "PASSWORD_RESET_REQUESTED",
     entity: "users",
-    entityId: user.id,
-    details: { username: user.username, email: user.email },
+    entityId: user.user_id,
+    details: {
+      username: user.username,
+      department: user.department,
+      verifiedFields: 5,
+    },
   });
 
   return {
     success: true,
-    message: genericMessage,
-    // In dev / test environments, expose token for testing convenience
+    message: "Identity verified successfully. Password reset token generated.",
     resetToken: rawToken,
   };
 }
 
 async function resetPassword(token, newPassword) {
   if (!token || typeof token !== "string") {
-    throw new Error("INVALID_TOKEN");
+    throw new Error("INVALID_OR_EXPIRED_TOKEN");
   }
 
   const passwordCheck = validatePasswordStrength(newPassword);
@@ -159,7 +277,7 @@ async function resetPassword(token, newPassword) {
 
   let matchedReset = null;
   for (const reset of resetsResult.rows) {
-    const isMatch = await bcrypt.compare(token, reset.token_hash);
+    const isMatch = await bcrypt.compare(token.trim(), reset.token_hash);
     if (isMatch) {
       matchedReset = reset;
       break;
@@ -174,7 +292,7 @@ async function resetPassword(token, newPassword) {
   try {
     await client.query("BEGIN");
 
-    const newPasswordHash = await bcrypt.hash(newPassword, 10);
+    const newPasswordHash = await bcrypt.hash(newPassword, 12);
 
     // Update user password
     await client.query(
@@ -186,7 +304,7 @@ async function resetPassword(token, newPassword) {
       [newPasswordHash, matchedReset.user_id]
     );
 
-    // Invalidate reset token
+    // Invalidate reset token (one-time use)
     await client.query(
       `
       UPDATE password_resets
@@ -219,6 +337,8 @@ async function resetPassword(token, newPassword) {
 }
 
 module.exports = {
+  checkSystemStatus,
+  setupInitialAdmin,
   login,
   requestPasswordReset,
   resetPassword,

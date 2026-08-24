@@ -20,6 +20,7 @@ export function getNavigation(role) {
       { label: "Operating Theatre", path: "/surgery/queue", icon: "🔪" },
       { label: "Pharmacy & Cashier", path: "/prescriptions", icon: "💊" },
       { label: "Appointments", path: "/appointments", icon: "□" },
+      { label: "Service Pricing", path: "/admin/pricing", icon: "🏷️" },
       { label: "Staff & Schedules", path: "/admin/staff", icon: "👥" },
       { label: "Billing & Invoices", path: "/billing", icon: "💳" },
       { label: "Reports", path: "/reports", icon: "📊" },

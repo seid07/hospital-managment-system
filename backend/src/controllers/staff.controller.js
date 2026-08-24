@@ -110,6 +110,62 @@ async function createStaff(req, res) {
   }
 }
 
+async function updateStaff(req, res) {
+  try {
+    const { id } = req.params;
+
+    if (!isValidUUID(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid staff ID format.",
+      });
+    }
+
+    const staff = await staffService.updateStaff(id, req.body, req.user?.userId);
+
+    if (!staff) {
+      return res.status(404).json({
+        success: false,
+        message: "Staff member not found.",
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: "Staff member updated successfully.",
+      data: staff,
+    });
+  } catch (error) {
+    if (error.message === "INVALID_PHONE_FORMAT") {
+      return res.status(400).json({
+        success: false,
+        message: "Enter a valid Ethiopian phone number starting with 09, 07, or +251.",
+      });
+    }
+
+    if (error.message === "ROLE_NOT_FOUND") {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid role specified.",
+      });
+    }
+
+    if (error.message === "DUPLICATE_STAFF") {
+      return res.status(409).json({
+        success: false,
+        message: "A staff account with this email or phone already exists.",
+      });
+    }
+
+    console.error("Update staff error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to update staff member.",
+    });
+  }
+}
+
 async function updateStatus(req, res) {
   try {
     const { id } = req.params;
@@ -157,5 +213,6 @@ module.exports = {
   getRoles,
   getStaff,
   createStaff,
+  updateStaff,
   updateStatus,
 };

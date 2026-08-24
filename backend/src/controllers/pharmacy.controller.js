@@ -96,6 +96,12 @@ async function dispensePrescription(req, res) {
     });
   } catch (error) {
     console.error("Dispense prescription error:", error);
+    if (error.message.startsWith("INSUFFICIENT_STOCK")) {
+      return res.status(400).json({
+        success: false,
+        message: error.message,
+      });
+    }
     if (error.message === "PRESCRIPTION_NOT_FOUND") {
       return res.status(404).json({
         success: false,
@@ -110,7 +116,7 @@ async function dispensePrescription(req, res) {
     }
     return res.status(500).json({
       success: false,
-      message: "Unable to dispense prescription.",
+      message: error.message || "Unable to dispense prescription.",
     });
   }
 }
@@ -208,7 +214,7 @@ async function updateStock(req, res) {
 
     return res.status(200).json({
       success: true,
-      message: "Medication stock updated successfully.",
+      message: "Medication stock and pricing updated successfully.",
       data: med,
     });
   } catch (error) {
@@ -226,12 +232,72 @@ async function updateStock(req, res) {
   }
 }
 
+async function getInventoryTransactions(req, res) {
+  try {
+    const result = await pharmacyService.getInventoryTransactions(req.query);
+    return res.status(200).json({
+      success: true,
+      data: result.transactions,
+      pagination: {
+        total: result.total,
+        page: result.page,
+        limit: result.limit,
+        totalPages: result.totalPages,
+      },
+    });
+  } catch (error) {
+    console.error("Get inventory transactions error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Unable to retrieve inventory transactions.",
+    });
+  }
+}
+
+async function dispenseMultiplePrescriptions(req, res) {
+  try {
+    const { prescriptionIds, paymentMethod, transactionReference, dispensedNotes } = req.body;
+
+    if (!Array.isArray(prescriptionIds) || prescriptionIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "prescriptionIds array with at least one ID is required.",
+      });
+    }
+
+    const dispensed = await pharmacyService.dispenseMultiplePrescriptions(
+      { prescriptionIds, paymentMethod, transactionReference, dispensedNotes },
+      req.user?.id || req.user?.userId
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: `Successfully dispensed ${dispensed.length} medication(s).`,
+      data: dispensed,
+    });
+  } catch (error) {
+    console.error("Dispense multiple prescriptions error:", error);
+    if (error.message.startsWith("INSUFFICIENT_STOCK")) {
+      return res.status(400).json({
+        success: false,
+        message: error.message,
+      });
+    }
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Unable to dispense medications.",
+    });
+  }
+}
+
 module.exports = {
   createPrescription,
   recordPharmacyPayment,
   dispensePrescription,
+  dispenseMultiplePrescriptions,
   getPrescriptionsQueue,
   getMedications,
   addMedication,
   updateStock,
+  getInventoryTransactions,
 };

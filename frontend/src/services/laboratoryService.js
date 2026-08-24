@@ -1,4 +1,4 @@
-import { get, post } from "./api";
+import { get, post, put } from "./api";
 
 export async function getTestCatalog(query = {}) {
   const params = new URLSearchParams();
@@ -12,6 +12,10 @@ export async function getTestCatalog(query = {}) {
 
 export async function addCatalogTest(data) {
   return post("/laboratory/catalog", data);
+}
+
+export async function linkCatalogTestService(testId, serviceId) {
+  return put(`/laboratory/catalog/${testId}/link-service`, { serviceId });
 }
 
 export async function createLabOrder(data) {

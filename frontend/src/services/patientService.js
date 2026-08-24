@@ -15,6 +15,8 @@ export async function getPatients(query = {}) {
   if (query.page) params.append("page", query.page);
   if (query.limit) params.append("limit", query.limit);
   if (query.search) params.append("search", query.search);
+  if (query.date) params.append("date", query.date);
+  if (query.registered) params.append("registered", query.registered);
 
   return get(`/patients?${params.toString()}`);
 }

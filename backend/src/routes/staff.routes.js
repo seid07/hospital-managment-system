@@ -33,6 +33,12 @@ router.post(
   staffController.createStaff
 );
 
+router.put(
+  "/:id",
+  authorizeRoles("ADMIN"),
+  staffController.updateStaff
+);
+
 router.patch(
   "/:id/status",
   authorizeRoles("ADMIN"),

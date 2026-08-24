@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import AppShell from "../components/layout/AppShell";
 import Modal from "../components/common/Modal";
 import StatCard from "../components/common/StatCard";
@@ -7,7 +7,7 @@ import { searchPatients, createPatient } from "../services/patientService";
 import { serviceCatalogService } from "../services/serviceCatalogService";
 import { visitService } from "../services/visitService";
 import { serviceOrderService } from "../services/serviceOrderService";
-import { recordPayment, getPendingCashierOrders } from "../services/billingService";
+import { recordPayment, recordSelectivePayment, getPendingCashierOrders } from "../services/billingService";
 import { getDashboardKPIs } from "../services/reportService";
 import { getDoctors } from "../services/scheduleService";
 import { getAvailability, createAppointment } from "../services/appointmentService";
@@ -16,8 +16,23 @@ import { validateEthiopianPhone } from "../utils/phone";
 import { useDebounce } from "../hooks/useDebounce";
 
 export default function RegistrarVisitDesk() {
+  const [searchParams] = useSearchParams();
+  const tabFromUrl = searchParams.get("tab");
+
   // Active Tab
-  const [activeTab, setActiveTab] = useState("NEW_VISIT"); // "NEW_VISIT" or "PENDING_ORDERS"
+  const [activeTab, setActiveTab] = useState(tabFromUrl === "PENDING_ORDERS" ? "PENDING_ORDERS" : "NEW_VISIT");
+
+  // Keep activeTab in sync with the ?tab= URL param without a synchronous
+  // setState-in-effect (which triggers an extra cascading render). Instead we
+  // detect the param change during render itself, which React explicitly
+  // supports and bails out of before painting.
+  const [prevTabFromUrl, setPrevTabFromUrl] = useState(tabFromUrl);
+  if (tabFromUrl !== prevTabFromUrl) {
+    setPrevTabFromUrl(tabFromUrl);
+    if (tabFromUrl === "PENDING_ORDERS") {
+      setActiveTab("PENDING_ORDERS");
+    }
+  }
 
   // Activity KPIs
   const [kpis, setKpis] = useState(null);
@@ -60,10 +75,17 @@ export default function RegistrarVisitDesk() {
 
   // Doctor-Ordered Services Cashier Queue
   const [pendingOrders, setPendingOrders] = useState([]);
-  const [selectedPendingOrder, setSelectedPendingOrder] = useState(null);
+  const [ordersSearchInput, setOrdersSearchInput] = useState("");
+  const debouncedOrdersSearch = useDebounce(ordersSearchInput, 300);
+
+  // Multi-service payment modal state for doctor orders
   const [showPayOrderModal, setShowPayOrderModal] = useState(false);
+  const [selectedPatientForPay, setSelectedPatientForPay] = useState(null); // { patient_id, patient_name, ... }
+  const [patientPendingOrders, setPatientPendingOrders] = useState([]); // all pending orders for this patient
+  const [selectedOrderIds, setSelectedOrderIds] = useState(new Set()); // Set of service_order_id
   const [orderPayMethod, setOrderPayMethod] = useState("CASH");
   const [orderTxnRef, setOrderTxnRef] = useState("");
+  const [orderPayNotes, setOrderPayNotes] = useState("");
 
   // Auto-Appointment Booking State
   const [showAppointmentModal, setShowAppointmentModal] = useState(false);
@@ -89,7 +111,7 @@ export default function RegistrarVisitDesk() {
         const [catData, kpiData, ordersData] = await Promise.all([
           serviceCatalogService.getServices({ activeOnly: true }),
           getDashboardKPIs(),
-          getPendingCashierOrders(),
+          getPendingCashierOrders({ search: debouncedOrdersSearch.trim() || undefined }),
         ]);
         if (!cancelled) {
           setCatalog(catData || []);
@@ -99,7 +121,7 @@ export default function RegistrarVisitDesk() {
         }
       } catch (err) {
         if (!cancelled) {
-          console.error("Failed to load desk data:", err);
+          setErrorMessage(err.message || "Failed to load registrar desk data. Please refresh the page.");
           setLoadingCatalog(false);
         }
       }
@@ -109,7 +131,7 @@ export default function RegistrarVisitDesk() {
     return () => {
       cancelled = true;
     };
-  }, [refreshTrigger]);
+  }, [refreshTrigger, debouncedOrdersSearch]);
 
   // Live debounced patient search
   useEffect(() => {
@@ -126,7 +148,7 @@ export default function RegistrarVisitDesk() {
         }
       } catch (err) {
         if (!cancelled) {
-          console.error("Search error:", err);
+          setErrorMessage(err.message || "Patient search failed. Please try again.");
         }
       }
     }
@@ -173,7 +195,12 @@ export default function RegistrarVisitDesk() {
         }
         setShowAppointmentModal(true);
       } catch (docErr) {
-        console.error("Doc load error:", docErr);
+        // Patient was already created successfully at this point — this only
+        // affects the optional "book an appointment now" offer, so we inform
+        // the registrar without treating it as a failed registration.
+        setErrorMessage(
+          docErr.message || "Patient registered, but the doctor list for same-day booking could not be loaded."
+        );
       }
     } catch (err) {
       setErrorMessage(err.message || "Failed to register patient.");
@@ -328,27 +355,87 @@ export default function RegistrarVisitDesk() {
     }
   }
 
-  // Pay single doctor-ordered service (e.g. CBC, X-Ray ordered by clinician)
-  async function handlePayDoctorOrderSubmit(e) {
+  // Open cashier payment modal for a patient's pending orders
+  function handleOpenPayOrdersForPatient(patientId, initialOrderId = null) {
+    const orders = pendingOrders.filter((o) => o.patient_id === patientId);
+    if (orders.length === 0) return;
+
+    const patientInfo = {
+      patient_id: orders[0].patient_id,
+      patient_number: orders[0].patient_number,
+      patient_first_name: orders[0].patient_first_name,
+      patient_last_name: orders[0].patient_last_name,
+      patient_phone: orders[0].patient_phone,
+      doctor_first_name: orders[0].doctor_first_name,
+      doctor_last_name: orders[0].doctor_last_name,
+      department_name: orders[0].department_name,
+      created_at: orders[0].created_at,
+    };
+
+    setSelectedPatientForPay(patientInfo);
+    setPatientPendingOrders(orders);
+    setSelectedOrderIds(new Set(initialOrderId ? [initialOrderId] : orders.map((o) => o.service_order_id)));
+    setOrderPayMethod("CASH");
+    setOrderTxnRef("");
+    setOrderPayNotes("");
+    setShowPayOrderModal(true);
+  }
+
+  function handleToggleOrderSelection(orderId) {
+    setSelectedOrderIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(orderId)) {
+        next.delete(orderId);
+      } else {
+        next.add(orderId);
+      }
+      return next;
+    });
+  }
+
+  function handleToggleSelectAllPatientOrders() {
+    setSelectedOrderIds((prev) => {
+      if (prev.size === patientPendingOrders.length) {
+        return new Set();
+      }
+      return new Set(patientPendingOrders.map((o) => o.service_order_id));
+    });
+  }
+
+  // Pay selective doctor-ordered services atomically
+  async function handlePayDoctorOrdersSubmit(e) {
     e.preventDefault();
-    if (!selectedPendingOrder) return;
+    if (selectedOrderIds.size === 0) return;
     try {
       setProcessing(true);
-      if (selectedPendingOrder.invoice_id) {
-        await recordPayment({
-          invoiceId: selectedPendingOrder.invoice_id,
-          amount: parseFloat(selectedPendingOrder.price),
-          paymentMethod: orderPayMethod,
-          transactionReference: orderTxnRef || null,
-          notes: `Payment for ${selectedPendingOrder.service_name}`,
-        });
-      }
+      setErrorMessage("");
+
+      const selectedIdsArray = Array.from(selectedOrderIds);
+      const res = await recordSelectivePayment({
+        serviceOrderIds: selectedIdsArray,
+        paymentMethod: orderPayMethod,
+        transactionReference: orderTxnRef || null,
+        notes: orderPayNotes || `Cashier payment for ${selectedIdsArray.length} doctor-ordered service(s)`,
+      });
+
       setShowPayOrderModal(false);
-      setSelectedPendingOrder(null);
+      setSelectedPatientForPay(null);
+      setPatientPendingOrders([]);
+      setSelectedOrderIds(new Set());
       setOrderTxnRef("");
+      setOrderPayNotes("");
+
+      setSuccessReceipt({
+        patientName: `${selectedPatientForPay.patient_first_name} ${selectedPatientForPay.patient_last_name}`,
+        patientNumber: selectedPatientForPay.patient_number,
+        totalPaid: res.data?.amount || 0,
+        paymentNumber: res.data?.paymentNumber,
+        servicesCount: selectedIdsArray.length,
+      });
+
       setRefreshTrigger((k) => k + 1);
     } catch (err) {
-      setErrorMessage(err.message || "Failed to record order payment.");
+      setErrorMessage(err.message || "Failed to record doctor order payments.");
     } finally {
       setProcessing(false);
     }
@@ -385,7 +472,7 @@ export default function RegistrarVisitDesk() {
           value={kpis?.todayAppointments ?? "—"}
           icon="□"
           description="Total scheduled for today"
-          to="/appointments"
+          to="/appointments?date=today"
         />
         <StatCard
           label="Checked In"
@@ -399,11 +486,11 @@ export default function RegistrarVisitDesk() {
           value={kpis?.registeredToday ?? "—"}
           icon="+"
           description="New patient intakes today"
-          to="/patients"
+          to="/patients?registered=today"
         />
         <StatCard
           label="Pending Doctor Orders"
-          value={pendingOrders.length}
+          value={kpis?.pendingDoctorOrders ?? pendingOrders.length}
           icon="⏳"
           description="Doctor orders awaiting cashier"
           onClick={() => setActiveTab("PENDING_ORDERS")}
@@ -729,18 +816,27 @@ export default function RegistrarVisitDesk() {
       {/* Tab 2: Doctor-Ordered Services Cashier Queue */}
       {activeTab === "PENDING_ORDERS" && (
         <section className="card">
-          <div className="card-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div className="card-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px" }}>
             <div>
               <h2>Doctor-Ordered Services Awaiting Cashier Payment ({pendingOrders.length})</h2>
-              <p>Lab tests, X-rays, Ultrasounds, ECG, and procedures prescribed during doctor consultations.</p>
+              <p>Lab tests, X-rays, Ultrasounds, ECG, and clinical procedures prescribed during doctor consultations.</p>
             </div>
-            <button
-              type="button"
-              className="button button-secondary"
-              onClick={() => setRefreshTrigger((k) => k + 1)}
-            >
-              🔄 Refresh Orders
-            </button>
+            <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+              <input
+                type="search"
+                placeholder="Live search by patient, PAT #, or order #..."
+                value={ordersSearchInput}
+                onChange={(e) => setOrdersSearchInput(e.target.value)}
+                style={{ padding: "6px 12px", borderRadius: "6px", border: "1px solid var(--border)", minWidth: "260px" }}
+              />
+              <button
+                type="button"
+                className="button button-secondary"
+                onClick={() => setRefreshTrigger((k) => k + 1)}
+              >
+                🔄 Refresh Orders
+              </button>
+            </div>
           </div>
 
           {pendingOrders.length === 0 ? (
@@ -796,12 +892,9 @@ export default function RegistrarVisitDesk() {
                         <button
                           type="button"
                           className="button button-primary"
-                          onClick={() => {
-                            setSelectedPendingOrder(ord);
-                            setShowPayOrderModal(true);
-                          }}
+                          onClick={() => handleOpenPayOrdersForPatient(ord.patient_id, ord.service_order_id)}
                         >
-                          💳 Collect & Authorize →
+                          💳 Pay & Authorize →
                         </button>
                       </td>
                     </tr>
@@ -813,23 +906,140 @@ export default function RegistrarVisitDesk() {
         </section>
       )}
 
-      {/* Pay Single Order Modal */}
+      {/* Multi-Service Doctor Order Payment Modal */}
       <Modal
         isOpen={showPayOrderModal}
         onClose={() => {
           setShowPayOrderModal(false);
-          setSelectedPendingOrder(null);
+          setSelectedPatientForPay(null);
+          setPatientPendingOrders([]);
+          setSelectedOrderIds(new Set());
         }}
-        title={selectedPendingOrder ? `Authorize Prescribed Service: ${selectedPendingOrder.service_name}` : "Cashier Payment"}
+        title={selectedPatientForPay ? `Cashier Service Authorization: ${selectedPatientForPay.patient_first_name} ${selectedPatientForPay.patient_last_name}` : "Cashier Payment"}
+        maxWidth="750px"
       >
-        {selectedPendingOrder && (
-          <form onSubmit={handlePayDoctorOrderSubmit}>
-            <div style={{ background: "var(--primary-light)", padding: "14px", borderRadius: "8px", marginBottom: "16px" }}>
-              <div><strong>Patient:</strong> {selectedPendingOrder.patient_first_name} {selectedPendingOrder.patient_last_name} ({selectedPendingOrder.patient_number})</div>
-              <div><strong>Prescribed Service:</strong> {selectedPendingOrder.service_name} ({selectedPendingOrder.department_name})</div>
-              <div><strong>Total Due:</strong> <strong style={{ color: "var(--success)", fontSize: "16px" }}>{formatCurrency(selectedPendingOrder.price)}</strong></div>
+        {selectedPatientForPay && (
+          <form onSubmit={handlePayDoctorOrdersSubmit}>
+            {/* Patient Header Details */}
+            <div style={{ background: "var(--primary-light)", padding: "14px", borderRadius: "8px", marginBottom: "16px", fontSize: "13px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+                <div>
+                  <strong>Patient:</strong> {selectedPatientForPay.patient_first_name} {selectedPatientForPay.patient_last_name} (
+                  <span style={{ fontFamily: "monospace", fontWeight: 700 }}>{selectedPatientForPay.patient_number}</span>)
+                </div>
+                <div>
+                  <strong>Phone:</strong> {selectedPatientForPay.patient_phone || "—"}
+                </div>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", color: "var(--text-muted)" }}>
+                <div><strong>Ordering Doctor:</strong> Dr. {selectedPatientForPay.doctor_first_name} {selectedPatientForPay.doctor_last_name} ({selectedPatientForPay.department_name})</div>
+                <div><strong>Date:</strong> {new Date(selectedPatientForPay.created_at).toLocaleDateString()}</div>
+              </div>
             </div>
 
+            {/* Unpaid / Pending Services Selection Table */}
+            <div style={{ marginBottom: "16px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                <h4 style={{ margin: 0, fontSize: "14px" }}>
+                  Select Services to Pay & Authorize ({selectedOrderIds.size} of {patientPendingOrders.length} selected):
+                </h4>
+                {patientPendingOrders.length > 1 && (
+                  <button
+                    type="button"
+                    className="button button-secondary"
+                    style={{ fontSize: "11px", padding: "3px 8px" }}
+                    onClick={handleToggleSelectAllPatientOrders}
+                  >
+                    {selectedOrderIds.size === patientPendingOrders.length ? "Deselect All" : "Select All"}
+                  </button>
+                )}
+              </div>
+
+              <div className="table-wrapper" style={{ maxHeight: "240px", overflowY: "auto", border: "1px solid var(--border)", borderRadius: "6px" }}>
+                <table className="data-table" style={{ margin: 0 }}>
+                  <thead>
+                    <tr>
+                      <th style={{ width: "40px" }}>Pay</th>
+                      <th>Service Name</th>
+                      <th>Department</th>
+                      <th>Doctor</th>
+                      <th>Price</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {patientPendingOrders.map((ord) => {
+                      const isSelected = selectedOrderIds.has(ord.service_order_id);
+                      return (
+                        <tr
+                          key={ord.service_order_id}
+                          style={{
+                            background: isSelected ? "var(--primary-light)" : "transparent",
+                            cursor: "pointer",
+                          }}
+                          onClick={() => handleToggleOrderSelection(ord.service_order_id)}
+                        >
+                          <td onClick={(e) => e.stopPropagation()}>
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => handleToggleOrderSelection(ord.service_order_id)}
+                              style={{ width: "16px", height: "16px", cursor: "pointer" }}
+                            />
+                          </td>
+                          <td>
+                            <strong>{ord.service_name}</strong>
+                            <br />
+                            <small style={{ color: "var(--text-muted)", fontFamily: "monospace" }}>{ord.order_number}</small>
+                          </td>
+                          <td>
+                            <span className="badge badge-info">{ord.department_name}</span>
+                          </td>
+                          <td>Dr. {ord.doctor_first_name} {ord.doctor_last_name}</td>
+                          <td>
+                            <strong style={{ color: "var(--success)", fontFamily: "monospace" }}>
+                              {formatCurrency(ord.price)}
+                            </strong>
+                          </td>
+                          <td>
+                            <span className="badge badge-warning">Waiting Pay</span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Dynamic Calculated Financial Summary */}
+            {(() => {
+              const selectedOrders = patientPendingOrders.filter((o) => selectedOrderIds.has(o.service_order_id));
+              const selectedTotal = selectedOrders.reduce((sum, o) => sum + parseFloat(o.price), 0);
+              const totalPatientDue = patientPendingOrders.reduce((sum, o) => sum + parseFloat(o.price), 0);
+              const remainingBalance = totalPatientDue - selectedTotal;
+
+              return (
+                <div style={{ background: "var(--surface-sunken)", padding: "12px 16px", borderRadius: "8px", marginBottom: "16px", display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "12px", textAlign: "center" }}>
+                  <div>
+                    <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>Total Patient Orders</div>
+                    <div style={{ fontSize: "15px", fontWeight: 700, fontFamily: "monospace" }}>{formatCurrency(totalPatientDue)}</div>
+                  </div>
+                  <div style={{ borderLeft: "1px solid var(--border)", borderRight: "1px solid var(--border)" }}>
+                    <div style={{ fontSize: "11px", color: "var(--primary)", fontWeight: 600 }}>Selected Payment Total</div>
+                    <div style={{ fontSize: "18px", fontWeight: 800, color: "var(--success)", fontFamily: "monospace" }}>{formatCurrency(selectedTotal)}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>Remaining Unpaid Balance</div>
+                    <div style={{ fontSize: "15px", fontWeight: 700, color: remainingBalance > 0 ? "var(--danger)" : "var(--text-muted)", fontFamily: "monospace" }}>
+                      {formatCurrency(remainingBalance)}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Payment Method & Reference Inputs */}
             <div className="form-grid" style={{ marginBottom: "16px" }}>
               <div className="form-field">
                 <label>Payment Method *</label>
@@ -842,16 +1052,27 @@ export default function RegistrarVisitDesk() {
                   <option value="CBE_BIRR">CBE Birr</option>
                   <option value="BANK">Bank Transfer</option>
                   <option value="CARD">Card / POS</option>
+                  <option value="INSURANCE">Insurance</option>
                 </select>
               </div>
 
               <div className="form-field">
-                <label>Transaction Reference #</label>
+                <label>Transaction / Deposit Ref #</label>
                 <input
                   type="text"
                   placeholder="e.g. TXN-123456"
                   value={orderTxnRef}
                   onChange={(e) => setOrderTxnRef(e.target.value)}
+                />
+              </div>
+
+              <div className="form-field" style={{ gridColumn: "1 / -1" }}>
+                <label>Cashier Notes (Optional)</label>
+                <input
+                  type="text"
+                  placeholder="Payment remarks or receipt notes..."
+                  value={orderPayNotes}
+                  onChange={(e) => setOrderPayNotes(e.target.value)}
                 />
               </div>
             </div>
@@ -860,16 +1081,27 @@ export default function RegistrarVisitDesk() {
               <button
                 type="button"
                 className="button button-secondary"
-                onClick={() => setShowPayOrderModal(false)}
+                onClick={() => {
+                  setShowPayOrderModal(false);
+                  setSelectedPatientForPay(null);
+                  setPatientPendingOrders([]);
+                  setSelectedOrderIds(new Set());
+                }}
               >
                 Cancel
               </button>
               <button
                 type="submit"
                 className="button button-primary"
-                disabled={processing}
+                disabled={processing || selectedOrderIds.size === 0}
               >
-                {processing ? "Authorizing..." : `✓ Authorize Payment (${formatCurrency(selectedPendingOrder.price)})`}
+                {processing
+                  ? "Authorizing Payment..."
+                  : `✓ Authorize Payment (${formatCurrency(
+                      patientPendingOrders
+                        .filter((o) => selectedOrderIds.has(o.service_order_id))
+                        .reduce((sum, o) => sum + parseFloat(o.price), 0)
+                    )})`}
               </button>
             </div>
           </form>

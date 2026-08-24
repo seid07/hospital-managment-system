@@ -15,7 +15,7 @@ router.post(
 
 router.get(
   "/prescriptions",
-  authorizeRoles("ADMIN", "PHARMACIST", "DOCTOR"),
+  authorizeRoles("ADMIN", "PHARMACIST", "DOCTOR", "FINANCE"),
   pharmacyController.getPrescriptionsQueue
 );
 
@@ -29,6 +29,12 @@ router.post(
   "/prescriptions/:id/dispense",
   authorizeRoles("ADMIN", "PHARMACIST"),
   pharmacyController.dispensePrescription
+);
+
+router.post(
+  "/prescriptions/dispense-multiple",
+  authorizeRoles("ADMIN", "PHARMACIST"),
+  pharmacyController.dispenseMultiplePrescriptions
 );
 
 router.get(
@@ -46,6 +52,12 @@ router.patch(
   "/medications/:id/stock",
   authorizeRoles("ADMIN", "PHARMACIST"),
   pharmacyController.updateStock
+);
+
+router.get(
+  "/inventory-transactions",
+  authorizeRoles("ADMIN", "PHARMACIST"),
+  pharmacyController.getInventoryTransactions
 );
 
 module.exports = router;

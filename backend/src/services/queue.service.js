@@ -51,7 +51,7 @@ async function getDepartmentQueue(departmentCode, { status, date } = {}) {
     JOIN patients p ON qe.patient_id = p.id
     JOIN visits v ON qe.visit_id = v.id
     LEFT JOIN staff doc ON so.doctor_id = doc.id
-    WHERE d.code = $1
+    WHERE d.code = $1 AND p.is_active = TRUE
   `;
   const params = [departmentCode.toUpperCase().trim()];
 

@@ -7,8 +7,11 @@ import { queueService } from "../services/queueService";
 export default function ProcedureQueue() {
   const [queue, setQueue] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
   const [statusFilter, setStatusFilter] = useState("WAITING");
   const [refreshKey, setRefreshKey] = useState(0);
+  const [searchInput, setSearchInput] = useState("");
 
   // Procedure completion modal
   const [showModal, setShowModal] = useState(false);
@@ -17,10 +20,16 @@ export default function ProcedureQueue() {
   const [procType, setProcType] = useState("GENERAL");
   const [submitting, setSubmitting] = useState(false);
 
+  // Tracks the queue_entry_id currently mid-request for Call, so a
+  // double-click can't fire the same status transition twice.
+  const [actionInFlight, setActionInFlight] = useState(null);
+
   useEffect(() => {
     let cancelled = false;
     async function loadData() {
       try {
+        setLoading(true);
+        setError("");
         const data = await procedureService.getProcedureQueue({
           status: statusFilter === "ALL" ? undefined : statusFilter,
         });
@@ -30,7 +39,7 @@ export default function ProcedureQueue() {
         }
       } catch (err) {
         if (!cancelled) {
-          console.error("Failed to load procedure queue:", err);
+          setError(err.message || "Unable to load the procedure queue.");
           setLoading(false);
         }
       }
@@ -53,32 +62,54 @@ export default function ProcedureQueue() {
   }
 
   async function handleCallPatient(item) {
+    if (actionInFlight) return;
     try {
+      setActionInFlight(item.queue_entry_id);
+      setError("");
+      setSuccess("");
       await queueService.updateQueueStatus(item.queue_entry_id, { status: "CALLED" });
+      setSuccess(`${item.patient_first_name} ${item.patient_last_name} called.`);
       setRefreshKey((k) => k + 1);
     } catch (err) {
-      console.error("Error calling patient:", err);
+      setError(err.message || "Failed to call patient.");
+    } finally {
+      setActionInFlight(null);
     }
   }
 
   async function handleCompleteSubmit(e) {
     e.preventDefault();
-    if (!selectedOrder) return;
+    if (!selectedOrder || submitting) return;
     try {
       setSubmitting(true);
+      setError("");
       await procedureService.completeProcedure(selectedOrder.service_order_id, {
         procedureType: procType,
         procedureName: selectedOrder.service_name,
         procedureNotes: procNotes,
       });
+      setSuccess("Procedure marked complete.");
       setShowModal(false);
       setRefreshKey((k) => k + 1);
     } catch (err) {
-      console.error("Failed to complete procedure:", err);
+      setError(err.message || "Failed to complete procedure.");
     } finally {
       setSubmitting(false);
     }
   }
+
+  const filteredQueue = searchInput.trim()
+    ? queue.filter((item) => {
+        const q = searchInput.trim().toLowerCase();
+        return (
+          item.patient_first_name?.toLowerCase().includes(q) ||
+          item.patient_last_name?.toLowerCase().includes(q) ||
+          item.patient_number?.toLowerCase().includes(q) ||
+          item.service_name?.toLowerCase().includes(q) ||
+          item.queue_number?.toLowerCase?.().includes(q)
+        );
+      })
+    : queue;
 
   return (
     <AppShell>
@@ -106,10 +137,32 @@ export default function ProcedureQueue() {
         </div>
       </div>
 
+      {error && (
+        <div className="alert alert-error" role="alert">
+          {error}
+        </div>
+      )}
+
+      {success && (
+        <div className="alert alert-success" role="status">
+          {success}
+        </div>
+      )}
+
+      <section className="card" style={{ marginBottom: "16px" }}>
+        <input
+          type="search"
+          placeholder="Live search by patient name, PAT #, or procedure..."
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
+          style={{ width: "100%", padding: "10px 14px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)" }}
+        />
+      </section>
+
       <section className="card">
         <div className="card-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div>
-            <h2>Authorized Procedure Queue ({queue.length})</h2>
+            <h2>Authorized Procedure Queue ({filteredQueue.length})</h2>
             <p>Patients waiting for nursing and clinical procedures.</p>
           </div>
           <button
@@ -123,11 +176,11 @@ export default function ProcedureQueue() {
 
         {loading ? (
           <div className="loading-state">Loading procedure queue...</div>
-        ) : queue.length === 0 ? (
+        ) : filteredQueue.length === 0 ? (
           <div className="empty-state">
             <div className="empty-state-icon">💉</div>
-            <h3>No pending procedure orders</h3>
-            <p>New orders will appear here automatically after cashier authorization.</p>
+            <h3>{searchInput ? "No matching procedures found" : "No pending procedure orders"}</h3>
+            <p>{searchInput ? "Try a different search term." : "New orders will appear here automatically after cashier authorization."}</p>
           </div>
         ) : (
           <div className="table-wrapper">
@@ -144,7 +197,7 @@ export default function ProcedureQueue() {
                 </tr>
               </thead>
               <tbody>
-                {queue.map((item) => (
+                {filteredQueue.map((item) => (
                   <tr key={item.queue_entry_id}>
                     <td>
                       <span

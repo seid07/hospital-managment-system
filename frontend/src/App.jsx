@@ -25,6 +25,7 @@ import WardInpatient from "./pages/WardInpatient";
 import SurgeryQueue from "./pages/SurgeryQueue";
 import BillingInvoices from "./pages/BillingInvoices";
 import AdminStaff from "./pages/AdminStaff";
+import AdminServicePricing from "./pages/AdminServicePricing";
 import DoctorSchedules from "./pages/DoctorSchedules";
 import AdminAuditLogs from "./pages/AdminAuditLogs";
 import Reports from "./pages/Reports";
@@ -81,8 +82,9 @@ function App() {
             {/* Billing, Invoices & Payments */}
             <Route path="/billing" element={<BillingInvoices />} />
 
-            {/* Administration & Audit */}
+            {/* Administration, Pricing & Audit */}
             <Route path="/admin/staff" element={<AdminStaff />} />
+            <Route path="/admin/pricing" element={<AdminServicePricing />} />
             <Route path="/admin/schedules" element={<DoctorSchedules />} />
             <Route path="/admin/audit" element={<AdminAuditLogs />} />
 

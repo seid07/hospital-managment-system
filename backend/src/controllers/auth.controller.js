@@ -1,5 +1,49 @@
 const authService = require("../services/auth.service");
 
+async function getSystemStatus(req, res) {
+  try {
+    const status = await authService.checkSystemStatus();
+    return res.status(200).json({
+      success: true,
+      data: status,
+    });
+  } catch (error) {
+    console.error("System status check error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Unable to check system status.",
+    });
+  }
+}
+
+async function setupAdmin(req, res) {
+  try {
+    const { firstName, lastName, email, phone, username, password } = req.body;
+
+    if (!firstName || !lastName || !email || !phone || !username || !password) {
+      return res.status(400).json({
+        success: false,
+        message: "All fields are required for initial administrator setup.",
+      });
+    }
+
+    const result = await authService.setupInitialAdmin(req.body);
+    return res.status(201).json(result);
+  } catch (error) {
+    console.error("Setup admin error:", error);
+    if (error.message?.startsWith("SYSTEM_ALREADY_INITIALIZED") || error.message?.startsWith("WEAK_PASSWORD")) {
+      return res.status(400).json({
+        success: false,
+        message: error.message.replace(/^[^:]+:\s*/, ""),
+      });
+    }
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Unable to setup initial administrator.",
+    });
+  }
+}
+
 async function login(req, res) {
   try {
     const { username, password } = req.body;
@@ -43,8 +87,14 @@ async function login(req, res) {
 
 async function forgotPassword(req, res) {
   try {
-    const { username } = req.body;
-    const result = await authService.requestPasswordReset(username);
+    const { username, lastName, email, phone, department } = req.body;
+    const result = await authService.requestPasswordReset({
+      username,
+      lastName,
+      email,
+      phone,
+      department,
+    });
     return res.status(200).json(result);
   } catch (error) {
     console.error("Forgot password error:", error);
@@ -90,6 +140,8 @@ async function resetPassword(req, res) {
 }
 
 module.exports = {
+  getSystemStatus,
+  setupAdmin,
   login,
   forgotPassword,
   resetPassword,

@@ -1,4 +1,4 @@
-import { get, post, patch } from "./api";
+import { get, post, put, patch } from "./api";
 
 export async function getRoles() {
   return get("/staff/roles");
@@ -14,6 +14,10 @@ export async function getStaff(query = {}) {
 
 export async function createStaff(data) {
   return post("/staff", data);
+}
+
+export async function updateStaff(id, data) {
+  return put(`/staff/${id}`, data);
 }
 
 export async function updateStaffStatus(id, isActive) {

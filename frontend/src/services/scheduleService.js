@@ -4,6 +4,7 @@ export async function getDoctors(params = {}) {
   const query = new URLSearchParams();
   if (params.date) query.append("date", params.date);
   if (params.specialty) query.append("specialty", params.specialty);
+  if (params.allStaff) query.append("allStaff", "true");
   const qs = query.toString() ? `?${query.toString()}` : "";
   return get(`/schedules/doctors${qs}`);
 }
