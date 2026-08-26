@@ -2,7 +2,8 @@ const radiologyService = require("../services/radiology.service");
 
 async function getRadiologyQueue(req, res, next) {
   try {
-    const data = await radiologyService.getRadiologyQueue(req.query);
+    const doctorId = req.user?.role === "DOCTOR" ? req.user?.staffId : null;
+    const data = await radiologyService.getRadiologyQueue({ ...req.query, doctorId });
     res.json({ success: true, data });
   } catch (error) {
     next(error);

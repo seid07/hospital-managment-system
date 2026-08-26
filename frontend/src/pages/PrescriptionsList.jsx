@@ -41,6 +41,11 @@ function PrescriptionsList() {
   const [dispensing, setDispensing] = useState(false);
   const [dispenseError, setDispenseError] = useState("");
 
+  // Receipt prompt state (Requirement 4)
+  const [showDispenseReceiptPrompt, setShowDispenseReceiptPrompt] = useState(false);
+  const [paidDispenseReceiptData, setPaidDispenseReceiptData] = useState(null);
+  const [showDispensePrintModal, setShowDispensePrintModal] = useState(false);
+
   // Print modal
   const [printTarget, setPrintTarget] = useState(null);
 
@@ -144,6 +149,11 @@ function PrescriptionsList() {
     try {
       setDispensing(true);
       const rxIds = groupDispenseTarget.rxs.map((r) => r.id);
+      const totalPaid = groupDispenseTarget.rxs.reduce(
+        (sum, r) => sum + (parseFloat(r.unit_price || 25) * parseInt(r.quantity || 1, 10)),
+        0
+      );
+
       await dispenseMultiplePrescriptions({
         prescriptionIds: rxIds,
         paymentMethod: payMethod,
@@ -151,11 +161,28 @@ function PrescriptionsList() {
         dispensedNotes: dispenseNotes || `Dispensed ${rxIds.length} medications`,
       });
 
+      const receipt = {
+        receiptNumber: `PHARM-REC-${Date.now().toString().slice(-6)}`,
+        patientName: `${groupDispenseTarget.patient.patient_first_name} ${groupDispenseTarget.patient.patient_last_name}`,
+        patientNumber: groupDispenseTarget.patient.patient_number,
+        doctorName: groupDispenseTarget.patient.doctor_first_name
+          ? `Dr. ${groupDispenseTarget.patient.doctor_first_name} ${groupDispenseTarget.patient.doctor_last_name}`
+          : "Attending Doctor",
+        totalPaid,
+        paymentMethod: payMethod,
+        transactionReference: txRef || "—",
+        date: new Date().toLocaleString(),
+        items: groupDispenseTarget.rxs,
+        count: rxIds.length,
+      };
+
+      setPaidDispenseReceiptData(receipt);
       setSuccess(`Successfully dispensed ${rxIds.length} medication(s) for ${groupDispenseTarget.patient.patient_first_name} ${groupDispenseTarget.patient.patient_last_name}.`);
       setGroupDispenseTarget(null);
       // Clear patient selection
       setSelectedRxsByPatient((prev) => ({ ...prev, [groupDispenseTarget.patient.patient_id]: new Set() }));
       setReloadKey((prev) => prev + 1);
+      setShowDispenseReceiptPrompt(true);
     } catch (err) {
       setDispenseError(err.response?.data?.message || err.message || "Failed to dispense medications.");
     } finally {
@@ -693,6 +720,128 @@ function PrescriptionsList() {
           </PrintableDocument>
         )}
       </Modal>
+
+      {/* Requirement 4: Pharmacy Dispense Receipt Prompt Modal */}
+      {showDispenseReceiptPrompt && paidDispenseReceiptData && (
+        <Modal
+          isOpen={true}
+          onClose={() => setShowDispenseReceiptPrompt(false)}
+          title="Medications Dispensed — Do You Want a Receipt?"
+        >
+          <div style={{ textAlign: "center", padding: "16px 8px" }}>
+            <div style={{ fontSize: "40px", marginBottom: "8px" }}>💊</div>
+            <h3 style={{ margin: "0 0 8px 0", color: "var(--success)" }}>Medications Dispensed & Payment Recorded!</h3>
+            <p style={{ fontSize: "14px", color: "var(--text-main)", marginBottom: "14px" }}>
+              Payment of <strong>{formatCurrency(paidDispenseReceiptData.totalPaid)}</strong> recorded and{" "}
+              <strong>{paidDispenseReceiptData.count}</strong> medication(s) dispensed for{" "}
+              <strong>{paidDispenseReceiptData.patientName}</strong> ({paidDispenseReceiptData.patientNumber}).
+            </p>
+            <p style={{ fontSize: "13px", color: "var(--text-secondary)", marginBottom: "24px" }}>
+              Do you want to print an official dispensary transaction receipt for the patient?
+            </p>
+
+            <div style={{ display: "flex", justifyContent: "center", gap: "12px" }}>
+              <button
+                type="button"
+                className="button button-secondary"
+                onClick={() => setShowDispenseReceiptPrompt(false)}
+                style={{ minWidth: "150px" }}
+              >
+                No, Return to Queue
+              </button>
+              <button
+                type="button"
+                className="button button-primary"
+                onClick={() => {
+                  setShowDispenseReceiptPrompt(false);
+                  setShowDispensePrintModal(true);
+                }}
+                style={{ minWidth: "150px" }}
+              >
+                🖨 Yes, Print Receipt
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Printable Pharmacy Dispensary Receipt Modal */}
+      {showDispensePrintModal && paidDispenseReceiptData && (
+        <Modal
+          isOpen={true}
+          onClose={() => setShowDispensePrintModal(false)}
+          title="Print Pharmacy Dispensary Receipt"
+        >
+          <PrintableDocument
+            title="OFFICIAL PHARMACY DISPENSARY RECEIPT"
+            subtitle="Department of Pharmacy Operations"
+            documentNumber={paidDispenseReceiptData.receiptNumber}
+            date={paidDispenseReceiptData.date}
+          >
+            <div style={{ padding: "12px 0" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "16px", background: "#f8fafc", padding: "12px", borderRadius: "6px", border: "1px solid #e2e8f0" }}>
+                <div>
+                  <strong>Patient Name:</strong> {paidDispenseReceiptData.patientName}<br />
+                  <strong>Patient Number:</strong> {paidDispenseReceiptData.patientNumber}
+                </div>
+                <div>
+                  <strong>Payment Method:</strong> {paidDispenseReceiptData.paymentMethod}<br />
+                  <strong>Reference #:</strong> {paidDispenseReceiptData.transactionReference}
+                </div>
+              </div>
+
+              <table className="data-table" style={{ width: "100%", marginBottom: "16px" }}>
+                <thead>
+                  <tr>
+                    <th>Medication Name</th>
+                    <th>Dosage & Instructions</th>
+                    <th>Qty</th>
+                    <th style={{ textAlign: "right" }}>Price (ETB)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {paidDispenseReceiptData.items?.map((item, idx) => {
+                    const price = parseFloat(item.unit_price || 25) * parseInt(item.quantity || 1, 10);
+                    return (
+                      <tr key={idx}>
+                        <td><strong>{item.medication_name}</strong></td>
+                        <td>{item.dosage} • {item.frequency}</td>
+                        <td>{item.quantity}</td>
+                        <td style={{ textAlign: "right" }}>{formatCurrency(price)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr>
+                    <th colSpan="3">Total Amount Paid</th>
+                    <th style={{ textAlign: "right", color: "var(--success)", fontSize: "15px" }}>
+                      {formatCurrency(paidDispenseReceiptData.totalPaid)}
+                    </th>
+                  </tr>
+                </tfoot>
+              </table>
+
+              <div style={{ marginTop: "24px", display: "flex", justifyContent: "space-between", fontSize: "12px", color: "#64748b" }}>
+                <span>Prescribed by: {paidDispenseReceiptData.doctorName}</span>
+                <span style={{ borderTop: "1px solid #94a3b8", width: "180px", textAlign: "center", paddingTop: "4px" }}>
+                  Dispensing Pharmacist
+                </span>
+              </div>
+            </div>
+          </PrintableDocument>
+
+          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "16px" }}>
+            <button
+              type="button"
+              className="button button-secondary"
+              onClick={() => setShowDispensePrintModal(false)}
+            >
+              Close
+            </button>
+          </div>
+        </Modal>
+      )}
     </AppShell>
   );
 }

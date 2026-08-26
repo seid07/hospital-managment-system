@@ -561,6 +561,20 @@ async function getLabOrdersQueue(query = {}) {
     )`);
   }
 
+  if (query.doctorId) {
+    params.push(query.doctorId);
+    conditions.push(`(
+      o.doctor_id = $${params.length}
+      OR p.id IN (
+        SELECT a.patient_id FROM appointments a WHERE a.doctor_id = $${params.length}
+        UNION
+        SELECT r.patient_id FROM referrals r WHERE r.receiving_doctor_id = $${params.length} OR r.referring_doctor_id = $${params.length}
+        UNION
+        SELECT ce.patient_id FROM encounters ce WHERE ce.doctor_id = $${params.length}
+      )
+    )`);
+  }
+
   const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
   const countResult = await pool.query(

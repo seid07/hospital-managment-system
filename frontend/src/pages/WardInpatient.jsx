@@ -84,10 +84,10 @@ export default function WardInpatient() {
       setSubmitting(true);
       setError("");
       await wardService.admitPatient({
-        visitId: selectedQueueItem.visit_id,
+        visitId: selectedQueueItem.visit_id || null,
         patientId: selectedQueueItem.patient_id,
         bedId: selectedBedId || null,
-        doctorId: null,
+        doctorId: selectedQueueItem.ordering_doctor_id || selectedQueueItem.doctor_id || null,
         admissionReason,
       });
       setSuccess("Patient admitted to ward.");

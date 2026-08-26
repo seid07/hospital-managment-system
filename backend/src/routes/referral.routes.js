@@ -9,8 +9,11 @@ router.use(authenticateToken);
 // Create referral (doctor only)
 router.post("/", authorizeRoles("DOCTOR"), ctrl.createReferral);
 
-// Referral queue for receiving doctor
+// Referral queue for receiving doctor (Inbox)
 router.get("/queue", authorizeRoles("DOCTOR"), ctrl.getReferralQueue);
+
+// Referrals sent by this doctor (Outbox)
+router.get("/sent", authorizeRoles("DOCTOR"), ctrl.getSentReferrals);
 
 // Single referral (participant check inside service)
 router.get("/:id", authorizeRoles("DOCTOR", "ADMIN"), ctrl.getReferral);

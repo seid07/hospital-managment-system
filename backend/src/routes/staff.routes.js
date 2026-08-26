@@ -45,4 +45,10 @@ router.patch(
   staffController.updateStatus
 );
 
+router.get(
+  "/:id/scheduled-appointments",
+  authorizeRoles("ADMIN"),
+  staffController.getDoctorScheduledAppointments
+);
+
 module.exports = router;

@@ -8,6 +8,10 @@ export async function getReferralQueue() {
   return get("/referrals/queue");
 }
 
+export async function getSentReferrals() {
+  return get("/referrals/sent");
+}
+
 export async function getReferral(id) {
   return get(`/referrals/${id}`);
 }

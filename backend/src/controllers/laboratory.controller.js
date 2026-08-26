@@ -285,7 +285,8 @@ async function verifyResults(req, res) {
 
 async function getOrdersQueue(req, res) {
   try {
-    const result = await labService.getLabOrdersQueue(req.query);
+    const doctorId = req.user?.role === "DOCTOR" ? req.user?.staffId : null;
+    const result = await labService.getLabOrdersQueue({ ...req.query, doctorId });
 
     return res.status(200).json({
       success: true,

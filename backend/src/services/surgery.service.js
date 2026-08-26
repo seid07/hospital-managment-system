@@ -1,7 +1,7 @@
 const db = require("../config/database");
 const { recordAuditLog } = require("../utils/audit");
 
-async function getSurgeryQueue({ status } = {}) {
+async function getSurgeryQueue({ status, doctorId } = {}) {
   let query = `
     SELECT 
       qe.id AS queue_entry_id,
@@ -54,6 +54,20 @@ async function getSurgeryQueue({ status } = {}) {
     query += ` AND qe.status = $${params.length}`;
   } else {
     query += ` AND qe.status IN ('WAITING', 'CALLED', 'IN_PROGRESS')`;
+  }
+
+  if (doctorId) {
+    params.push(doctorId);
+    query += ` AND (
+      so.doctor_id = $${params.length}
+      OR p.id IN (
+        SELECT a.patient_id FROM appointments a WHERE a.doctor_id = $${params.length}
+        UNION
+        SELECT r.patient_id FROM referrals r WHERE r.receiving_doctor_id = $${params.length} OR r.referring_doctor_id = $${params.length}
+        UNION
+        SELECT ce.patient_id FROM encounters ce WHERE ce.doctor_id = $${params.length}
+      )
+    )`;
   }
 
   query += ` ORDER BY 

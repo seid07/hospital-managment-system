@@ -120,19 +120,25 @@ async function getDashboardKPIs(role, staffId) {
   }
 
   if (role === "DOCTOR") {
-    const [myToday, myQueue, myCompleted, myPendingLabs] = await Promise.all([
+    const [myToday, myQueue, myCompleted, myPendingLabs, myPendingReferrals] = await Promise.all([
       pool.query(
         `SELECT COUNT(*) AS count
          FROM appointments a
          JOIN patients p ON a.patient_id = p.id
-         WHERE a.doctor_id = $1 AND a.appointment_date = $2 AND p.is_active = TRUE`,
+         WHERE (
+           a.doctor_id = $1
+           OR a.patient_id IN (SELECT patient_id FROM referrals WHERE receiving_doctor_id = $1 OR referring_doctor_id = $1)
+         ) AND a.appointment_date = $2 AND p.is_active = TRUE`,
         [staffId, today]
       ),
       pool.query(
         `SELECT COUNT(*) AS count
          FROM appointments a
          JOIN patients p ON a.patient_id = p.id
-         WHERE a.doctor_id = $1 AND a.appointment_date = $2 AND a.status IN ('CHECKED_IN', 'IN_PROGRESS') AND p.is_active = TRUE`,
+         WHERE (
+           a.doctor_id = $1
+           OR a.patient_id IN (SELECT patient_id FROM referrals WHERE receiving_doctor_id = $1 OR referring_doctor_id = $1)
+         ) AND a.appointment_date = $2 AND a.status IN ('CHECKED_IN', 'IN_PROGRESS') AND p.is_active = TRUE`,
         [staffId, today]
       ),
       pool.query(
@@ -146,7 +152,23 @@ async function getDashboardKPIs(role, staffId) {
         `SELECT COUNT(*) AS count
          FROM lab_orders l
          JOIN patients p ON l.patient_id = p.id
-         WHERE l.doctor_id = $1 AND l.status IN ('ORDERED', 'PROCESSING') AND p.is_active = TRUE`,
+         WHERE (
+           l.doctor_id = $1
+           OR l.patient_id IN (
+             SELECT a.patient_id FROM appointments a WHERE a.doctor_id = $1
+             UNION
+             SELECT r.patient_id FROM referrals r WHERE r.receiving_doctor_id = $1 OR r.referring_doctor_id = $1
+             UNION
+             SELECT ce.patient_id FROM encounters ce WHERE ce.doctor_id = $1
+           )
+         ) AND l.status IN ('ORDERED', 'PROCESSING', 'SPECIMEN_COLLECTED') AND p.is_active = TRUE`,
+        [staffId]
+      ),
+      pool.query(
+        `SELECT COUNT(*) AS count
+         FROM referrals r
+         JOIN patients p ON r.patient_id = p.id
+         WHERE r.receiving_doctor_id = $1 AND r.status = 'PENDING' AND p.is_active = TRUE`,
         [staffId]
       ),
     ]);
@@ -156,6 +178,7 @@ async function getDashboardKPIs(role, staffId) {
       patientQueue: parseInt(myQueue.rows[0].count, 10),
       completedVisitsToday: parseInt(myCompleted.rows[0].count, 10),
       pendingLabOrders: parseInt(myPendingLabs.rows[0].count, 10),
+      pendingReferrals: parseInt(myPendingReferrals.rows[0].count, 10),
     };
   }
 

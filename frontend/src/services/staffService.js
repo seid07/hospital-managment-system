@@ -20,6 +20,13 @@ export async function updateStaff(id, data) {
   return put(`/staff/${id}`, data);
 }
 
-export async function updateStaffStatus(id, isActive) {
-  return patch(`/staff/${id}/status`, { isActive });
+export async function updateStaffStatus(id, isActive, options = {}) {
+  return patch(`/staff/${id}/status`, { isActive, ...options });
+}
+
+export async function getDoctorScheduledAppointments(id, startDate, endDate) {
+  const params = new URLSearchParams();
+  if (startDate) params.append("startDate", startDate);
+  if (endDate) params.append("endDate", endDate);
+  return get(`/staff/${id}/scheduled-appointments?${params.toString()}`);
 }

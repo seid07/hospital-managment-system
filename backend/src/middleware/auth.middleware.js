@@ -22,7 +22,13 @@ function authenticateToken(req, res, next) {
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-    req.user = decoded;
+    req.user = {
+      ...decoded,
+      id: decoded.id || decoded.userId,
+      userId: decoded.userId || decoded.id,
+      staff_id: decoded.staff_id || decoded.staffId,
+      staffId: decoded.staffId || decoded.staff_id,
+    };
 
     next();
   } catch (error) {

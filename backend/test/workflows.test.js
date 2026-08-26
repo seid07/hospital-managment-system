@@ -210,7 +210,8 @@ test("End-to-End Hospital Management System Workflow", async (t) => {
     // 3. Create Prescription
     const medsRes = await pharmacyService.getMedications({ limit: 10 });
     assert.ok(medsRes.medications.length > 0);
-    const med = medsRes.medications[0];
+    const med = medsRes.medications.find((m) => m.stock_quantity >= 5) || medsRes.medications[0];
+    await pool.query("UPDATE medications SET stock_quantity = stock_quantity + 50 WHERE id = $1", [med.id]);
 
     testPrescription = await pharmacyService.createPrescription(
       {

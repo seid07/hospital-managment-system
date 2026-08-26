@@ -44,7 +44,7 @@ export function getNavigation(role) {
     return [
       ...common,
       { label: "Consultation Queue",     path: "/doctor/queue",              icon: "✚" },
-      { label: "Referral Inbox",         path: "/doctor/referrals",          icon: "◈" },
+      { label: "Referrals",              path: "/doctor/referrals",          icon: "◈" },
       { label: "Appointments",           path: "/appointments",              icon: "◻" },
       { label: "Patients",               path: "/patients",                  icon: "◎" },
       { label: "Radiology Results",      path: "/radiology/queue",           icon: "⊘" },

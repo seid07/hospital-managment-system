@@ -47,7 +47,13 @@ async function getStaff(query = {}) {
       s.phone,
       s.department,
       s.specialty,
-      s.is_active,
+      CASE
+        WHEN s.is_active = FALSE AND s.deactivation_end_date IS NOT NULL AND s.deactivation_end_date < CURRENT_DATE THEN TRUE
+        ELSE s.is_active
+      END AS is_active,
+      s.deactivation_reason,
+      s.deactivation_start_date,
+      s.deactivation_end_date,
       s.created_at,
       r.name AS role,
       u.username
@@ -264,18 +270,41 @@ async function updateStaff(id, data, updatedByUserId) {
   }
 }
 
-async function updateStaffStatus(id, isActive, updatedByUserId) {
-  const result = await pool.query(
-    `
+async function updateStaffStatus(id, isActive, options = {}, updatedByUserId) {
+  const { reason, startDate, endDate } = options;
+
+  let query = "";
+  let params = [];
+
+  if (!isActive) {
+    query = `
       UPDATE staff
       SET
-        is_active = $1,
+        is_active = FALSE,
+        deactivation_reason = $1,
+        deactivation_start_date = $2,
+        deactivation_end_date = $3,
         updated_at = CURRENT_TIMESTAMP
-      WHERE id = $2
-      RETURNING id, is_active, first_name, last_name
-    `,
-    [isActive, id]
-  );
+      WHERE id = $4
+      RETURNING id, is_active, first_name, last_name, deactivation_reason, deactivation_start_date, deactivation_end_date
+    `;
+    params = [reason || null, startDate || null, endDate || null, id];
+  } else {
+    query = `
+      UPDATE staff
+      SET
+        is_active = TRUE,
+        deactivation_reason = NULL,
+        deactivation_start_date = NULL,
+        deactivation_end_date = NULL,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = $1
+      RETURNING id, is_active, first_name, last_name, deactivation_reason, deactivation_start_date, deactivation_end_date
+    `;
+    params = [id];
+  }
+
+  const result = await pool.query(query, params);
 
   if (result.rows.length === 0) {
     return null;
@@ -288,10 +317,51 @@ async function updateStaffStatus(id, isActive, updatedByUserId) {
     action: isActive ? "STAFF_ACTIVATED" : "STAFF_DEACTIVATED",
     entity: "staff",
     entityId: id,
-    details: { name: `${staff.first_name} ${staff.last_name}`, isActive },
+    details: {
+      name: `${staff.first_name} ${staff.last_name}`,
+      isActive,
+      deactivation_reason: staff.deactivation_reason,
+      deactivation_start_date: staff.deactivation_start_date,
+      deactivation_end_date: staff.deactivation_end_date,
+    },
   });
 
   return staff;
+}
+
+async function getDoctorScheduledAppointments(doctorId, startDate, endDate) {
+  const query = `
+    SELECT
+      a.id,
+      a.appointment_number,
+      a.appointment_date,
+      a.start_time,
+      a.end_time,
+      a.status,
+      a.reason,
+      p.id AS patient_id,
+      p.patient_number,
+      p.first_name AS patient_first_name,
+      p.last_name AS patient_last_name,
+      p.phone AS patient_phone
+    FROM appointments a
+    JOIN patients p ON a.patient_id = p.id
+    WHERE a.doctor_id = $1
+      AND a.status IN ('SCHEDULED', 'CONFIRMED', 'CHECKED_IN')
+      AND (
+        ($2::date IS NULL OR a.appointment_date >= $2::date)
+        AND ($3::date IS NULL OR a.appointment_date <= $3::date)
+      )
+    ORDER BY a.appointment_date ASC, a.start_time ASC
+  `;
+
+  const result = await pool.query(query, [
+    doctorId,
+    startDate || null,
+    endDate || null,
+  ]);
+
+  return result.rows;
 }
 
 module.exports = {
@@ -300,4 +370,5 @@ module.exports = {
   createStaff,
   updateStaff,
   updateStaffStatus,
+  getDoctorScheduledAppointments,
 };

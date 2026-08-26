@@ -169,7 +169,7 @@ async function updateStaff(req, res) {
 async function updateStatus(req, res) {
   try {
     const { id } = req.params;
-    const { isActive } = req.body;
+    const { isActive, reason, startDate, endDate } = req.body;
 
     if (!isValidUUID(id)) {
       return res.status(400).json({
@@ -185,7 +185,12 @@ async function updateStatus(req, res) {
       });
     }
 
-    const staff = await staffService.updateStaffStatus(id, isActive, req.user?.userId);
+    const staff = await staffService.updateStaffStatus(
+      id,
+      isActive,
+      { reason, startDate, endDate },
+      req.user?.userId
+    );
 
     if (!staff) {
       return res.status(404).json({
@@ -209,10 +214,42 @@ async function updateStatus(req, res) {
   }
 }
 
+async function getDoctorScheduledAppointments(req, res) {
+  try {
+    const { id } = req.params;
+    const { startDate, endDate } = req.query;
+
+    if (!isValidUUID(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid staff ID format.",
+      });
+    }
+
+    const appointments = await staffService.getDoctorScheduledAppointments(
+      id,
+      startDate,
+      endDate
+    );
+
+    return res.json({
+      success: true,
+      data: appointments,
+    });
+  } catch (error) {
+    console.error("Get doctor scheduled appointments error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Unable to retrieve scheduled appointments.",
+    });
+  }
+}
+
 module.exports = {
   getRoles,
   getStaff,
   createStaff,
   updateStaff,
   updateStatus,
+  getDoctorScheduledAppointments,
 };

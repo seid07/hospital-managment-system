@@ -123,7 +123,8 @@ async function dispensePrescription(req, res) {
 
 async function getPrescriptionsQueue(req, res) {
   try {
-    const result = await pharmacyService.getPrescriptionsQueue(req.query);
+    const doctorId = req.user?.role === "DOCTOR" ? req.user?.staffId : null;
+    const result = await pharmacyService.getPrescriptionsQueue({ ...req.query, doctorId });
 
     return res.status(200).json({
       success: true,

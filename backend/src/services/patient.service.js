@@ -318,26 +318,35 @@ async function deletePatient(id, userId) {
   }
 }
 
-async function searchPatients(search, paginationQuery = {}) {
+async function searchPatients(search, paginationQuery = {}, doctorStaffId = null) {
   const { page, limit, offset } = parsePagination(paginationQuery);
   const term = `%${search.trim()}%`;
 
-  const countResult = await pool.query(
-    `
-      SELECT COUNT(*) AS total
-      FROM patients
-      WHERE is_active = TRUE
-      AND (
-        patient_number ILIKE $1
-        OR first_name ILIKE $1
-        OR last_name ILIKE $1
-        OR phone ILIKE $1
-      )
-    `,
-    [term]
-  );
+  const conditions = [
+    "is_active = TRUE",
+    `(patient_number ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1 OR phone ILIKE $1)`,
+  ];
+  const params = [term];
 
+  if (doctorStaffId) {
+    params.push(doctorStaffId);
+    conditions.push(`(
+      EXISTS (SELECT 1 FROM appointments a WHERE a.patient_id = patients.id AND a.doctor_id = $${params.length})
+      OR EXISTS (SELECT 1 FROM referrals r WHERE r.patient_id = patients.id AND (r.receiving_doctor_id = $${params.length} OR r.referring_doctor_id = $${params.length}))
+      OR EXISTS (SELECT 1 FROM encounters ce WHERE ce.patient_id = patients.id AND ce.doctor_id = $${params.length})
+    )`);
+  }
+
+  const whereClause = `WHERE ${conditions.join(" AND ")}`;
+
+  const countResult = await pool.query(
+    `SELECT COUNT(*) AS total FROM patients ${whereClause}`,
+    params
+  );
   const total = parseInt(countResult.rows[0].total, 10);
+
+  params.push(limit);
+  params.push(offset);
 
   const result = await pool.query(
     `
@@ -355,17 +364,11 @@ async function searchPatients(search, paginationQuery = {}) {
         emergency_contact_phone,
         created_at
       FROM patients
-      WHERE is_active = TRUE
-      AND (
-        patient_number ILIKE $1
-        OR first_name ILIKE $1
-        OR last_name ILIKE $1
-        OR phone ILIKE $1
-      )
+      ${whereClause}
       ORDER BY created_at DESC
-      LIMIT $2 OFFSET $3
+      LIMIT $${params.length - 1} OFFSET $${params.length}
     `,
-    [term, limit, offset]
+    params
   );
 
   return {
@@ -380,23 +383,35 @@ async function searchPatients(search, paginationQuery = {}) {
 async function getPatients(query = {}) {
   const { page, limit, offset } = parsePagination(query);
   const search = query.search ? query.search.trim() : null;
+  const doctorStaffId = query.doctorStaffId || null;
 
-  let whereClause = "WHERE is_active = TRUE";
+  const conditions = ["is_active = TRUE"];
   const params = [];
 
   if (search) {
     params.push(`%${search}%`);
-    whereClause += ` AND (patient_number ILIKE $${params.length} OR first_name ILIKE $${params.length} OR last_name ILIKE $${params.length} OR phone ILIKE $${params.length})`;
+    conditions.push(`(patient_number ILIKE $${params.length} OR first_name ILIKE $${params.length} OR last_name ILIKE $${params.length} OR phone ILIKE $${params.length})`);
   }
 
   if (query.date === "today" || query.registered === "today") {
     const today = new Date().toISOString().split("T")[0];
     params.push(today);
-    whereClause += ` AND DATE(created_at) = $${params.length}`;
+    conditions.push(`DATE(created_at) = $${params.length}`);
   } else if (query.date) {
     params.push(query.date);
-    whereClause += ` AND DATE(created_at) = $${params.length}`;
+    conditions.push(`DATE(created_at) = $${params.length}`);
   }
+
+  if (doctorStaffId) {
+    params.push(doctorStaffId);
+    conditions.push(`(
+      EXISTS (SELECT 1 FROM appointments a WHERE a.patient_id = patients.id AND a.doctor_id = $${params.length})
+      OR EXISTS (SELECT 1 FROM referrals r WHERE r.patient_id = patients.id AND (r.receiving_doctor_id = $${params.length} OR r.referring_doctor_id = $${params.length}))
+      OR EXISTS (SELECT 1 FROM encounters ce WHERE ce.patient_id = patients.id AND ce.doctor_id = $${params.length})
+    )`);
+  }
+
+  const whereClause = `WHERE ${conditions.join(" AND ")}`;
 
   const countQuery = `SELECT COUNT(*) AS total FROM patients ${whereClause}`;
   const countResult = await pool.query(countQuery, params);
@@ -596,6 +611,43 @@ async function getPatientMedicalRecord(patientId) {
     [patientId]
   );
 
+  // 7. Full Direct & Selective Payments History
+  const paymentsResult = await pool.query(
+    `
+    SELECT
+      p.*,
+      u.username AS received_by_username,
+      i.invoice_number
+    FROM payments p
+    LEFT JOIN users u ON p.received_by = u.id
+    LEFT JOIN invoices i ON p.invoice_id = i.id
+    WHERE p.patient_id = $1 OR i.patient_id = $1
+    ORDER BY p.created_at DESC
+    `,
+    [patientId]
+  );
+
+  // 8. Service Orders (Registrations, Procedures, Consultations, Labs, Radiologies)
+  const serviceOrdersResult = await pool.query(
+    `
+    SELECT
+      so.*,
+      s.name AS service_name,
+      s.code AS service_code,
+      s.category AS service_category,
+      d.name AS department_name,
+      doc.first_name AS doctor_first_name,
+      doc.last_name AS doctor_last_name
+    FROM service_orders so
+    JOIN services s ON so.service_id = s.id
+    JOIN departments d ON so.department_id = d.id
+    LEFT JOIN staff doc ON so.doctor_id = doc.id
+    WHERE so.patient_id = $1
+    ORDER BY so.created_at DESC
+    `,
+    [patientId]
+  );
+
   return {
     patient,
     appointments: appointmentsResult.rows,
@@ -604,6 +656,8 @@ async function getPatientMedicalRecord(patientId) {
     prescriptions: prescriptionsResult.rows,
     labOrders: labOrdersResult.rows,
     invoices: invoicesResult.rows,
+    payments: paymentsResult.rows,
+    serviceOrders: serviceOrdersResult.rows,
   };
 }
 

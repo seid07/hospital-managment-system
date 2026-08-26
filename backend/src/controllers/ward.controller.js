@@ -2,7 +2,8 @@ const wardService = require("../services/ward.service");
 
 async function getBeds(req, res, next) {
   try {
-    const data = await wardService.getBeds();
+    const doctorId = req.user?.role === "DOCTOR" ? req.user?.staffId : null;
+    const data = await wardService.getBeds({ doctorId });
     res.json({ success: true, data });
   } catch (error) {
     next(error);
@@ -11,7 +12,8 @@ async function getBeds(req, res, next) {
 
 async function getWardQueue(req, res, next) {
   try {
-    const data = await wardService.getWardQueue(req.query);
+    const doctorId = req.user?.role === "DOCTOR" ? req.user?.staffId : null;
+    const data = await wardService.getWardQueue({ ...req.query, doctorId });
     res.json({ success: true, data });
   } catch (error) {
     next(error);

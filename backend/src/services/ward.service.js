@@ -2,22 +2,36 @@ const db = require("../config/database");
 const { recordAuditLog } = require("../utils/audit");
 const { generateAdmissionNumber } = require("../utils/number-generators");
 
-async function getBeds() {
-  const result = await db.query(`
+async function getBeds({ doctorId } = {}) {
+  let query = `
     SELECT b.*,
       p.patient_number AS current_patient_number,
       p.first_name AS current_patient_first_name,
       p.last_name AS current_patient_last_name,
-      adm.id AS current_admission_id
+      adm.id AS current_admission_id,
+      adm.doctor_id AS admission_doctor_id
     FROM beds b
     LEFT JOIN admissions adm ON adm.bed_id = b.id AND adm.status = 'ADMITTED'
     LEFT JOIN patients p ON adm.patient_id = p.id AND p.is_active = TRUE
-    ORDER BY b.ward_name ASC, b.bed_number ASC
-  `);
+  `;
+  const params = [];
+  if (doctorId) {
+    params.push(doctorId);
+    query += ` WHERE b.status = 'AVAILABLE' OR adm.doctor_id = $1 OR p.id IN (
+      SELECT a.patient_id FROM appointments a WHERE a.doctor_id = $1
+      UNION
+      SELECT r.patient_id FROM referrals r WHERE r.receiving_doctor_id = $1 OR r.referring_doctor_id = $1
+      UNION
+      SELECT ce.patient_id FROM encounters ce WHERE ce.doctor_id = $1
+    )`;
+  }
+  query += ` ORDER BY b.ward_name ASC, b.bed_number ASC`;
+
+  const result = await db.query(query, params);
   return result.rows;
 }
 
-async function getWardQueue({ status } = {}) {
+async function getWardQueue({ status, doctorId } = {}) {
   let query = `
     SELECT 
       qe.id AS queue_entry_id,
@@ -26,11 +40,13 @@ async function getWardQueue({ status } = {}) {
       qe.status AS queue_status,
       qe.authorized_at,
       qe.queued_at,
+      COALESCE(qe.visit_id, so.visit_id) AS visit_id,
       
       so.id AS service_order_id,
       so.order_number,
       so.status AS payment_status,
       so.clinical_notes,
+      so.doctor_id AS ordering_doctor_id,
       
       s.code AS service_code,
       s.name AS service_name,
@@ -57,7 +73,7 @@ async function getWardQueue({ status } = {}) {
     JOIN services s ON so.service_id = s.id
     JOIN patients p ON qe.patient_id = p.id
     LEFT JOIN staff doc ON so.doctor_id = doc.id
-    LEFT JOIN admissions adm ON adm.visit_id = qe.visit_id AND adm.status = 'ADMITTED'
+    LEFT JOIN admissions adm ON (adm.visit_id = COALESCE(qe.visit_id, so.visit_id) OR adm.patient_id = p.id) AND adm.status = 'ADMITTED'
     LEFT JOIN beds b ON adm.bed_id = b.id
     WHERE d.code = 'WARD' AND p.is_active = TRUE
   `;
@@ -68,6 +84,21 @@ async function getWardQueue({ status } = {}) {
     query += ` AND qe.status = $${params.length}`;
   } else {
     query += ` AND qe.status IN ('WAITING', 'CALLED', 'IN_PROGRESS')`;
+  }
+
+  if (doctorId) {
+    params.push(doctorId);
+    query += ` AND (
+      so.doctor_id = $${params.length}
+      OR adm.doctor_id = $${params.length}
+      OR p.id IN (
+        SELECT a.patient_id FROM appointments a WHERE a.doctor_id = $${params.length}
+        UNION
+        SELECT r.patient_id FROM referrals r WHERE r.receiving_doctor_id = $${params.length} OR r.referring_doctor_id = $${params.length}
+        UNION
+        SELECT ce.patient_id FROM encounters ce WHERE ce.doctor_id = $${params.length}
+      )
+    )`;
   }
 
   query += ` ORDER BY 
@@ -88,6 +119,26 @@ async function admitPatient({ visitId, patientId, bedId, doctorId, admissionReas
   try {
     await client.query("BEGIN");
 
+    let resolvedVisitId = visitId;
+    if (!resolvedVisitId) {
+      const visitRes = await client.query(
+        `SELECT id FROM visits WHERE patient_id = $1 ORDER BY created_at DESC LIMIT 1`,
+        [patientId]
+      );
+      if (visitRes.rows.length > 0) {
+        resolvedVisitId = visitRes.rows[0].id;
+      } else {
+        const { generateVisitNumber } = require("../utils/number-generators");
+        const vNum = await generateVisitNumber(client);
+        const newVisit = await client.query(
+          `INSERT INTO visits (visit_number, patient_id, status, visit_type)
+           VALUES ($1, $2, 'OPEN', 'INPATIENT') RETURNING id`,
+          [vNum, patientId]
+        );
+        resolvedVisitId = newVisit.rows[0].id;
+      }
+    }
+
     const admissionNumber = await generateAdmissionNumber(client);
 
     const admRes = await client.query(
@@ -99,7 +150,7 @@ async function admitPatient({ visitId, patientId, bedId, doctorId, admissionReas
       VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP, 'ADMITTED', $6, $7)
       RETURNING *;
       `,
-      [admissionNumber, visitId, patientId, bedId || null, doctorId || null, admissionReason, userId]
+      [admissionNumber, resolvedVisitId, patientId, bedId || null, doctorId || null, admissionReason, userId]
     );
 
     if (bedId) {
@@ -109,6 +160,11 @@ async function admitPatient({ visitId, patientId, bedId, doctorId, admissionReas
       );
     }
 
+    await client.query(
+      `UPDATE queue_entries SET status = 'IN_PROGRESS' WHERE patient_id = $1 AND department_id = (SELECT id FROM departments WHERE code = 'WARD') AND status IN ('WAITING', 'CALLED')`,
+      [patientId]
+    );
+
     await recordAuditLog(
       client,
       {
@@ -116,7 +172,7 @@ async function admitPatient({ visitId, patientId, bedId, doctorId, admissionReas
         action: "PATIENT_ADMITTED",
         entity: "admissions",
         entityId: admRes.rows[0].id,
-        details: { admissionNumber, bedId, visitId },
+        details: { admissionNumber, bedId, visitId: resolvedVisitId },
       }
     );
 

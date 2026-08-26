@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import AppShell from "../components/layout/AppShell";
 import Modal from "../components/common/Modal";
-import { getStaff, getRoles, createStaff, updateStaff, updateStaffStatus } from "../services/staffService";
+import { getStaff, getRoles, createStaff, updateStaff, updateStaffStatus, getDoctorScheduledAppointments } from "../services/staffService";
 import { createSchedule } from "../services/scheduleService";
 import { validateEthiopianPhone } from "../utils/phone";
 import { checkPasswordStrength, generateSecurePassword } from "../utils/password";
@@ -61,6 +61,22 @@ function AdminStaff() {
   const [editForm, setEditForm] = useState(null);
   const [editSubmitting, setEditSubmitting] = useState(false);
   const [editError, setEditError] = useState("");
+
+  // Deactivation Modal State (Requirement 7)
+  const [deactivatingMember, setDeactivatingMember] = useState(null);
+  const [deactivationForm, setDeactivationForm] = useState(() => {
+    const start = new Date().toISOString().split("T")[0];
+    const end = new Date(Date.now() + 7 * 86400000).toISOString().split("T")[0];
+    return {
+      reason: "Annual / Sick Leave",
+      startDate: start,
+      endDate: end,
+    };
+  });
+  const [scheduledAppointments, setScheduledAppointments] = useState([]);
+  const [loadingAppointments, setLoadingAppointments] = useState(false);
+  const [deactivationSubmitting, setDeactivationSubmitting] = useState(false);
+  const [deactivationError, setDeactivationError] = useState("");
 
   const passwordStrength = checkPasswordStrength(form.password);
 
@@ -219,22 +235,94 @@ function AdminStaff() {
     }
   }
 
-  async function toggleStatus(member) {
-    setError("");
-    setSuccess("");
+  async function handleOpenDeactivate(member) {
+    setDeactivationError("");
+    setDeactivatingMember(member);
+    const start = new Date().toISOString().split("T")[0];
+    const end = new Date(Date.now() + 7 * 86400000).toISOString().split("T")[0];
+    const initialForm = {
+      reason: member.deactivation_reason || "Annual / Sick Leave",
+      startDate: member.deactivation_start_date ? member.deactivation_start_date.split("T")[0] : start,
+      endDate: member.deactivation_end_date ? member.deactivation_end_date.split("T")[0] : end,
+    };
+    setDeactivationForm(initialForm);
+
+    if (member.role === "DOCTOR") {
+      try {
+        setLoadingAppointments(true);
+        const res = await getDoctorScheduledAppointments(member.id, initialForm.startDate, initialForm.endDate);
+        setScheduledAppointments(res.data || []);
+      } catch {
+        setScheduledAppointments([]);
+      } finally {
+        setLoadingAppointments(false);
+      }
+    } else {
+      setScheduledAppointments([]);
+    }
+  }
+
+  async function handleDeactivationDatesChange(field, val) {
+    const updated = { ...deactivationForm, [field]: val };
+    setDeactivationForm(updated);
+
+    if (deactivatingMember?.role === "DOCTOR" && updated.startDate && updated.endDate) {
+      try {
+        setLoadingAppointments(true);
+        const res = await getDoctorScheduledAppointments(deactivatingMember.id, updated.startDate, updated.endDate);
+        setScheduledAppointments(res.data || []);
+      } catch {
+        setScheduledAppointments([]);
+      } finally {
+        setLoadingAppointments(false);
+      }
+    }
+  }
+
+  async function handleDeactivateSubmit(e) {
+    e.preventDefault();
+    setDeactivationError("");
+
+    if (!deactivationForm.reason?.trim()) {
+      setDeactivationError("Please provide a reason for deactivation.");
+      return;
+    }
+    if (!deactivationForm.startDate || !deactivationForm.endDate) {
+      setDeactivationError("Start date and end date are required.");
+      return;
+    }
+    if (deactivationForm.startDate > deactivationForm.endDate) {
+      setDeactivationError("Start date cannot be after end date.");
+      return;
+    }
 
     try {
-      const nextStatus = !member.is_active;
-      await updateStaffStatus(member.id, nextStatus);
+      setDeactivationSubmitting(true);
+      await updateStaffStatus(deactivatingMember.id, false, {
+        reason: deactivationForm.reason.trim(),
+        startDate: deactivationForm.startDate,
+        endDate: deactivationForm.endDate,
+      });
 
-      setSuccess(
-        `Staff member ${member.first_name} ${member.last_name} ${
-          nextStatus ? "activated" : "deactivated"
-        } successfully.`
-      );
+      setSuccess(`Staff member ${deactivatingMember.first_name} ${deactivatingMember.last_name} deactivated from ${deactivationForm.startDate} until ${deactivationForm.endDate}.`);
+      setDeactivatingMember(null);
       refreshData();
     } catch (err) {
-      setError(err.message || "Unable to update staff.");
+      setDeactivationError(err.message || "Failed to deactivate staff.");
+    } finally {
+      setDeactivationSubmitting(false);
+    }
+  }
+
+  async function handleDirectActivate(member) {
+    setError("");
+    setSuccess("");
+    try {
+      await updateStaffStatus(member.id, true);
+      setSuccess(`Staff member ${member.first_name} ${member.last_name} activated successfully.`);
+      refreshData();
+    } catch (err) {
+      setError(err.message || "Unable to activate staff member.");
     }
   }
 
@@ -621,13 +709,24 @@ function AdminStaff() {
                       <small style={{ color: "var(--text-muted)", fontFamily: "monospace" }}>{member.phone}</small>
                     </td>
                     <td>
-                      <span
-                        className={`status ${
-                          member.is_active ? "status-active" : "status-inactive"
-                        }`}
-                      >
-                        {member.is_active ? "Active" : "Inactive"}
-                      </span>
+                      <div>
+                        <span
+                          className={`status ${
+                            member.is_active ? "status-active" : "status-inactive"
+                          }`}
+                        >
+                          {member.is_active ? "Active" : "Inactive"}
+                        </span>
+                        {!member.is_active && member.deactivation_end_date && (
+                          <div style={{ fontSize: "11px", color: "var(--danger)", marginTop: "4px" }}>
+                            {member.deactivation_reason || "On Leave"}
+                            <br />
+                            <small style={{ color: "var(--text-muted)" }}>
+                              Until {new Date(member.deactivation_end_date).toLocaleDateString()}
+                            </small>
+                          </div>
+                        )}
+                      </div>
                     </td>
                     <td>
                       <div style={{ display: "flex", gap: "6px" }}>
@@ -645,13 +744,24 @@ function AdminStaff() {
                         >
                            Schedule
                         </button>
-                        <button
-                          className="button button-secondary"
-                          type="button"
-                          onClick={() => toggleStatus(member)}
-                        >
-                          {member.is_active ? "Deactivate" : "Activate"}
-                        </button>
+                        {member.is_active ? (
+                          <button
+                            className="button button-secondary"
+                            type="button"
+                            style={{ color: "var(--danger)" }}
+                            onClick={() => handleOpenDeactivate(member)}
+                          >
+                            Deactivate
+                          </button>
+                        ) : (
+                          <button
+                            className="button button-primary"
+                            type="button"
+                            onClick={() => handleDirectActivate(member)}
+                          >
+                            Activate
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -776,6 +886,160 @@ function AdminStaff() {
               </button>
               <button type="submit" className="button button-primary" disabled={editSubmitting}>
                 {editSubmitting ? "Saving..." : "Save Changes"}
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {/* Staff Deactivation Modal (Requirement 7) */}
+      {deactivatingMember && (
+        <Modal
+          isOpen={true}
+          onClose={() => setDeactivatingMember(null)}
+          title={`Deactivate Staff — ${deactivatingMember.first_name} ${deactivatingMember.last_name} (${deactivatingMember.role})`}
+        >
+          <form onSubmit={handleDeactivateSubmit}>
+            {deactivationError && (
+              <div className="alert alert-error" role="alert" style={{ marginBottom: "14px" }}>
+                {deactivationError}
+              </div>
+            )}
+
+            <div style={{ background: "var(--surface-muted)", padding: "12px 14px", borderRadius: "var(--radius-sm)", marginBottom: "16px", fontSize: "13px" }}>
+              <strong>Staff Profile:</strong> {deactivatingMember.first_name} {deactivatingMember.last_name} • {deactivatingMember.role} • {deactivatingMember.specialty || deactivatingMember.department || "General"}
+              <div style={{ marginTop: "4px", color: "var(--text-secondary)" }}>
+                Staff member will be marked inactive between the specified dates and automatically reactivated after the end date.
+              </div>
+            </div>
+
+            <div className="form-field" style={{ marginBottom: "14px" }}>
+              <label htmlFor="deactReason" style={{ fontWeight: 600 }}>Reason for Deactivation *</label>
+              <select
+                id="deactReason"
+                value={deactivationForm.reason}
+                onChange={(e) => setDeactivationForm({ ...deactivationForm, reason: e.target.value })}
+                className="input"
+                style={{ width: "100%", marginBottom: "6px" }}
+              >
+                <option value="Annual / Personal Leave">Annual / Personal Leave</option>
+                <option value="Medical / Sick Leave">Medical / Sick Leave</option>
+                <option value="Maternity / Paternity Leave">Maternity / Paternity Leave</option>
+                <option value="Professional Training / Conference">Professional Training / Conference</option>
+                <option value="Administrative Suspension">Administrative Suspension</option>
+                <option value="Temporary Off-duty">Temporary Off-duty</option>
+                <option value="Other">Other Reason</option>
+              </select>
+              {deactivationForm.reason === "Other" && (
+                <input
+                  type="text"
+                  placeholder="Specify custom reason..."
+                  className="input"
+                  style={{ width: "100%" }}
+                  onChange={(e) => setDeactivationForm({ ...deactivationForm, reason: e.target.value })}
+                  required
+                />
+              )}
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px", marginBottom: "16px" }}>
+              <div className="form-field">
+                <label htmlFor="deactStartDate" style={{ fontWeight: 600 }}>Deactivation Start Date *</label>
+                <input
+                  id="deactStartDate"
+                  type="date"
+                  value={deactivationForm.startDate}
+                  onChange={(e) => handleDeactivationDatesChange("startDate", e.target.value)}
+                  className="input"
+                  style={{ width: "100%" }}
+                  required
+                />
+              </div>
+
+              <div className="form-field">
+                <label htmlFor="deactEndDate" style={{ fontWeight: 600 }}>Deactivation End Date (Active after) *</label>
+                <input
+                  id="deactEndDate"
+                  type="date"
+                  value={deactivationForm.endDate}
+                  onChange={(e) => handleDeactivationDatesChange("endDate", e.target.value)}
+                  className="input"
+                  style={{ width: "100%" }}
+                  required
+                />
+              </div>
+            </div>
+
+            {/* If Doctor: Conflict check for scheduled appointments */}
+            {deactivatingMember.role === "DOCTOR" && (
+              <div style={{ marginBottom: "18px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "12px", background: "var(--surface)" }}>
+                <div style={{ fontWeight: 700, fontSize: "14px", marginBottom: "8px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <span>Scheduled Patients Conflict Check</span>
+                  {loadingAppointments && <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>Checking...</span>}
+                </div>
+
+                {loadingAppointments ? (
+                  <div style={{ fontSize: "13px", color: "var(--text-muted)", padding: "8px 0" }}>
+                    Loading scheduled appointments...
+                  </div>
+                ) : scheduledAppointments.length === 0 ? (
+                  <div style={{ fontSize: "13px", color: "var(--success)", padding: "6px 0" }}>
+                    ✓ No scheduled patient appointments found for this doctor between {deactivationForm.startDate} and {deactivationForm.endDate}.
+                  </div>
+                ) : (
+                  <div>
+                    <div style={{ background: "#fffbeb", border: "1px solid #f59e0b", color: "#92400e", padding: "8px 12px", borderRadius: "4px", fontSize: "12px", marginBottom: "10px" }}>
+                      ⚠️ <strong>Attention:</strong> Dr. {deactivatingMember.first_name} {deactivatingMember.last_name} has <strong>{scheduledAppointments.length}</strong> scheduled patient appointment(s) during this period. Please reschedule or reassign these patients:
+                    </div>
+
+                    <div style={{ maxHeight: "180px", overflowY: "auto", border: "1px solid var(--border)", borderRadius: "4px" }}>
+                      <table className="data-table" style={{ fontSize: "12px", margin: 0 }}>
+                        <thead>
+                          <tr>
+                            <th>Date & Time</th>
+                            <th>Patient Name</th>
+                            <th>Patient #</th>
+                            <th>Phone</th>
+                            <th>Status</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {scheduledAppointments.map((appt) => (
+                            <tr key={appt.id}>
+                              <td>
+                                <strong>{appt.appointment_date}</strong>
+                                <br />
+                                <small>{appt.start_time} - {appt.end_time}</small>
+                              </td>
+                              <td>{appt.patient_first_name} {appt.patient_last_name}</td>
+                              <td><code>{appt.patient_number}</code></td>
+                              <td>{appt.patient_phone}</td>
+                              <td><span className="badge badge-warning">{appt.status}</span></td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
+              <button
+                type="button"
+                className="button button-secondary"
+                onClick={() => setDeactivatingMember(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="button button-primary"
+                style={{ background: "var(--danger)", borderColor: "var(--danger)" }}
+                disabled={deactivationSubmitting}
+              >
+                {deactivationSubmitting ? "Deactivating..." : "Confirm & Deactivate Staff"}
               </button>
             </div>
           </form>

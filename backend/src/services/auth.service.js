@@ -129,7 +129,9 @@ async function login(username, password) {
 
   const token = jwt.sign(
     {
+      id: user.id,
       userId: user.id,
+      staff_id: user.staff_id,
       staffId: user.staff_id,
       username: user.username,
       role: user.role,

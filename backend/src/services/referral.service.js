@@ -32,12 +32,18 @@ async function createReferral({
     );
     if (patRes.rows.length === 0) throw new Error("PATIENT_NOT_FOUND");
 
+    let effectiveReferringDoctorId = referringDoctorId;
+    if (!effectiveReferringDoctorId && createdByUserId) {
+      const uRes = await client.query("SELECT staff_id FROM users WHERE id = $1", [createdByUserId]);
+      if (uRes.rows[0]?.staff_id) effectiveReferringDoctorId = uRes.rows[0].staff_id;
+    }
+
     // Verify referring doctor is an active DOCTOR
     const refDocRes = await client.query(
       `SELECT s.id, s.first_name, s.last_name
        FROM staff s JOIN roles r ON s.role_id = r.id
-       WHERE s.id = $1 AND s.is_active = TRUE AND r.name = 'DOCTOR'`,
-      [referringDoctorId]
+       WHERE s.id = $1 AND s.is_active = TRUE AND UPPER(r.name) IN ('DOCTOR', 'PHYSICIAN', 'SURGEON')`,
+      [effectiveReferringDoctorId]
     );
     if (refDocRes.rows.length === 0) throw new Error("REFERRING_DOCTOR_NOT_FOUND");
 
@@ -45,7 +51,7 @@ async function createReferral({
     const recDocRes = await client.query(
       `SELECT s.id, s.first_name, s.last_name
        FROM staff s JOIN roles r ON s.role_id = r.id
-       WHERE s.id = $1 AND s.is_active = TRUE AND r.name = 'DOCTOR'`,
+       WHERE s.id = $1 AND s.is_active = TRUE AND UPPER(r.name) IN ('DOCTOR', 'PHYSICIAN', 'SURGEON')`,
       [receivingDoctorId]
     );
     if (recDocRes.rows.length === 0) throw new Error("RECEIVING_DOCTOR_NOT_FOUND");
@@ -59,7 +65,7 @@ async function createReferral({
       RETURNING *`,
       [
         patientId,
-        referringDoctorId,
+        effectiveReferringDoctorId,
         receivingDoctorId,
         urgency || "ROUTINE",
         symptoms || null,
@@ -411,9 +417,37 @@ async function getPatientReferrals(patientId) {
   return result.rows;
 }
 
+/**
+ * Get all referrals sent by this doctor (Outbox).
+ */
+async function getSentReferrals(referringDoctorId) {
+  const result = await pool.query(
+    `SELECT
+       r.*,
+       p.patient_number,
+       p.first_name  AS patient_first_name,
+       p.last_name   AS patient_last_name,
+       p.date_of_birth AS patient_dob,
+       p.gender AS patient_gender,
+       p.phone  AS patient_phone,
+       rec_doc.first_name AS receiving_first_name,
+       rec_doc.last_name  AS receiving_last_name,
+       rec_doc.specialty  AS receiving_specialty,
+       rec_doc.department AS receiving_department
+     FROM referrals r
+     JOIN patients p         ON r.patient_id = p.id
+     JOIN staff rec_doc      ON r.receiving_doctor_id = rec_doc.id
+     WHERE r.referring_doctor_id = $1
+     ORDER BY r.created_at DESC`,
+    [referringDoctorId]
+  );
+  return result.rows;
+}
+
 module.exports = {
   createReferral,
   getReferralQueue,
+  getSentReferrals,
   getReferralById,
   openReferral,
   respondToReferral,

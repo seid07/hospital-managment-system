@@ -134,7 +134,8 @@ async function searchPatients(req, res) {
       });
     }
 
-    const result = await patientService.searchPatients(q.trim(), req.query);
+    const doctorStaffId = req.user?.role === "DOCTOR" ? req.user.staffId : null;
+    const result = await patientService.searchPatients(q.trim(), req.query, doctorStaffId);
 
     return res.status(200).json({
       success: true,
@@ -157,7 +158,12 @@ async function searchPatients(req, res) {
 
 async function getPatients(req, res) {
   try {
-    const result = await patientService.getPatients(req.query);
+    const query = { ...req.query };
+    if (req.user?.role === "DOCTOR" && req.user?.staffId) {
+      query.doctorStaffId = req.user.staffId;
+    }
+
+    const result = await patientService.getPatients(query);
 
     return res.status(200).json({
       success: true,

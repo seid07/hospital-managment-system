@@ -402,7 +402,10 @@ async function getDoctorQueue(doctorId, date = null) {
     FROM appointments a
     JOIN patients p ON a.patient_id = p.id
     LEFT JOIN encounters e ON e.appointment_id = a.id
-    WHERE a.doctor_id = $1
+    WHERE (
+      a.doctor_id = $1
+      OR a.patient_id IN (SELECT patient_id FROM referrals WHERE receiving_doctor_id = $1 OR referring_doctor_id = $1)
+    )
       AND a.appointment_date = $2
       AND p.is_active = TRUE
     ORDER BY

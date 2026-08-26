@@ -21,8 +21,15 @@ async function getDoctors(filters = {}) {
 
   // allStaff=true is used by admin schedule management (any staff member can
   // have a shift/consultation schedule). Without it, callers booking patient
-  // consultations continue to only see DOCTOR role staff, as before.
-  const conditions = allStaff ? ["s.is_active = TRUE"] : ["r.name = 'DOCTOR'", "s.is_active = TRUE"];
+  // consultations continue to only see active DOCTOR role staff.
+  const conditions = allStaff
+    ? [
+        `(s.is_active = TRUE OR (s.deactivation_end_date IS NOT NULL AND s.deactivation_end_date < CURRENT_DATE))`
+      ]
+    : [
+        `UPPER(r.name) IN ('DOCTOR', 'PHYSICIAN', 'SURGEON')`,
+        `(s.is_active = TRUE OR (s.deactivation_end_date IS NOT NULL AND s.deactivation_end_date < CURRENT_DATE))`
+      ];
   const params = [];
 
   if (specialty) {
@@ -41,7 +48,14 @@ async function getDoctors(filters = {}) {
           AND ds.day_of_week = $${params.length}
           AND ds.is_active = TRUE
       `;
+
+      // Exclude doctors who are deactivated on this specific date
+      params.push(date);
+      conditions.push(`NOT (s.deactivation_start_date IS NOT NULL AND s.deactivation_end_date IS NOT NULL AND $${params.length}::date >= s.deactivation_start_date AND $${params.length}::date <= s.deactivation_end_date)`);
     }
+  } else if (!allStaff) {
+    // If no specific date is passed and not allStaff, ensure doctor is not deactivated today
+    conditions.push(`NOT (s.deactivation_start_date IS NOT NULL AND s.deactivation_end_date IS NOT NULL AND CURRENT_DATE >= s.deactivation_start_date AND CURRENT_DATE <= s.deactivation_end_date)`);
   }
 
   query += ` WHERE ${conditions.join(" AND ")} ORDER BY s.last_name, s.first_name`;
@@ -76,10 +90,20 @@ async function getDoctorUpcomingAvailability(doctorId, daysAhead = 14) {
   // can view upcoming availability for nurses, lab techs, etc. as well).
   const docResult = await pool.query(
     `
-    SELECT s.id, s.first_name, s.last_name, s.specialty, s.department, r.name AS role
+    SELECT
+      s.id,
+      s.first_name,
+      s.last_name,
+      s.specialty,
+      s.department,
+      s.is_active,
+      s.deactivation_start_date,
+      s.deactivation_end_date,
+      r.name AS role
     FROM staff s
     JOIN roles r ON s.role_id = r.id
-    WHERE s.id = $1 AND s.is_active = TRUE
+    WHERE s.id = $1
+      AND (s.is_active = TRUE OR (s.deactivation_end_date IS NOT NULL AND s.deactivation_end_date < CURRENT_DATE))
     `,
     [doctorId]
   );
@@ -123,6 +147,18 @@ async function getDoctorUpcomingAvailability(doctorId, daysAhead = 14) {
     }
 
     const dateStr = d.toISOString().split("T")[0];
+
+    // Check if doctor is deactivated on this specific date
+    if (
+      doctor.deactivation_start_date &&
+      doctor.deactivation_end_date
+    ) {
+      const deactStart = new Date(doctor.deactivation_start_date).toISOString().split("T")[0];
+      const deactEnd = new Date(doctor.deactivation_end_date).toISOString().split("T")[0];
+      if (dateStr >= deactStart && dateStr <= deactEnd) {
+        continue; // Skip date during deactivation period
+      }
+    }
     const daySchedules = schedules.filter((s) => s.day_of_week === dayOfWeek);
 
     // Get appointments on this date

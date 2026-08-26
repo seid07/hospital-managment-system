@@ -3,7 +3,8 @@ import { Link, useSearchParams } from "react-router-dom";
 import AppShell from "../components/layout/AppShell";
 import Modal from "../components/common/Modal";
 import StatCard from "../components/common/StatCard";
-import { searchPatients, createPatient } from "../services/patientService";
+import PrintableDocument from "../components/common/PrintableDocument";
+import { searchPatients, createPatient, deletePatient } from "../services/patientService";
 import { serviceCatalogService } from "../services/serviceCatalogService";
 import { visitService } from "../services/visitService";
 import { serviceOrderService } from "../services/serviceOrderService";
@@ -101,8 +102,18 @@ export default function RegistrarVisitDesk() {
   const [cardPayMethod, setCardPayMethod] = useState("CASH");
   const [cardPayTxnRef, setCardPayTxnRef] = useState("");
   const [cardPayNotes, setCardPayNotes] = useState("");
+  const [cardPayEmergency, setCardPayEmergency] = useState(false);
   const [cardPayProcessing, setCardPayProcessing] = useState(false);
   const [cardPayError, setCardPayError] = useState("");
+
+  // Receipt prompts state (Requirement 1 & Requirement 3)
+  const [showCardReceiptPrompt, setShowCardReceiptPrompt] = useState(false);
+  const [paidCardReceiptData, setPaidCardReceiptData] = useState(null);
+  const [showCardPrintModal, setShowCardPrintModal] = useState(false);
+
+  const [showCashierReceiptPrompt, setShowCashierReceiptPrompt] = useState(false);
+  const [paidCashierReceiptData, setPaidCashierReceiptData] = useState(null);
+  const [showCashierPrintModal, setShowCashierPrintModal] = useState(false);
 
   // Registration Card payment notice (shown in cashier queue tab after patient creation)
   const [regCardNotice, setRegCardNotice] = useState(null); // { patientName, orderId, price }
@@ -255,23 +266,60 @@ export default function RegistrarVisitDesk() {
     }
   }
 
-  // Pay the registration card fee then auto-open the appointment popup
+  // Cancel card fee payment: if routine, delete draft patient to enforce mandatory card payment
+  async function handleCancelCardPay() {
+    if (selectedPatient?.id && !cardPayEmergency) {
+      try {
+        await deletePatient(selectedPatient.id);
+      } catch (e) {
+        console.error("Cleanup cancelled patient draft:", e);
+      }
+    }
+    setShowCardPayModal(false);
+    setSelectedPatient(null);
+    setCardPayInfo(null);
+    setErrorMessage("Patient registration cancelled. Card fee payment is mandatory before booking consultation.");
+    setRefreshTrigger((k) => k + 1);
+  }
+
+  // Pay the registration card fee then prompt for receipt before consultation booking
   async function handlePayCardFee(e) {
     e.preventDefault();
     if (!cardPayInfo) return;
+
+    // If emergency override is selected, bypass immediate payment
+    if (cardPayEmergency) {
+      setShowCardPayModal(false);
+      setRefreshTrigger((k) => k + 1);
+      await openAppointmentOffer();
+      return;
+    }
+
     try {
       setCardPayProcessing(true);
       setCardPayError("");
-      await recordSelectivePayment({
+      const res = await recordSelectivePayment({
         serviceOrderIds: [cardPayInfo.orderId],
         paymentMethod: cardPayMethod,
         transactionReference: cardPayTxnRef || null,
         notes: cardPayNotes || `Registration card fee — ${cardPayInfo.patientName}`,
       });
-      // Payment successful — close this popup and open appointment booking
+
+      const receipt = {
+        receiptNumber: res?.data?.paymentNumber || `REC-${Date.now().toString().slice(-6)}`,
+        patientName: cardPayInfo.patientName,
+        patientNumber: cardPayInfo.patientNumber,
+        amount: cardPayInfo.price,
+        paymentMethod: cardPayMethod,
+        transactionReference: cardPayTxnRef || "—",
+        date: new Date().toLocaleString(),
+        description: "Patient Registration Card Fee",
+      };
+
+      setPaidCardReceiptData(receipt);
       setShowCardPayModal(false);
       setRefreshTrigger((k) => k + 1);
-      await openAppointmentOffer();
+      setShowCardReceiptPrompt(true);
     } catch (err) {
       setCardPayError(err.message || "Payment failed. Please try again.");
     } finally {
@@ -532,22 +580,28 @@ export default function RegistrarVisitDesk() {
         notes: orderPayNotes || `Cashier payment for ${selectedIdsArray.length} doctor-ordered service(s)`,
       });
 
+      const selectedOrdersList = patientPendingOrders.filter((o) => selectedOrderIds.has(o.service_order_id));
+      const receipt = {
+        receiptNumber: res.data?.paymentNumber || `REC-${Date.now().toString().slice(-6)}`,
+        patientName: `${selectedPatientForPay.patient_first_name} ${selectedPatientForPay.patient_last_name}`,
+        patientNumber: selectedPatientForPay.patient_number,
+        totalPaid: res.data?.amount || selectedOrdersList.reduce((sum, o) => sum + parseFloat(o.price), 0),
+        paymentMethod: orderPayMethod,
+        transactionReference: orderTxnRef || "—",
+        date: new Date().toLocaleString(),
+        items: selectedOrdersList,
+        servicesCount: selectedIdsArray.length,
+      };
+
+      setPaidCashierReceiptData(receipt);
       setShowPayOrderModal(false);
       setSelectedPatientForPay(null);
       setPatientPendingOrders([]);
       setSelectedOrderIds(new Set());
       setOrderTxnRef("");
       setOrderPayNotes("");
-
-      setSuccessReceipt({
-        patientName: `${selectedPatientForPay.patient_first_name} ${selectedPatientForPay.patient_last_name}`,
-        patientNumber: selectedPatientForPay.patient_number,
-        totalPaid: res.data?.amount || 0,
-        paymentNumber: res.data?.paymentNumber,
-        servicesCount: selectedIdsArray.length,
-      });
-
       setRefreshTrigger((k) => k + 1);
+      setShowCashierReceiptPrompt(true);
     } catch (err) {
       setErrorMessage(err.message || "Failed to record doctor order payments.");
     } finally {
@@ -1556,11 +1610,7 @@ export default function RegistrarVisitDesk() {
       ──────────────────────────────────────────────────────────── */}
       <Modal
         isOpen={showCardPayModal}
-        onClose={() => {
-          setShowCardPayModal(false);
-          // Skip payment → still offer appointment
-          openAppointmentOffer();
-        }}
+        onClose={handleCancelCardPay}
         title="Step 1 of 2 — Pay Registration Card Fee"
       >
         {cardPayInfo && (
@@ -1604,41 +1654,81 @@ export default function RegistrarVisitDesk() {
               </div>
             )}
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "12px" }}>
-              <div className="form-field" style={{ marginBottom: 0 }}>
-                <label htmlFor="cardPayMethod">Payment Method *</label>
-                <select
-                  id="cardPayMethod"
-                  value={cardPayMethod}
-                  onChange={(e) => setCardPayMethod(e.target.value)}
-                  required
-                >
-                  <option value="CASH">Cash</option>
-                  <option value="BANK_TRANSFER">Bank Transfer</option>
-                  <option value="MOBILE_MONEY">Mobile Money (Telebirr / CBE Birr)</option>
-                  <option value="POS">POS / Card</option>
-                </select>
-              </div>
-              <div className="form-field" style={{ marginBottom: 0 }}>
-                <label htmlFor="cardPayTxnRef">Transaction / Receipt Ref</label>
+            {/* Emergency Patient Override Option (Requirement 1) */}
+            <div
+              style={{
+                background: cardPayEmergency ? "#fef2f2" : "var(--surface-muted)",
+                border: cardPayEmergency ? "1px solid #ef4444" : "1px solid var(--border)",
+                borderRadius: "var(--radius-sm)",
+                padding: "12px 14px",
+                marginBottom: "14px",
+              }}
+            >
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "8px",
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  color: cardPayEmergency ? "#b91c1c" : "var(--text-main)",
+                  fontSize: "13px",
+                }}
+              >
                 <input
-                  id="cardPayTxnRef"
-                  placeholder="Optional reference number"
-                  value={cardPayTxnRef}
-                  onChange={(e) => setCardPayTxnRef(e.target.value)}
+                  type="checkbox"
+                  checked={cardPayEmergency}
+                  onChange={(e) => setCardPayEmergency(e.target.checked)}
+                  style={{ width: "16px", height: "16px" }}
                 />
+                <span>🚨 Emergency Patient (Allow Pay Later / Defer Payment)</span>
+              </label>
+              <div style={{ fontSize: "12px", color: "var(--text-secondary)", marginTop: "4px", marginLeft: "24px" }}>
+                {cardPayEmergency
+                  ? "Emergency override enabled: Patient may proceed to immediate consultation booking without upfront payment."
+                  : "Registration fee payment is mandatory before booking consultation for routine patients."}
               </div>
             </div>
 
-            <div className="form-field" style={{ marginBottom: "20px" }}>
-              <label htmlFor="cardPayNotes">Notes (optional)</label>
-              <input
-                id="cardPayNotes"
-                placeholder="e.g. Paid by relative, cash counted"
-                value={cardPayNotes}
-                onChange={(e) => setCardPayNotes(e.target.value)}
-              />
-            </div>
+            {!cardPayEmergency && (
+              <>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "12px" }}>
+                  <div className="form-field" style={{ marginBottom: 0 }}>
+                    <label htmlFor="cardPayMethod">Payment Method *</label>
+                    <select
+                      id="cardPayMethod"
+                      value={cardPayMethod}
+                      onChange={(e) => setCardPayMethod(e.target.value)}
+                      required
+                    >
+                      <option value="CASH">Cash</option>
+                      <option value="BANK_TRANSFER">Bank Transfer</option>
+                      <option value="MOBILE_MONEY">Mobile Money (Telebirr / CBE Birr)</option>
+                      <option value="POS">POS / Card</option>
+                    </select>
+                  </div>
+                  <div className="form-field" style={{ marginBottom: 0 }}>
+                    <label htmlFor="cardPayTxnRef">Transaction / Receipt Ref</label>
+                    <input
+                      id="cardPayTxnRef"
+                      placeholder="Optional reference number"
+                      value={cardPayTxnRef}
+                      onChange={(e) => setCardPayTxnRef(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                <div className="form-field" style={{ marginBottom: "20px" }}>
+                  <label htmlFor="cardPayNotes">Notes (optional)</label>
+                  <input
+                    id="cardPayNotes"
+                    placeholder="e.g. Paid by relative, cash counted"
+                    value={cardPayNotes}
+                    onChange={(e) => setCardPayNotes(e.target.value)}
+                  />
+                </div>
+              </>
+            )}
 
             <div style={{
               borderTop: "1px solid var(--border)",
@@ -1651,27 +1741,259 @@ export default function RegistrarVisitDesk() {
               <button
                 type="button"
                 className="button button-secondary"
-                onClick={() => {
-                  setShowCardPayModal(false);
-                  openAppointmentOffer();
-                }}
+                onClick={handleCancelCardPay}
               >
-                Skip Payment →
+                Cancel Registration
               </button>
               <button
                 type="submit"
                 className="button button-primary"
                 disabled={cardPayProcessing}
-                style={{ minWidth: "220px" }}
+                style={{
+                  minWidth: "220px",
+                  background: cardPayEmergency ? "#b91c1c" : "var(--primary)",
+                  borderColor: cardPayEmergency ? "#b91c1c" : "var(--primary)",
+                }}
               >
                 {cardPayProcessing
-                  ? "Processing Payment..."
-                  : `✓ Pay ${formatCurrency(cardPayInfo.price)} → Book Consultation`}
+                  ? "Processing..."
+                  : cardPayEmergency
+                  ? "🚨 Authorize Emergency (Pay Later) → Book Consultation"
+                  : `✓ Pay ${formatCurrency(cardPayInfo.price)} Received → Proceed`}
               </button>
             </div>
           </form>
         )}
       </Modal>
+
+      {/* ────────────────────────────────────────────────────────────
+           Requirement 1: Do You Want Receipt Prompt for Card Payment
+      ──────────────────────────────────────────────────────────── */}
+      {showCardReceiptPrompt && paidCardReceiptData && (
+        <Modal
+          isOpen={true}
+          onClose={() => {
+            setShowCardReceiptPrompt(false);
+            openAppointmentOffer();
+          }}
+          title="Payment Received — Do You Want a Receipt?"
+        >
+          <div style={{ textAlign: "center", padding: "16px 8px" }}>
+            <div style={{ fontSize: "40px", marginBottom: "8px" }}>🧾</div>
+            <h3 style={{ margin: "0 0 8px 0", color: "var(--success)" }}>Payment Recorded Successfully!</h3>
+            <p style={{ fontSize: "14px", color: "var(--text-main)", marginBottom: "14px" }}>
+              Registration Card payment of <strong>{formatCurrency(paidCardReceiptData.amount)}</strong> was recorded for{" "}
+              <strong>{paidCardReceiptData.patientName}</strong> ({paidCardReceiptData.patientNumber}).
+            </p>
+            <p style={{ fontSize: "13px", color: "var(--text-secondary)", marginBottom: "24px" }}>
+              Would you like to print an official transaction receipt for the patient now?
+            </p>
+
+            <div style={{ display: "flex", justifyContent: "center", gap: "12px" }}>
+              <button
+                type="button"
+                className="button button-secondary"
+                onClick={() => {
+                  setShowCardReceiptPrompt(false);
+                  openAppointmentOffer();
+                }}
+                style={{ minWidth: "160px" }}
+              >
+                No, Skip to Consultation →
+              </button>
+              <button
+                type="button"
+                className="button button-primary"
+                onClick={() => {
+                  setShowCardReceiptPrompt(false);
+                  setShowCardPrintModal(true);
+                }}
+                style={{ minWidth: "160px" }}
+              >
+                🖨 Yes, Print Receipt
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Printable Card Receipt Modal */}
+      {showCardPrintModal && paidCardReceiptData && (
+        <Modal
+          isOpen={true}
+          onClose={() => {
+            setShowCardPrintModal(false);
+            openAppointmentOffer();
+          }}
+          title="Print Registration Card Receipt"
+        >
+          <PrintableDocument
+            title="OFFICIAL REGISTRATION CARD RECEIPT"
+            documentNumber={paidCardReceiptData.receiptNumber}
+            date={paidCardReceiptData.date}
+          >
+            <div style={{ padding: "12px 0" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "16px", background: "#f8fafc", padding: "12px", borderRadius: "6px", border: "1px solid #e2e8f0" }}>
+                <div>
+                  <strong>Patient Name:</strong> {paidCardReceiptData.patientName}<br />
+                  <strong>Patient Number:</strong> {paidCardReceiptData.patientNumber}
+                </div>
+                <div>
+                  <strong>Payment Method:</strong> {paidCardReceiptData.paymentMethod}<br />
+                  <strong>Reference #:</strong> {paidCardReceiptData.transactionReference}
+                </div>
+              </div>
+
+              <table className="data-table" style={{ width: "100%", marginBottom: "16px" }}>
+                <thead>
+                  <tr>
+                    <th>Description</th>
+                    <th>Category</th>
+                    <th style={{ textAlign: "right" }}>Amount</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><strong>{paidCardReceiptData.description}</strong></td>
+                    <td>REGISTRATION</td>
+                    <td style={{ textAlign: "right" }}><strong>{formatCurrency(paidCardReceiptData.amount)}</strong></td>
+                  </tr>
+                </tbody>
+                <tfoot>
+                  <tr>
+                    <th colSpan="2">Total Paid (ETB)</th>
+                    <th style={{ textAlign: "right", color: "var(--success)", fontSize: "15px" }}>{formatCurrency(paidCardReceiptData.amount)}</th>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </PrintableDocument>
+
+          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "16px" }}>
+            <button
+              type="button"
+              className="button button-primary"
+              onClick={() => {
+                setShowCardPrintModal(false);
+                openAppointmentOffer();
+              }}
+            >
+              Continue to Book Consultation →
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {/* ────────────────────────────────────────────────────────────
+           Requirement 3: Do You Want Receipt Prompt for Cashier Queue
+      ──────────────────────────────────────────────────────────── */}
+      {showCashierReceiptPrompt && paidCashierReceiptData && (
+        <Modal
+          isOpen={true}
+          onClose={() => setShowCashierReceiptPrompt(false)}
+          title="Payment Authorized — Do You Want a Receipt?"
+        >
+          <div style={{ textAlign: "center", padding: "16px 8px" }}>
+            <div style={{ fontSize: "40px", marginBottom: "8px" }}>🧾</div>
+            <h3 style={{ margin: "0 0 8px 0", color: "var(--success)" }}>Payment Authorized!</h3>
+            <p style={{ fontSize: "14px", color: "var(--text-main)", marginBottom: "14px" }}>
+              Payment of <strong>{formatCurrency(paidCashierReceiptData.totalPaid)}</strong> authorized for{" "}
+              <strong>{paidCashierReceiptData.patientName}</strong> ({paidCashierReceiptData.patientNumber}) covering{" "}
+              <strong>{paidCashierReceiptData.servicesCount}</strong> doctor-ordered service(s).
+            </p>
+            <p style={{ fontSize: "13px", color: "var(--text-secondary)", marginBottom: "24px" }}>
+              Do you want to print an official transaction receipt for the patient?
+            </p>
+
+            <div style={{ display: "flex", justifyContent: "center", gap: "12px" }}>
+              <button
+                type="button"
+                className="button button-secondary"
+                onClick={() => setShowCashierReceiptPrompt(false)}
+                style={{ minWidth: "150px" }}
+              >
+                No, Return to Queue
+              </button>
+              <button
+                type="button"
+                className="button button-primary"
+                onClick={() => {
+                  setShowCashierReceiptPrompt(false);
+                  setShowCashierPrintModal(true);
+                }}
+                style={{ minWidth: "150px" }}
+              >
+                🖨 Yes, Print Receipt
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Printable Cashier Services Receipt Modal */}
+      {showCashierPrintModal && paidCashierReceiptData && (
+        <Modal
+          isOpen={true}
+          onClose={() => setShowCashierPrintModal(false)}
+          title="Doctor-Ordered Services Payment Receipt"
+        >
+          <PrintableDocument
+            title="OFFICIAL CASHIER SERVICES RECEIPT"
+            documentNumber={paidCashierReceiptData.receiptNumber}
+            date={paidCashierReceiptData.date}
+          >
+            <div style={{ padding: "12px 0" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "16px", background: "#f8fafc", padding: "12px", borderRadius: "6px", border: "1px solid #e2e8f0" }}>
+                <div>
+                  <strong>Patient Name:</strong> {paidCashierReceiptData.patientName}<br />
+                  <strong>Patient Number:</strong> {paidCashierReceiptData.patientNumber}
+                </div>
+                <div>
+                  <strong>Payment Method:</strong> {paidCashierReceiptData.paymentMethod}<br />
+                  <strong>Reference #:</strong> {paidCashierReceiptData.transactionReference}
+                </div>
+              </div>
+
+              <table className="data-table" style={{ width: "100%", marginBottom: "16px" }}>
+                <thead>
+                  <tr>
+                    <th>Service Name</th>
+                    <th>Department</th>
+                    <th style={{ textAlign: "right" }}>Price (ETB)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {paidCashierReceiptData.items?.map((it, idx) => (
+                    <tr key={idx}>
+                      <td><strong>{it.service_name}</strong> ({it.service_code})</td>
+                      <td>{it.department_name}</td>
+                      <td style={{ textAlign: "right" }}>{formatCurrency(it.price)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr>
+                    <th colSpan="2">Total Paid</th>
+                    <th style={{ textAlign: "right", color: "var(--success)", fontSize: "15px" }}>
+                      {formatCurrency(paidCashierReceiptData.totalPaid)}
+                    </th>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </PrintableDocument>
+
+          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "16px" }}>
+            <button
+              type="button"
+              className="button button-secondary"
+              onClick={() => setShowCashierPrintModal(false)}
+            >
+              Close
+            </button>
+          </div>
+        </Modal>
+      )}
 
       {/* ────────────────────────────────────────────────────────────
            Step 2/2: Post-Registration Consultation Offer Modal

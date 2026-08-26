@@ -27,6 +27,7 @@ function PatientDetail() {
   const [showVitalsModal, setShowVitalsModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showPrintModal, setShowPrintModal] = useState(false);
+  const [showBillingPrintModal, setShowBillingPrintModal] = useState(false);
 
   // Vitals form
   const [vitalsForm, setVitalsForm] = useState({
@@ -155,6 +156,14 @@ function PatientDetail() {
   }
 
   const { patient, appointments, vitals, encounters, prescriptions, labOrders, invoices } = data;
+  const payments = data.payments || [];
+  const serviceOrders = data.serviceOrders || [];
+
+  const totalPaid = payments.reduce((sum, p) => sum + parseFloat(p.amount || 0), 0);
+  const totalInvoiced = (invoices || []).reduce((sum, i) => sum + parseFloat(i.total_amount || 0), 0);
+  const totalServiceOrders = serviceOrders.reduce((sum, s) => sum + parseFloat(s.price || 0), 0);
+  const totalCharges = Math.max(totalServiceOrders, totalInvoiced, totalPaid);
+  const totalBalance = Math.max(0, totalCharges - totalPaid);
 
   const birthYear = patient.date_of_birth
     ? new Date(patient.date_of_birth).getFullYear()
@@ -646,85 +655,149 @@ function PatientDetail() {
         </section>
       )}
 
-      {/* Tab 5: Invoices & Billing */}
+      {/* Tab 5: Invoices & Billing (Requirement 2) */}
       {activeTab === "billing" && (
         <section className="card">
-          <div className="card-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div className="card-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px" }}>
             <div>
-              <h2>Billing & Invoices</h2>
-              <p>Charges, outstanding balances, and payment receipts.</p>
+              <h2>Billing & Payment History</h2>
+              <p>Comprehensive transaction history, recorded payments, and outstanding balances.</p>
             </div>
-            {["ADMIN", "FINANCE", "REGISTRAR"].includes(user?.role) && (
+            <div style={{ display: "flex", gap: "8px" }}>
               <button
                 type="button"
                 className="button button-primary"
-                onClick={() => navigate(`/billing?patientId=${patient.id}`)}
+                onClick={() => setShowBillingPrintModal(true)}
               >
-                View Billing Center →
+                🖨 Print Full Transaction History
               </button>
+              {["ADMIN", "FINANCE", "REGISTRAR"].includes(user?.role) && (
+                <button
+                  type="button"
+                  className="button button-secondary"
+                  onClick={() => navigate(`/billing?patientId=${patient.id}`)}
+                >
+                  Billing Center →
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Financial Summary Metric Cards */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "16px", marginBottom: "24px" }}>
+            <div style={{ background: "var(--surface-muted)", padding: "14px 18px", borderRadius: "var(--radius)", border: "1px solid var(--border)" }}>
+              <div style={{ fontSize: "12px", color: "var(--text-muted)", fontWeight: 600, textTransform: "uppercase" }}>Total Incurred Charges</div>
+              <div style={{ fontSize: "22px", fontWeight: 800, color: "var(--text-main)", marginTop: "4px", fontFamily: "monospace" }}>
+                {formatCurrency(totalCharges)}
+              </div>
+            </div>
+
+            <div style={{ background: "#ecfdf5", padding: "14px 18px", borderRadius: "var(--radius)", border: "1px solid #10b98140" }}>
+              <div style={{ fontSize: "12px", color: "#065f46", fontWeight: 600, textTransform: "uppercase" }}>Total Payments Collected</div>
+              <div style={{ fontSize: "22px", fontWeight: 800, color: "#059669", marginTop: "4px", fontFamily: "monospace" }}>
+                {formatCurrency(totalPaid)}
+              </div>
+            </div>
+
+            <div style={{ background: totalBalance > 0 ? "#fef2f2" : "var(--surface-muted)", padding: "14px 18px", borderRadius: "var(--radius)", border: totalBalance > 0 ? "1px solid #ef444440" : "1px solid var(--border)" }}>
+              <div style={{ fontSize: "12px", color: totalBalance > 0 ? "#991b1b" : "var(--text-muted)", fontWeight: 600, textTransform: "uppercase" }}>Outstanding Balance Due</div>
+              <div style={{ fontSize: "22px", fontWeight: 800, color: totalBalance > 0 ? "var(--danger)" : "var(--success)", marginTop: "4px", fontFamily: "monospace" }}>
+                {formatCurrency(totalBalance)}
+              </div>
+            </div>
+          </div>
+
+          {/* Section 1: All Recorded Payment Receipts */}
+          <div style={{ marginBottom: "28px" }}>
+            <h3 style={{ fontSize: "16px", fontWeight: 700, margin: "0 0 12px 0", color: "var(--primary)" }}>
+              Recorded Payment Receipts ({payments.length})
+            </h3>
+
+            {payments.length === 0 ? (
+              <div className="empty-state" style={{ padding: "20px" }}>No recorded payment transactions found.</div>
+            ) : (
+              <div className="table-wrapper">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Date & Time</th>
+                      <th>Receipt / Ref #</th>
+                      <th>Payment Method</th>
+                      <th>Received By</th>
+                      <th>Invoice Ref</th>
+                      <th style={{ textAlign: "right" }}>Amount Paid</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {payments.map((p) => (
+                      <tr key={p.id}>
+                        <td>{new Date(p.created_at).toLocaleString()}</td>
+                        <td><strong>{p.payment_number || `REC-${p.id.slice(0, 8)}`}</strong></td>
+                        <td><span className="badge badge-info">{p.payment_method}</span></td>
+                        <td>{p.received_by_username || "Cashier"}</td>
+                        <td>{p.invoice_number ? `#${p.invoice_number}` : "Selective / Direct Order"}</td>
+                        <td style={{ textAlign: "right" }}>
+                          <strong style={{ color: "var(--success)", fontFamily: "monospace" }}>
+                            {formatCurrency(p.amount)}
+                          </strong>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr>
+                      <th colSpan="5">Total Collected:</th>
+                      <th style={{ textAlign: "right", color: "var(--success)", fontSize: "15px", fontFamily: "monospace" }}>
+                        {formatCurrency(totalPaid)}
+                      </th>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
             )}
           </div>
 
-          {invoices.length === 0 ? (
-            <div className="empty-state">No invoices generated for this patient.</div>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-              {invoices.map((inv) => (
-                <div
-                  key={inv.id}
-                  style={{
-                    padding: "16px",
-                    border: "1px solid var(--border)",
-                    borderRadius: "var(--radius)",
-                    background: "var(--surface)",
-                  }}
-                >
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
-                    <div>
-                      <strong style={{ fontSize: "15px" }}>Invoice #{inv.invoice_number}</strong>
-                      <span style={{ marginLeft: "12px", fontSize: "12px", color: "var(--text-muted)" }}>
-                        Date: {new Date(inv.created_at).toLocaleDateString()}
-                      </span>
-                    </div>
-                    <StatusBadge status={inv.status} />
-                  </div>
+          {/* Section 2: Itemized Service Orders & Invoices */}
+          <div>
+            <h3 style={{ fontSize: "16px", fontWeight: 700, margin: "0 0 12px 0", color: "var(--text-main)" }}>
+              Itemized Service Orders ({serviceOrders.length})
+            </h3>
 
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: "12px", background: "var(--surface-muted)", padding: "12px", borderRadius: "var(--radius-sm)", marginBottom: "12px" }}>
-                    <div><span style={{ fontSize: "11px", color: "var(--text-muted)" }}>Subtotal</span><br /><strong>{formatCurrency(inv.subtotal)}</strong></div>
-                    <div><span style={{ fontSize: "11px", color: "var(--text-muted)" }}>Discount / Tax</span><br /><span>-{formatCurrency(inv.discount_amount)} / +{formatCurrency(inv.tax_amount)}</span></div>
-                    <div><span style={{ fontSize: "11px", color: "var(--text-muted)" }}>Total Due</span><br /><strong style={{ color: "var(--primary)" }}>{formatCurrency(inv.total_amount)}</strong></div>
-                    <div><span style={{ fontSize: "11px", color: "var(--text-muted)" }}>Balance Remaining</span><br /><strong style={{ color: parseFloat(inv.balance_amount) > 0 ? "var(--danger)" : "var(--success)" }}>{formatCurrency(inv.balance_amount)}</strong></div>
-                  </div>
-
-                  {inv.items && inv.items.length > 0 && (
-                    <div style={{ fontSize: "12px" }}>
-                      <strong>Line Items:</strong>
-                      <ul style={{ margin: "4px 0", paddingLeft: "20px" }}>
-                        {inv.items.map((it, idx) => (
-                          <li key={idx}>
-                            {it.description} ({it.quantity} × {formatCurrency(it.unit_price)}) = <strong>{formatCurrency(it.total_price)}</strong>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-
-                  {inv.payments && inv.payments.length > 0 && (
-                    <div style={{ marginTop: "8px", fontSize: "12px", color: "var(--success)" }}>
-                      <strong>Payments Received:</strong>
-                      <ul style={{ margin: "4px 0", paddingLeft: "20px" }}>
-                        {inv.payments.map((pm, idx) => (
-                          <li key={idx}>
-                            {formatCurrency(pm.amount)} via {pm.payment_method} ({pm.payment_number}) on {new Date(pm.created_at).toLocaleDateString()}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
+            {serviceOrders.length === 0 ? (
+              <div className="empty-state" style={{ padding: "20px" }}>No service orders registered for this patient.</div>
+            ) : (
+              <div className="table-wrapper">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Order #</th>
+                      <th>Service Name</th>
+                      <th>Department</th>
+                      <th>Doctor</th>
+                      <th>Status</th>
+                      <th style={{ textAlign: "right" }}>Price</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {serviceOrders.map((so) => (
+                      <tr key={so.id}>
+                        <td>{new Date(so.created_at).toLocaleDateString()}</td>
+                        <td><code>{so.order_number}</code></td>
+                        <td><strong>{so.service_name}</strong> ({so.service_code})</td>
+                        <td><span className="badge badge-info">{so.department_name}</span></td>
+                        <td>{so.doctor_first_name ? `Dr. ${so.doctor_first_name} ${so.doctor_last_name}` : "—"}</td>
+                        <td><StatusBadge status={so.status} /></td>
+                        <td style={{ textAlign: "right" }}>
+                          <strong style={{ fontFamily: "monospace" }}>{formatCurrency(so.price)}</strong>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         </section>
       )}
 
@@ -1134,6 +1207,142 @@ function PatientDetail() {
             </div>
           )}
         </PrintableDocument>
+      </Modal>
+
+      {/* Modal 4: Print Full Transaction History & Billing Statement (Requirement 2) */}
+      <Modal
+        isOpen={showBillingPrintModal}
+        onClose={() => setShowBillingPrintModal(false)}
+        title="Print Patient Financial Transaction History"
+        maxWidth="850px"
+      >
+        <PrintableDocument
+          title="FULL FINANCIAL & BILLING STATEMENT"
+          subtitle="Hospital Department of Finance & Revenue Operations"
+          documentNumber={`STMT-${patient.patient_number}`}
+          date={new Date().toLocaleDateString()}
+        >
+          <div style={{ padding: "8px 0" }}>
+            {/* Patient Header Box */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "16px", background: "#f8fafc", padding: "12px 16px", borderRadius: "6px", border: "1px solid #e2e8f0" }}>
+              <div>
+                <strong>Patient Name:</strong> {patient.first_name} {patient.last_name}<br />
+                <strong>Patient Number:</strong> {patient.patient_number}<br />
+                <strong>Gender / Age:</strong> {patient.gender} • {age} yrs
+              </div>
+              <div>
+                <strong>Phone:</strong> {patient.phone}<br />
+                <strong>Address:</strong> {patient.address || "—"}<br />
+                <strong>Statement Date:</strong> {new Date().toLocaleString()}
+              </div>
+            </div>
+
+            {/* Financial Summary Table */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "10px", textAlign: "center", marginBottom: "20px", background: "#f1f5f9", padding: "10px", borderRadius: "6px" }}>
+              <div>
+                <div style={{ fontSize: "11px", color: "#64748b" }}>TOTAL INCURRED CHARGES</div>
+                <div style={{ fontSize: "16px", fontWeight: 800 }}>{formatCurrency(totalCharges)}</div>
+              </div>
+              <div>
+                <div style={{ fontSize: "11px", color: "#059669" }}>TOTAL PAYMENTS COLLECTED</div>
+                <div style={{ fontSize: "16px", fontWeight: 800, color: "#059669" }}>{formatCurrency(totalPaid)}</div>
+              </div>
+              <div>
+                <div style={{ fontSize: "11px", color: totalBalance > 0 ? "#dc2626" : "#64748b" }}>OUTSTANDING BALANCE DUE</div>
+                <div style={{ fontSize: "16px", fontWeight: 800, color: totalBalance > 0 ? "#dc2626" : "#059669" }}>{formatCurrency(totalBalance)}</div>
+              </div>
+            </div>
+
+            {/* Payments List */}
+            <h4 style={{ margin: "0 0 8px 0", fontSize: "14px", color: "#1e293b" }}>
+              1. Recorded Transaction Receipts ({payments.length})
+            </h4>
+            <table className="data-table" style={{ width: "100%", fontSize: "12px", marginBottom: "20px" }}>
+              <thead>
+                <tr>
+                  <th>Receipt #</th>
+                  <th>Date & Time</th>
+                  <th>Method</th>
+                  <th>Received By</th>
+                  <th style={{ textAlign: "right" }}>Amount Paid (ETB)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {payments.length === 0 ? (
+                  <tr>
+                    <td colSpan="5" style={{ textAlign: "center", color: "#64748b" }}>No payment receipts recorded</td>
+                  </tr>
+                ) : (
+                  payments.map((p) => (
+                    <tr key={p.id}>
+                      <td><strong>{p.payment_number || `REC-${p.id.slice(0, 8)}`}</strong></td>
+                      <td>{new Date(p.created_at).toLocaleString()}</td>
+                      <td>{p.payment_method}</td>
+                      <td>{p.received_by_username || "Cashier"}</td>
+                      <td style={{ textAlign: "right" }}><strong>{formatCurrency(p.amount)}</strong></td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+              <tfoot>
+                <tr>
+                  <th colSpan="4">Total Payments Received:</th>
+                  <th style={{ textAlign: "right", color: "#059669" }}>{formatCurrency(totalPaid)}</th>
+                </tr>
+              </tfoot>
+            </table>
+
+            {/* Services List */}
+            <h4 style={{ margin: "0 0 8px 0", fontSize: "14px", color: "#1e293b" }}>
+              2. Itemized Service Charges ({serviceOrders.length})
+            </h4>
+            <table className="data-table" style={{ width: "100%", fontSize: "12px", marginBottom: "16px" }}>
+              <thead>
+                <tr>
+                  <th>Order #</th>
+                  <th>Service Description</th>
+                  <th>Department</th>
+                  <th>Status</th>
+                  <th style={{ textAlign: "right" }}>Price (ETB)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {serviceOrders.length === 0 ? (
+                  <tr>
+                    <td colSpan="5" style={{ textAlign: "center", color: "#64748b" }}>No service orders recorded</td>
+                  </tr>
+                ) : (
+                  serviceOrders.map((so) => (
+                    <tr key={so.id}>
+                      <td>{so.order_number}</td>
+                      <td><strong>{so.service_name}</strong> ({so.service_code})</td>
+                      <td>{so.department_name}</td>
+                      <td>{so.status}</td>
+                      <td style={{ textAlign: "right" }}>{formatCurrency(so.price)}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+
+            <div style={{ marginTop: "32px", display: "flex", justifyContent: "space-between", fontSize: "11px", color: "#64748b" }}>
+              <div>Printed on: {new Date().toLocaleString()}</div>
+              <div style={{ borderTop: "1px solid #94a3b8", width: "200px", textAlign: "center", paddingTop: "4px" }}>
+                Authorized Finance Officer Signature
+              </div>
+            </div>
+          </div>
+        </PrintableDocument>
+
+        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "16px" }}>
+          <button
+            type="button"
+            className="button button-secondary"
+            onClick={() => setShowBillingPrintModal(false)}
+          >
+            Close
+          </button>
+        </div>
       </Modal>
     </AppShell>
   );

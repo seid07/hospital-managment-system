@@ -161,7 +161,13 @@ async function createAppointment(req, res) {
 
 async function getAppointments(req, res) {
   try {
-    const result = await appointmentService.getAppointments(req.query);
+    const query = { ...req.query };
+    // If the authenticated user is a DOCTOR, strictly scope to their scheduled appointments
+    if (req.user?.role === "DOCTOR" && req.user?.staffId) {
+      query.doctorId = req.user.staffId;
+    }
+
+    const result = await appointmentService.getAppointments(query);
 
     return res.status(200).json({
       success: true,
