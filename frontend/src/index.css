@@ -768,8 +768,39 @@ a {
 }
 
 /* =========================================================
-   PRINT STYLES
+   PRINT & THERMAL RECEIPT STYLES
    ========================================================= */
+
+.printable-container.format-thermal .data-table {
+  width: 100% !important;
+  font-family: 'Courier New', Courier, monospace !important;
+  font-size: 11px !important;
+  border: none !important;
+}
+
+.printable-container.format-thermal .data-table th,
+.printable-container.format-thermal .data-table td {
+  padding: 4px 2px !important;
+  border: none !important;
+  font-size: 11px !important;
+  color: #000000 !important;
+  background: transparent !important;
+}
+
+.printable-container.format-thermal .data-table thead tr {
+  border-bottom: 1px dashed #000000 !important;
+}
+
+.printable-container.format-thermal .data-table tfoot tr {
+  border-top: 1px dashed #000000 !important;
+}
+
+.printable-container.format-thermal div,
+.printable-container.format-thermal p,
+.printable-container.format-thermal span,
+.printable-container.format-thermal strong {
+  font-family: 'Courier New', Courier, monospace !important;
+}
 
 @media print {
   body {
@@ -798,6 +829,26 @@ a {
   .printable-container {
     border: none !important;
     padding: 0 !important;
+    background: transparent !important;
+  }
+
+  /* Thermal Print Specifics */
+  body.printing-thermal {
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  body.printing-thermal .printable-thermal {
+    max-width: 80mm !important;
+    width: 80mm !important;
+    padding: 2mm 1mm !important;
+    box-shadow: none !important;
+    margin: 0 auto !important;
+    font-size: 10.5pt !important;
+  }
+
+  @page {
+    margin: 0;
   }
 }
 
