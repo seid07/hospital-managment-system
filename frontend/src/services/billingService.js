@@ -46,3 +46,9 @@ export async function getPendingCashierOrders(query = {}) {
   if (query.search) params.append("search", query.search);
   return get(`/billing/pending-orders?${params.toString()}`);
 }
+
+export async function getPendingCashierOrdersGrouped(query = {}) {
+  const params = new URLSearchParams();
+  if (query.search) params.append("search", query.search);
+  return get(`/billing/pending-orders-grouped?${params.toString()}`);
+}

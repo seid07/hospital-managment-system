@@ -2,6 +2,7 @@ const express = require("express");
 const { authenticateToken } = require("../middleware/auth.middleware");
 const { authorizeRoles } = require("../middleware/rbac.middleware");
 const patientController = require("../controllers/patient.controller");
+const referralController = require("../controllers/referral.controller");
 
 const router = express.Router();
 
@@ -62,6 +63,13 @@ router.get(
   "/:id/record",
   authorizeRoles(...ALL_CLINICAL_AND_ADMIN_ROLES),
   patientController.getPatientRecord
+);
+
+// Patient referral history
+router.get(
+  "/:patientId/referrals",
+  authorizeRoles("ADMIN", "DOCTOR"),
+  referralController.getPatientReferrals
 );
 
 module.exports = router;

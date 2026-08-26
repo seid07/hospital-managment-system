@@ -17,6 +17,10 @@ export async function getDoctorUpcomingAvailability(doctorId, days = 14) {
   return get(`/schedules/doctors/${doctorId}/upcoming?days=${days}`);
 }
 
+export async function getAvailableDates(doctorId, days = 30) {
+  return get(`/schedules/doctors/${doctorId}/available-dates?days=${days}`);
+}
+
 export async function createSchedule(doctorId, data) {
   return post(`/schedules/doctors/${doctorId}`, data);
 }

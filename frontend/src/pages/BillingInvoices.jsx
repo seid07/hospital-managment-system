@@ -273,7 +273,7 @@ function BillingInvoices() {
           <div className="loading-state">Loading invoices...</div>
         ) : invoices.length === 0 ? (
           <div className="empty-state">
-            <div className="empty-state-icon">💳</div>
+            <div className="empty-state-icon"></div>
             <h3>No invoices found</h3>
             <p>No invoices match your search filters.</p>
           </div>

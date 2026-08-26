@@ -154,10 +154,28 @@ async function deleteSchedule(req, res) {
   }
 }
 
+async function getDoctorAvailableDates(req, res) {
+  try {
+    const { doctorId } = req.params;
+    const daysAhead = parseInt(req.query.days || "30", 10);
+    const data = await scheduleService.getDoctorUpcomingAvailability(doctorId, daysAhead);
+    // Filter to only dates that have at least one free slot
+    const availableDates = (data.availableDates || []).filter((d) => d.hasAvailableSlots);
+    res.json({ success: true, data: { doctor: data.doctor, availableDates } });
+  } catch (error) {
+    if (error.message === "DOCTOR_NOT_FOUND") {
+      return res.status(404).json({ success: false, message: "Doctor not found or inactive." });
+    }
+    console.error("Get available dates error:", error);
+    res.status(500).json({ success: false, message: "Unable to retrieve available dates." });
+  }
+}
+
 module.exports = {
   getDoctors,
   getDoctorSchedules,
   getDoctorUpcomingAvailability,
+  getDoctorAvailableDates,
   createSchedule,
   deleteSchedule,
 };

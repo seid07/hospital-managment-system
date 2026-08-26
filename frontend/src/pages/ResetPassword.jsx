@@ -55,14 +55,14 @@ function ResetPassword() {
     <div className="login-wrapper">
       <div className="login-card">
         <div className="login-brand">
-          <div className="login-logo-icon">🔑</div>
+          <div className="login-logo-icon"></div>
           <h1 className="login-title">Set New Password</h1>
           <p className="login-subtitle">Hospital Staff Credential Reset</p>
         </div>
 
         {error && (
           <div className="login-error-alert" role="alert" style={{ marginBottom: "16px" }}>
-            <span>⚠️</span>
+            <span>Warning:</span>
             <span>{error}</span>
           </div>
         )}

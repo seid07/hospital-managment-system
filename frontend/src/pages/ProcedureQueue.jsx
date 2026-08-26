@@ -170,7 +170,7 @@ export default function ProcedureQueue() {
             className="button button-secondary"
             onClick={() => setRefreshKey((k) => k + 1)}
           >
-            🔄 Refresh
+             Refresh
           </button>
         </div>
 
@@ -178,7 +178,7 @@ export default function ProcedureQueue() {
           <div className="loading-state">Loading procedure queue...</div>
         ) : filteredQueue.length === 0 ? (
           <div className="empty-state">
-            <div className="empty-state-icon">💉</div>
+            <div className="empty-state-icon"></div>
             <h3>{searchInput ? "No matching procedures found" : "No pending procedure orders"}</h3>
             <p>{searchInput ? "Try a different search term." : "New orders will appear here automatically after cashier authorization."}</p>
           </div>

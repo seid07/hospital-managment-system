@@ -12,6 +12,8 @@ import {
 import { getPatientRecord } from "../services/patientService";
 import { getMedications, createPrescription } from "../services/pharmacyService";
 import { getTestCatalog, createLabOrder } from "../services/laboratoryService";
+import { getDoctors } from "../services/scheduleService";
+import { createReferral } from "../services/referralService";
 import { useAuth } from "../context/useAuth";
 import { formatCurrency } from "../utils/currency";
 
@@ -73,6 +75,23 @@ function ClinicalEncounter() {
   const [saving, setSaving] = useState(false);
   const [rxSubmitting, setRxSubmitting] = useState(false);
   const [labSubmitting, setLabSubmitting] = useState(false);
+
+  // Referral state
+  const [showReferralModal, setShowReferralModal] = useState(false);
+  const [allDoctors, setAllDoctors] = useState([]);
+  const [referralForm, setReferralForm] = useState({
+    receivingDoctorId: "",
+    urgency: "ROUTINE",
+    symptoms: "",
+    findings: "",
+    diagnosis: "",
+    investigationInfo: "",
+    treatmentProvided: "",
+    caseNote: "",
+  });
+  const [referralSubmitting, setReferralSubmitting] = useState(false);
+  const [referralError, setReferralError] = useState("");
+  const [referralSuccess, setReferralSuccess] = useState("");
 
   useEffect(() => {
     if (!id) return;
@@ -324,9 +343,29 @@ function ClinicalEncounter() {
 
         <div className="page-actions">
           {patient && (
-            <Link to={`/patients/${patient.id}`} className="button button-secondary">
-              ← View Patient Chart
-            </Link>
+            <>
+              <Link to={`/patients/${patient.id}`} className="button button-secondary">
+                ← View Patient Chart
+              </Link>
+              <button
+                type="button"
+                className="button button-secondary"
+                onClick={async () => {
+                  setReferralError("");
+                  setReferralSuccess("");
+                  setReferralForm({ receivingDoctorId: "", urgency: "ROUTINE", symptoms: "", findings: "", diagnosis: "", investigationInfo: "", treatmentProvided: "", caseNote: "" });
+                  if (allDoctors.length === 0) {
+                    try {
+                      const res = await getDoctors();
+                      setAllDoctors((res.data || []).filter((d) => d.id !== user?.staff_id));
+                    } catch { /* silent */ }
+                  }
+                  setShowReferralModal(true);
+                }}
+              >
+                ↗ Refer Patient
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -759,7 +798,7 @@ function ClinicalEncounter() {
             </select>
             {labCatalog.some((t) => !t.linked_service_code) && (
               <small style={{ color: "var(--text-muted)" }}>
-                Some catalog tests are hidden here because they aren't linked to a billable
+                Some catalog tests are hidden here because they aren&apos;t linked to a billable
                 service yet. Ask an administrator to link them in Laboratory &gt; Catalog.
               </small>
             )}
@@ -792,6 +831,82 @@ function ClinicalEncounter() {
             </button>
             <button type="submit" className="button button-primary" disabled={!labForm.testId || labSubmitting}>
               {labSubmitting ? "Ordering..." : "Submit Lab Order"}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Modal: Refer Patient to Another Doctor */}
+      <Modal isOpen={showReferralModal} onClose={() => setShowReferralModal(false)} title="Refer Patient to Another Doctor">
+        {referralError && <div className="alert alert-error" style={{ marginBottom: "12px" }}>{referralError}</div>}
+        {referralSuccess && <div className="alert alert-success" style={{ marginBottom: "12px" }}>{referralSuccess}</div>}
+        <form onSubmit={async (e) => {
+          e.preventDefault();
+          if (!referralForm.receivingDoctorId) { setReferralError("Please select a receiving doctor."); return; }
+          if (!referralForm.caseNote.trim()) { setReferralError("Case note / referral reason is required."); return; }
+          try {
+            setReferralSubmitting(true);
+            setReferralError("");
+            await createReferral({ patientId, ...referralForm });
+            setReferralSuccess(`Referral sent successfully for ${patient?.first_name} ${patient?.last_name}.`);
+            setReferralForm({ receivingDoctorId: "", urgency: "ROUTINE", symptoms: "", findings: "", diagnosis: "", investigationInfo: "", treatmentProvided: "", caseNote: "" });
+          } catch (err) {
+            setReferralError(err.message || "Failed to send referral.");
+          } finally {
+            setReferralSubmitting(false);
+          }
+        }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px" }}>
+            <div className="form-field">
+              <label>Refer To (Doctor) *</label>
+              <select
+                value={referralForm.receivingDoctorId}
+                onChange={(e) => setReferralForm((p) => ({ ...p, receivingDoctorId: e.target.value }))}
+                required
+              >
+                <option value="">-- Select Doctor --</option>
+                {allDoctors.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    Dr. {d.first_name} {d.last_name}{d.specialty ? ` — ${d.specialty}` : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="form-field">
+              <label>Urgency *</label>
+              <select
+                value={referralForm.urgency}
+                onChange={(e) => setReferralForm((p) => ({ ...p, urgency: e.target.value }))}
+              >
+                <option value="ROUTINE">Routine</option>
+                <option value="URGENT">Urgent</option>
+                <option value="EMERGENCY">Emergency</option>
+              </select>
+            </div>
+          </div>
+          {[{ key: "symptoms", label: "Chief Complaint / Symptoms", ph: "Main symptoms presented by the patient..." },
+            { key: "findings", label: "Clinical Findings", ph: "Physical examination findings..." },
+            { key: "diagnosis", label: "Working Diagnosis", ph: "Current diagnosis or differential..." },
+            { key: "investigationInfo", label: "Investigations Done", ph: "Lab/imaging results completed..." },
+            { key: "treatmentProvided", label: "Treatment Provided So Far", ph: "Medications or treatment already given..." },
+            { key: "caseNote", label: "Referral Reason / Case Note *", ph: "Reason for referral and specific request to receiving doctor..." },
+          ].map((f) => (
+            <div key={f.key} className="form-field" style={{ marginTop: "10px" }}>
+              <label>{f.label}</label>
+              <textarea
+                rows={f.key === "caseNote" ? 4 : 2}
+                placeholder={f.ph}
+                value={referralForm[f.key]}
+                onChange={(e) => setReferralForm((p) => ({ ...p, [f.key]: e.target.value }))}
+                required={f.key === "caseNote"}
+                style={{ width: "100%", resize: "vertical" }}
+              />
+            </div>
+          ))}
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px", marginTop: "16px" }}>
+            <button type="button" className="button button-secondary" onClick={() => setShowReferralModal(false)}>Cancel</button>
+            <button type="submit" className="button button-primary" disabled={referralSubmitting}>
+              {referralSubmitting ? "Sending..." : "Send Referral"}
             </button>
           </div>
         </form>

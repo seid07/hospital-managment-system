@@ -105,7 +105,7 @@ function DoctorQueue() {
           <div className="loading-state">Loading consultation queue...</div>
         ) : clinicalQueue.length === 0 ? (
           <div className="empty-state">
-            <div className="empty-state-icon">🩺</div>
+            <div className="empty-state-icon"></div>
             <h3>No authorized patients currently waiting</h3>
             <p>Patients will appear here automatically as soon as their consultation service is paid at registration.</p>
           </div>

@@ -142,7 +142,7 @@ function Login() {
     <div className="login-wrapper">
       <div className="login-card">
         <div className="login-brand">
-          <div className="login-logo-icon">🏥</div>
+          <div className="login-logo-icon"></div>
           <h1 className="login-title">Hospital Management System</h1>
           <p className="login-subtitle">Secure Staff Portal & Service Station Login</p>
         </div>
@@ -177,7 +177,7 @@ function Login() {
 
         {error && (
           <div className="login-error-alert" role="alert" style={{ marginBottom: "16px" }}>
-            <span>⚠️</span>
+            <span>Warning:</span>
             <span>{error}</span>
           </div>
         )}
@@ -285,7 +285,7 @@ function Login() {
 
             {setupError && (
               <div className="alert alert-danger" style={{ marginBottom: "14px" }}>
-                ⚠️ {setupError}
+                Warning: {setupError}
               </div>
             )}
 
@@ -417,7 +417,7 @@ function Login() {
               </div>
             ) : (
               <div className="alert alert-danger" style={{ marginBottom: "16px" }}>
-                ⚠️ {forgotResult.message}
+                Warning: {forgotResult.message}
               </div>
             )}
 

@@ -144,7 +144,7 @@ function AdminAuditLogs() {
           <div className="loading-state">Loading audit trail...</div>
         ) : logs.length === 0 ? (
           <div className="empty-state">
-            <div className="empty-state-icon">📋</div>
+            <div className="empty-state-icon"></div>
             <h3>No audit records found</h3>
             <p>No audit events match the selected criteria.</p>
           </div>

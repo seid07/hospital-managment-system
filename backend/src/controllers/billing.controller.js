@@ -308,6 +308,22 @@ async function reversePayment(req, res) {
   }
 }
 
+async function getPendingCashierOrdersGrouped(req, res) {
+  try {
+    const patients = await billingService.getPendingCashierOrdersGrouped(req.query);
+    return res.status(200).json({
+      success: true,
+      data: patients,
+    });
+  } catch (error) {
+    console.error("Get grouped cashier orders error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Unable to retrieve grouped cashier orders.",
+    });
+  }
+}
+
 module.exports = {
   getServices,
   addService,
@@ -317,5 +333,6 @@ module.exports = {
   getInvoices,
   getInvoice,
   getPendingCashierOrders,
+  getPendingCashierOrdersGrouped,
   reversePayment,
 };

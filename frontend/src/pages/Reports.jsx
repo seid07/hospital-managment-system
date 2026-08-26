@@ -68,7 +68,7 @@ function Reports() {
             className="button button-primary button-large"
             onClick={() => setShowPrintModal(true)}
           >
-            🖨 Print Executive Report
+            Print Print Executive Report
           </button>
         </div>
       </div>
@@ -186,7 +186,7 @@ function Reports() {
                 <StatCard
                   label="Total Collections"
                   value={formatCurrency(data.summary?.total_collected || 0)}
-                  icon="💳"
+                  icon=""
                   description={`${data.summary?.payment_count || 0} total payments processed`}
                 />
               </div>

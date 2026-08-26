@@ -238,7 +238,7 @@ export default function WardInpatient() {
             <p>Patients waiting for bed allocation and ward check-in.</p>
           </div>
           <button type="button" className="button button-secondary" onClick={reloadData}>
-            🔄 Refresh
+             Refresh
           </button>
         </div>
 
@@ -256,7 +256,7 @@ export default function WardInpatient() {
           <div className="loading-state">Loading ward queue...</div>
         ) : filteredQueue.length === 0 ? (
           <div className="empty-state">
-            <div className="empty-state-icon">🛏️</div>
+            <div className="empty-state-icon"></div>
             <h3>{searchInput ? "No matching admissions found" : "No pending admissions"}</h3>
             <p>{searchInput ? "Try a different search term." : "Authorized bed admission orders will appear here automatically."}</p>
           </div>

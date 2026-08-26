@@ -439,7 +439,7 @@ function PatientNew() {
                     to={`/appointments/availability?patientId=${createdPatient.id}`}
                     className="button button-secondary"
                   >
-                    📅 Choose Another Date
+                     Choose Another Date
                   </Link>
 
                   <div style={{ display: "flex", gap: "8px" }}>

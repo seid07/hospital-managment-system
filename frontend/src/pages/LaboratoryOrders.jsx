@@ -167,7 +167,7 @@ function LaboratoryOrders() {
 
         <div className="page-actions">
           <Link to="/laboratory/catalog" className="button button-secondary">
-            🧪 Test Catalog
+             Test Catalog
           </Link>
         </div>
       </div>
@@ -225,7 +225,7 @@ function LaboratoryOrders() {
           <div className="loading-state">Loading laboratory queue...</div>
         ) : orders.length === 0 ? (
           <div className="empty-state">
-            <div className="empty-state-icon">🔬</div>
+            <div className="empty-state-icon"></div>
             <h3>No laboratory orders found</h3>
             <p>No orders match the selected filters.</p>
           </div>
@@ -398,7 +398,7 @@ function LaboratoryOrders() {
                             className="button button-secondary button-sm"
                             onClick={() => setPrintTarget(o)}
                           >
-                            🖨️ Report
+                            Print️ Report
                           </button>
                         )}
                       </div>

@@ -189,7 +189,7 @@ export default function RadiologyQueue() {
             className="button button-secondary"
             onClick={() => setRefreshKey((k) => k + 1)}
           >
-            🔄 Refresh
+             Refresh
           </button>
         </div>
 
@@ -197,7 +197,7 @@ export default function RadiologyQueue() {
           <div className="loading-state">Loading radiology queue...</div>
         ) : filteredQueue.length === 0 ? (
           <div className="empty-state">
-            <div className="empty-state-icon">🩻</div>
+            <div className="empty-state-icon"></div>
             <h3>{searchInput ? "No matching exams found" : "No imaging exams currently in this status"}</h3>
             <p>{searchInput ? "Try a different search term." : "New authorized radiology orders will appear here automatically."}</p>
           </div>

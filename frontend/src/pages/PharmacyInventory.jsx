@@ -162,7 +162,7 @@ function PharmacyInventory() {
 
         <div className="page-actions">
           <Link to="/prescriptions" className="button button-secondary">
-            💊 Prescriptions & Cashier
+             Prescriptions & Cashier
           </Link>
           {["ADMIN", "PHARMACIST"].includes(user?.role) && (
             <button
@@ -189,7 +189,7 @@ function PharmacyInventory() {
             setPage(1);
           }}
         >
-          📦 All Formulary Medications
+           All Formulary Medications
         </button>
         <button
           type="button"
@@ -199,7 +199,7 @@ function PharmacyInventory() {
             setPage(1);
           }}
         >
-          ⚠️ Low Stock Alerts (&lt; 15 Units)
+          Warning: Low Stock Alerts (&lt; 15 Units)
         </button>
         <button
           type="button"
@@ -238,7 +238,7 @@ function PharmacyInventory() {
           <section className="card">
             <div className="card-header">
               <h2>
-                {activeTab === "LOW_STOCK" ? "⚠️ Low Stock Medications (< 15 Units)" : "Hospital Formulary Catalog"} ({total})
+                {activeTab === "LOW_STOCK" ? "Warning: Low Stock Medications (< 15 Units)" : "Hospital Formulary Catalog"} ({total})
               </h2>
               <p>
                 {activeTab === "LOW_STOCK"
@@ -251,7 +251,7 @@ function PharmacyInventory() {
               <div className="loading-state">Loading formulary inventory...</div>
             ) : medications.length === 0 ? (
               <div className="empty-state">
-                <div className="empty-state-icon">📦</div>
+                <div className="empty-state-icon"></div>
                 <h3>{activeTab === "LOW_STOCK" ? "No Low Stock Alerts" : "No medications found"}</h3>
                 <p>
                   {activeTab === "LOW_STOCK"

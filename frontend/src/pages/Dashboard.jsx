@@ -74,21 +74,21 @@ function Dashboard() {
             <StatCard
               label="Total Staff"
               value={loading ? "..." : kpis?.totalStaff}
-              icon="👥"
+              icon=""
               description="Active hospital employees"
               to="/admin/staff"
             />
             <StatCard
               label="Active Doctors"
               value={loading ? "..." : kpis?.activeDoctors}
-              icon="🩺"
+              icon=""
               description="Available for appointments"
               to="/admin/schedules"
             />
             <StatCard
               label="Total Patients"
               value={loading ? "..." : kpis?.registeredPatients}
-              icon="♙"
+              icon=""
               description="Total patient records"
               to="/patients"
             />
@@ -109,7 +109,7 @@ function Dashboard() {
             <StatCard
               label="Total Revenue"
               value={loading ? "..." : formatCurrency(kpis?.totalRevenue || 0)}
-              icon="💳"
+              icon=""
               description="All-time payments collected"
               to="/billing"
             />
@@ -123,14 +123,14 @@ function Dashboard() {
             <StatCard
               label="Lab Workload"
               value={loading ? "..." : kpis?.labWorkload}
-              icon="🔬"
+              icon=""
               description="Pending / processing orders"
               to="/laboratory"
             />
             <StatCard
               label="Active Prescriptions"
               value={loading ? "..." : kpis?.pharmacyWorkload}
-              icon="💊"
+              icon=""
               description="Pending pharmacy dispensing"
               to="/prescriptions"
             />
@@ -163,7 +163,7 @@ function Dashboard() {
             <StatCard
               label="Total Patients"
               value={loading ? "..." : kpis?.totalPatients}
-              icon="♙"
+              icon=""
               description="Active patient database"
               to="/patients"
             />
@@ -177,7 +177,7 @@ function Dashboard() {
             <StatCard
               label="Registrar Visit Desk"
               value="ACTIVE"
-              icon="📋"
+              icon=""
               description="Intake, Cashier & Routing Hub"
               to="/registrar/desk"
             />
@@ -196,14 +196,14 @@ function Dashboard() {
             <StatCard
               label="Patient Queue"
               value={loading ? "..." : kpis?.patientQueue}
-              icon="🩺"
+              icon=""
               description="Authorized patients in doctor queue"
               to="/doctor/queue"
             />
             <StatCard
               label="Pending Lab Orders"
               value={loading ? "..." : kpis?.pendingLabOrders}
-              icon="🔬"
+              icon=""
               description="Awaiting laboratory processing"
               to="/laboratory"
             />
@@ -222,7 +222,7 @@ function Dashboard() {
             <StatCard
               label="Triage Queue"
               value={loading ? "..." : kpis?.triageQueue}
-              icon="💓"
+              icon=""
               description="Patients waiting for triage"
               to="/nurse/triage"
             />
@@ -236,14 +236,14 @@ function Dashboard() {
             <StatCard
               label="Clinical Procedures"
               value="QUEUE"
-              icon="💉"
+              icon=""
               description="Dressings and minor procedures"
               to="/procedures/queue"
             />
             <StatCard
               label="Inpatient Ward"
               value="BEDS"
-              icon="🛏️"
+              icon=""
               description="Ward census and admissions"
               to="/ward/inpatient"
             />
@@ -255,7 +255,7 @@ function Dashboard() {
             <StatCard
               label="Pending Prescriptions"
               value={loading ? "..." : kpis?.pendingPrescriptions}
-              icon="💊"
+              icon=""
               description="Awaiting payment & dispensing"
               to="/prescriptions"
             />
@@ -269,14 +269,14 @@ function Dashboard() {
             <StatCard
               label="Low Stock Alerts"
               value={loading ? "..." : kpis?.lowStockAlerts}
-              icon="⚠️"
+              icon="Warning:"
               description="Items below reorder level"
               to="/pharmacy/inventory"
             />
             <StatCard
               label="Total Catalog Items"
               value={loading ? "..." : kpis?.totalMedications}
-              icon="📦"
+              icon=""
               description="Active medication types"
               to="/pharmacy/inventory"
             />
@@ -288,14 +288,14 @@ function Dashboard() {
             <StatCard
               label="Pending Lab Orders"
               value={loading ? "..." : kpis?.pendingOrders}
-              icon="🔬"
+              icon=""
               description="Awaiting processing"
               to="/laboratory"
             />
             <StatCard
               label="Specimens Collected"
               value={loading ? "..." : kpis?.specimensCollected}
-              icon="🧪"
+              icon=""
               description="Ready for testing"
               to="/laboratory"
             />
@@ -309,7 +309,7 @@ function Dashboard() {
             <StatCard
               label="Test Catalog"
               value="CATALOG"
-              icon="📋"
+              icon=""
               description="Laboratory diagnostic panels"
               to="/laboratory/catalog"
             />
@@ -321,14 +321,14 @@ function Dashboard() {
             <StatCard
               label="Radiology Queue"
               value="ACTIVE"
-              icon="🩻"
+              icon=""
               description="Authorized X-Ray and Ultrasound scans"
               to="/radiology/queue"
             />
             <StatCard
               label="Patient Directory"
               value="SEARCH"
-              icon="♙"
+              icon=""
               description="View authorized patient charts"
               to="/patients"
             />
@@ -340,21 +340,21 @@ function Dashboard() {
             <StatCard
               label="Operating Theatre"
               value="ACTIVE"
-              icon="🔪"
+              icon=""
               description="Authorized surgical procedures"
               to="/surgery/queue"
             />
             <StatCard
               label="Inpatient Ward"
               value="BEDS"
-              icon="🛏️"
+              icon=""
               description="Post-op inpatient care & beds"
               to="/ward/inpatient"
             />
             <StatCard
               label="Patient Directory"
               value="SEARCH"
-              icon="♙"
+              icon=""
               description="View surgical patients"
               to="/patients"
             />
@@ -366,14 +366,14 @@ function Dashboard() {
             <StatCard
               label="Inpatient Ward"
               value="ACTIVE"
-              icon="🛏️"
+              icon=""
               description="Bed occupancy and admissions"
               to="/ward/inpatient"
             />
             <StatCard
               label="Patient Directory"
               value="SEARCH"
-              icon="♙"
+              icon=""
               description="Inpatient medical records"
               to="/patients"
             />
@@ -385,7 +385,7 @@ function Dashboard() {
             <StatCard
               label="Today's Revenue"
               value={loading ? "..." : formatCurrency(kpis?.todayRevenue || 0)}
-              icon="💳"
+              icon=""
               description="Payments received today"
               to="/billing"
             />
@@ -406,7 +406,7 @@ function Dashboard() {
             <StatCard
               label="Outstanding Total"
               value={loading ? "..." : formatCurrency(kpis?.totalOutstandingBalance || 0)}
-              icon="📊"
+              icon=""
               description="Total hospital receivables"
               to="/billing"
             />

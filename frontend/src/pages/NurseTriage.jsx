@@ -129,7 +129,7 @@ function NurseTriage() {
           <div className="loading-state">Loading triage queue...</div>
         ) : queue.length === 0 ? (
           <div className="empty-state">
-            <div className="empty-state-icon">💓</div>
+            <div className="empty-state-icon"></div>
             <h3>No patients waiting for triage</h3>
             <p>All checked-in patients have been triaged or no patients have arrived yet.</p>
           </div>

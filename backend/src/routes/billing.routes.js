@@ -60,4 +60,10 @@ router.get(
   billingController.getPendingCashierOrders
 );
 
+router.get(
+  "/pending-orders-grouped",
+  authorizeRoles("ADMIN", "FINANCE", "REGISTRAR"),
+  billingController.getPendingCashierOrdersGrouped
+);
+
 module.exports = router;

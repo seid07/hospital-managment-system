@@ -29,6 +29,7 @@ import AdminServicePricing from "./pages/AdminServicePricing";
 import DoctorSchedules from "./pages/DoctorSchedules";
 import AdminAuditLogs from "./pages/AdminAuditLogs";
 import Reports from "./pages/Reports";
+import ReferralQueue from "./pages/ReferralQueue";
 
 function App() {
   return (
@@ -64,6 +65,7 @@ function App() {
             <Route path="/doctor/my-schedule" element={<DoctorSchedules isDoctorSelfView={true} />} />
             <Route path="/encounters/new" element={<ClinicalEncounter />} />
             <Route path="/encounters/:id" element={<ClinicalEncounter />} />
+            <Route path="/doctor/referrals" element={<ReferralQueue />} />
 
             {/* Specialized Clinical Department Queues */}
             <Route path="/radiology/queue" element={<RadiologyQueue />} />

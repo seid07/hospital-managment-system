@@ -30,6 +30,8 @@ function PrescriptionsList() {
 
   // Multi-dispense selection per patient: { [patientId]: Set<rxId> }
   const [selectedRxsByPatient, setSelectedRxsByPatient] = useState({});
+  // Expanded patient profile cards: { [patientId]: boolean }
+  const [expandedPatients, setExpandedPatients] = useState({});
 
   // Payment & Dispense modal for grouped selection
   const [groupDispenseTarget, setGroupDispenseTarget] = useState(null); // { patient, rxs: [...] }
@@ -42,6 +44,14 @@ function PrescriptionsList() {
   // Print modal
   const [printTarget, setPrintTarget] = useState(null);
 
+  // Real-time polling every 10 seconds
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setReloadKey((prev) => prev + 1);
+    }, 10000);
+    return () => clearInterval(interval);
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     async function loadPrescriptions() {
@@ -49,7 +59,7 @@ function PrescriptionsList() {
         setError("");
         const res = await getPrescriptions({
           page,
-          limit: 30,
+          limit: 50,
           status: statusFilter,
           search: debouncedSearch.trim(),
         });
@@ -76,6 +86,13 @@ function PrescriptionsList() {
   function handleSearchSubmit(e) {
     e.preventDefault();
     setPage(1);
+  }
+
+  function togglePatientExpand(patientId) {
+    setExpandedPatients((prev) => ({
+      ...prev,
+      [patientId]: !prev[patientId],
+    }));
   }
 
   // Toggle selection of an individual prescription for a patient
@@ -147,8 +164,6 @@ function PrescriptionsList() {
   }
 
   function handleOpenDispense(rx) {
-    // Route single-row "Pay & Dispense" through the same working group-dispense
-    // modal used for multi-select, just pre-selected to this one prescription.
     setGroupDispenseTarget({
       patient: {
         patient_id: rx.patient_id,
@@ -166,7 +181,7 @@ function PrescriptionsList() {
     setDispenseError("");
   }
 
-  // Group prescriptions by patient
+  // Group prescriptions by patient & calculate latest order time
   const patientGroups = prescriptions.reduce((acc, rx) => {
     const key = rx.patient_id;
     if (!acc[key]) {
@@ -178,14 +193,21 @@ function PrescriptionsList() {
         doctor_first_name: rx.doctor_first_name,
         doctor_last_name: rx.doctor_last_name,
         created_at: rx.created_at,
+        latest_order_at: rx.created_at,
         prescriptions: [],
       };
     }
     acc[key].prescriptions.push(rx);
+    if (new Date(rx.created_at) > new Date(acc[key].latest_order_at)) {
+      acc[key].latest_order_at = rx.created_at;
+    }
     return acc;
   }, {});
 
-  const groupedList = Object.values(patientGroups);
+  // Sort patients so the one with the latest order is at the very TOP
+  const groupedList = Object.values(patientGroups).sort(
+    (a, b) => new Date(b.latest_order_at) - new Date(a.latest_order_at)
+  );
 
   return (
     <AppShell>
@@ -194,13 +216,21 @@ function PrescriptionsList() {
           <p className="page-eyebrow">Pharmacy & Formulary Station</p>
           <h1>Medication Prescriptions & Dispensing</h1>
           <p className="page-description">
-            Grouped patient prescriptions, partial selection payment, dosage validation, and inventory deduction.
+            Grouped patient prescriptions queue (sorted by latest doctor order in real-time). Click a patient to view and select medicines.
           </p>
         </div>
 
-        <div className="page-actions">
+        <div className="page-actions" style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+          <button
+            type="button"
+            className="button button-secondary"
+            onClick={() => setReloadKey((k) => k + 1)}
+            style={{ fontSize: "12px" }}
+          >
+            ↻ Live Refresh
+          </button>
           <Link to="/pharmacy/inventory" className="button button-secondary">
-            📦 Formulary Inventory
+             Formulary Inventory
           </Link>
         </div>
       </div>
@@ -238,21 +268,22 @@ function PrescriptionsList() {
         </form>
       </section>
 
-      {/* Grouped Prescription Cards by Patient */}
+      {/* Grouped Prescription Cards by Patient Profile */}
       <section>
         {loading ? (
           <div className="loading-state">Loading pharmacy queue...</div>
         ) : groupedList.length === 0 ? (
           <div className="card">
             <div className="empty-state">
-              <div className="empty-state-icon">💊</div>
+              <div className="empty-state-icon"></div>
               <h3>No prescriptions found</h3>
               <p>Doctor prescribed medications will appear here automatically grouped by patient.</p>
             </div>
           </div>
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: "18px" }}>
-            {groupedList.map((group) => {
+          <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+            {groupedList.map((group, index) => {
+              const isExpanded = expandedPatients[group.patient_id] !== undefined ? expandedPatients[group.patient_id] : (index === 0);
               const selectedIds = selectedRxsByPatient[group.patient_id] || new Set();
               const activeRxs = group.prescriptions.filter((r) => ["ACTIVE", "PAID"].includes(r.status));
               const selectedRxs = group.prescriptions.filter((r) => selectedIds.has(r.id));
@@ -261,160 +292,252 @@ function PrescriptionsList() {
                 const qty = parseInt(r.quantity || 1, 10);
                 return sum + price * qty;
               }, 0);
+              const totalActiveDue = activeRxs.reduce((sum, r) => {
+                const price = parseFloat(r.unit_price || 25);
+                const qty = parseInt(r.quantity || 1, 10);
+                return sum + price * qty;
+              }, 0);
               const allActiveSelected = activeRxs.length > 0 && activeRxs.every((r) => selectedIds.has(r.id));
 
               return (
-                <div key={group.patient_id} className="card" style={{ borderLeft: "4px solid var(--primary)", padding: "18px" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "14px", flexWrap: "wrap", gap: "10px" }}>
-                    <div>
-                      <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                        <h2 style={{ margin: 0, fontSize: "17px", fontWeight: 700 }}>
-                          <Link to={`/patients/${group.patient_id}`} style={{ color: "var(--text)" }}>
-                            {group.patient_first_name} {group.patient_last_name}
-                          </Link>
-                        </h2>
-                        <span style={{ fontFamily: "monospace", fontSize: "12px", background: "var(--primary-light)", color: "var(--primary)", padding: "2px 6px", borderRadius: "4px", fontWeight: 600 }}>
-                          {group.patient_number}
-                        </span>
+                <div
+                  key={group.patient_id}
+                  className="card"
+                  style={{
+                    borderLeft: `4px solid ${activeRxs.length > 0 ? "var(--primary)" : "var(--border)"}`,
+                    padding: "0",
+                    overflow: "hidden",
+                  }}
+                >
+                  {/* Patient Profile Header (Click to expand/collapse) */}
+                  <div
+                    onClick={() => togglePatientExpand(group.patient_id)}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      padding: "16px 20px",
+                      background: isExpanded ? "var(--surface-muted)" : "var(--surface)",
+                      cursor: "pointer",
+                      borderBottom: isExpanded ? "1px solid var(--border)" : "none",
+                      flexWrap: "wrap",
+                      gap: "12px",
+                      userSelect: "none",
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>
+                      <div
+                        style={{
+                          width: "42px",
+                          height: "42px",
+                          borderRadius: "50%",
+                          background: "linear-gradient(135deg, var(--primary), var(--primary-dark))",
+                          color: "#ffffff",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          fontWeight: 700,
+                          fontSize: "16px",
+                          flexShrink: 0,
+                        }}
+                      >
+                        {group.patient_first_name ? group.patient_first_name[0].toUpperCase() : "P"}
                       </div>
-                      <div style={{ fontSize: "12px", color: "var(--text-muted)", marginTop: "4px" }}>
-                        Prescribing Doctor: <strong>Dr. {group.doctor_first_name} {group.doctor_last_name}</strong> • Order Date: {new Date(group.created_at).toLocaleDateString()}
+                      <div>
+                        <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+                          <h2 style={{ margin: 0, fontSize: "16px", fontWeight: 700, color: "var(--text)" }}>
+                            {group.patient_first_name} {group.patient_last_name}
+                          </h2>
+                          <span style={{ fontFamily: "monospace", fontSize: "12px", background: "var(--primary-light)", color: "var(--primary)", padding: "2px 8px", borderRadius: "4px", fontWeight: 600 }}>
+                            {group.patient_number}
+                          </span>
+                          {index === 0 && (
+                            <span style={{ fontSize: "10px", background: "#fef3c7", color: "#92400e", padding: "2px 6px", borderRadius: "4px", fontWeight: 700 }}>
+                              LATEST ORDER
+                            </span>
+                          )}
+                        </div>
+                        <div style={{ fontSize: "12px", color: "var(--text-muted)", marginTop: "4px" }}>
+                          Doctor: <strong>Dr. {group.doctor_first_name} {group.doctor_last_name}</strong> • Last Ordered:{" "}
+                          <span style={{ color: "var(--primary-dark)", fontWeight: 600 }}>
+                            {new Date(group.latest_order_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} ({new Date(group.latest_order_at).toLocaleDateString()})
+                          </span>
+                        </div>
                       </div>
                     </div>
 
-                    {activeRxs.length > 1 && ["ADMIN", "PHARMACIST"].includes(user?.role) && (
-                      <button
-                        type="button"
-                        className="button button-secondary"
-                        style={{ fontSize: "11px", padding: "4px 8px" }}
-                        onClick={() => handleToggleSelectAll(group.patient_id, group.prescriptions)}
-                      >
-                        {allActiveSelected ? "Deselect All" : "Select All Active"}
-                      </button>
-                    )}
+                    <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>
+                      <div style={{ textAlign: "right" }}>
+                        <div style={{ fontSize: "11px", color: "var(--text-muted)", textTransform: "uppercase" }}>
+                          {group.prescriptions.length} Med{group.prescriptions.length !== 1 ? "s" : ""} ({activeRxs.length} pending)
+                        </div>
+                        <div style={{ fontSize: "15px", fontWeight: 700, color: activeRxs.length > 0 ? "var(--success)" : "var(--text-muted)", fontFamily: "monospace" }}>
+                          {formatCurrency(totalActiveDue)}
+                        </div>
+                      </div>
+
+                      <span style={{ fontSize: "12px", fontWeight: 600, color: "var(--primary)", background: "var(--primary-light)", padding: "6px 12px", borderRadius: "6px" }}>
+                        {isExpanded ? "▲ Hide Medicines" : "▼ View Medicines"}
+                      </span>
+                    </div>
                   </div>
 
-                  <div className="table-wrapper">
-                    <table className="data-table">
-                      <thead>
-                        <tr>
-                          {["ADMIN", "PHARMACIST"].includes(user?.role) && <th style={{ width: "40px" }}>Select</th>}
-                          <th>Rx #</th>
-                          <th>Medication & Regimen</th>
-                          <th>Qty</th>
-                          <th>Stock Available</th>
-                          <th>Unit Price</th>
-                          <th>Total Due</th>
-                          <th>Status</th>
-                          <th>Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {group.prescriptions.map((rx) => {
-                          const unitPrice = parseFloat(rx.unit_price || 25);
-                          const qty = parseInt(rx.quantity || 1, 10);
-                          const lineTotal = unitPrice * qty;
-                          const isSelected = selectedIds.has(rx.id);
-                          const isLowStock = rx.current_stock !== undefined && rx.current_stock !== null && rx.current_stock < 15;
-                          const canSelect = ["ACTIVE", "PAID"].includes(rx.status) && ["ADMIN", "PHARMACIST"].includes(user?.role);
-
-                          return (
-                            <tr key={rx.id} style={{ background: isSelected ? "var(--primary-light)" : "transparent" }}>
-                              {["ADMIN", "PHARMACIST"].includes(user?.role) && (
-                                <td>
-                                  {canSelect ? (
-                                    <input
-                                      type="checkbox"
-                                      checked={isSelected}
-                                      onChange={() => handleToggleRx(group.patient_id, rx.id)}
-                                      style={{ width: "16px", height: "16px", cursor: "pointer" }}
-                                    />
-                                  ) : (
-                                    <span style={{ color: "var(--text-muted)" }}>—</span>
-                                  )}
-                                </td>
-                              )}
-                              <td>
-                                <strong style={{ fontFamily: "monospace", color: "var(--primary)" }}>
-                                  {rx.prescription_number}
-                                </strong>
-                              </td>
-                              <td>
-                                <strong>{rx.medication_name}</strong> {rx.dosage && `(${rx.dosage})`}
-                                <br />
-                                <small style={{ color: "var(--text-muted)" }}>
-                                  {rx.frequency} • {rx.route} • {rx.duration || "as directed"}
-                                  {rx.instructions && ` • Note: ${rx.instructions}`}
-                                </small>
-                              </td>
-                              <td style={{ fontWeight: 700 }}>{rx.quantity}</td>
-                              <td>
-                                {rx.current_stock !== undefined && rx.current_stock !== null ? (
-                                  <span style={{ fontWeight: 600, color: isLowStock ? "var(--danger)" : "var(--success)" }}>
-                                    {rx.current_stock} {isLowStock && <span className="badge badge-danger" style={{ fontSize: "9px", marginLeft: "4px" }}>LOW &lt; 15</span>}
-                                  </span>
-                                ) : (
-                                  <span style={{ color: "var(--text-muted)" }}>—</span>
-                                )}
-                              </td>
-                              <td style={{ fontFamily: "monospace" }}>{formatCurrency(unitPrice)}</td>
-                              <td>
-                                <strong style={{ color: "var(--success)", fontFamily: "monospace" }}>
-                                  {formatCurrency(lineTotal)}
-                                </strong>
-                              </td>
-                              <td>
-                                <StatusBadge status={rx.status} />
-                              </td>
-                              <td>
-                                <div style={{ display: "flex", gap: "6px" }}>
-                                  {["ACTIVE", "PAID"].includes(rx.status) && ["ADMIN", "PHARMACIST"].includes(user?.role) && (
-                                    <button
-                                      type="button"
-                                      className="button button-primary"
-                                      style={{ padding: "3px 8px", fontSize: "11px", fontWeight: 600 }}
-                                      onClick={() => handleOpenDispense(rx)}
-                                    >
-                                      {rx.status === "ACTIVE" ? "Pay & Dispense" : "Dispense"}
-                                    </button>
-                                  )}
-                                  <button
-                                    type="button"
-                                    className="button button-secondary"
-                                    style={{ padding: "3px 8px", fontSize: "11px" }}
-                                    onClick={() => setPrintTarget(rx)}
-                                  >
-                                    Print
-                                  </button>
-                                </div>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-
-                  {/* Summary & Group Actions for Patient */}
-                  {["ADMIN", "PHARMACIST"].includes(user?.role) && activeRxs.length > 0 && (
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "14px", padding: "10px 14px", background: "var(--surface-sunken)", borderRadius: "6px", flexWrap: "wrap", gap: "10px" }}>
-                      <div style={{ fontSize: "13px" }}>
-                        Selected Medications: <strong>{selectedRxs.length}</strong> of {activeRxs.length}
-                        {selectedRxs.length > 0 && (
-                          <span style={{ marginLeft: "14px" }}>
-                            Selected Total Due: <strong style={{ color: "var(--success)", fontSize: "15px", fontFamily: "monospace" }}>{formatCurrency(selectedTotal)}</strong>
-                          </span>
+                  {/* Expanded Medicine List with Checkboxes & Total Calculation */}
+                  {isExpanded && (
+                    <div style={{ padding: "18px 20px" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px", flexWrap: "wrap", gap: "8px" }}>
+                        <div style={{ fontSize: "13px", fontWeight: 600, color: "var(--text-secondary)" }}>
+                          Prescribed Medication Items:
+                        </div>
+                        {activeRxs.length > 1 && ["ADMIN", "PHARMACIST"].includes(user?.role) && (
+                          <button
+                            type="button"
+                            className="button button-secondary"
+                            style={{ fontSize: "11px", padding: "4px 10px" }}
+                            onClick={() => handleToggleSelectAll(group.patient_id, group.prescriptions)}
+                          >
+                            {allActiveSelected ? "Deselect All" : "Select All Active"}
+                          </button>
                         )}
                       </div>
 
-                      <button
-                        type="button"
-                        className="button button-primary"
-                        disabled={selectedRxs.length === 0 || dispensing}
-                        onClick={() => handleOpenGroupDispense(group)}
-                      >
-                        💳 Pay & Dispense Selected ({selectedRxs.length}) →
-                      </button>
+                      <div className="table-wrapper" style={{ margin: 0 }}>
+                        <table className="data-table">
+                          <thead>
+                            <tr>
+                              {["ADMIN", "PHARMACIST"].includes(user?.role) && <th style={{ width: "45px" }}>Select</th>}
+                              <th>Rx #</th>
+                              <th>Medication & Regimen</th>
+                              <th>Qty</th>
+                              <th>Stock</th>
+                              <th>Unit Price</th>
+                              <th>Total Due</th>
+                              <th>Status</th>
+                              <th>Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {group.prescriptions.map((rx) => {
+                              const unitPrice = parseFloat(rx.unit_price || 25);
+                              const qty = parseInt(rx.quantity || 1, 10);
+                              const lineTotal = unitPrice * qty;
+                              const isSelected = selectedIds.has(rx.id);
+                              const isLowStock = rx.current_stock !== undefined && rx.current_stock !== null && rx.current_stock < 15;
+                              const canSelect = ["ACTIVE", "PAID"].includes(rx.status) && ["ADMIN", "PHARMACIST"].includes(user?.role);
+
+                              return (
+                                <tr key={rx.id} style={{ background: isSelected ? "var(--primary-light)" : "transparent" }}>
+                                  {["ADMIN", "PHARMACIST"].includes(user?.role) && (
+                                    <td>
+                                      {canSelect ? (
+                                        <input
+                                          type="checkbox"
+                                          checked={isSelected}
+                                          onChange={() => handleToggleRx(group.patient_id, rx.id)}
+                                          style={{ width: "16px", height: "16px", cursor: "pointer" }}
+                                        />
+                                      ) : (
+                                        <span style={{ color: "var(--text-muted)" }}>—</span>
+                                      )}
+                                    </td>
+                                  )}
+                                  <td>
+                                    <strong style={{ fontFamily: "monospace", color: "var(--primary)" }}>
+                                      {rx.prescription_number}
+                                    </strong>
+                                  </td>
+                                  <td>
+                                    <strong>{rx.medication_name}</strong> {rx.dosage && `(${rx.dosage})`}
+                                    <br />
+                                    <small style={{ color: "var(--text-muted)" }}>
+                                      {rx.frequency} • {rx.route} • {rx.duration || "as directed"}
+                                      {rx.instructions && ` • Note: ${rx.instructions}`}
+                                    </small>
+                                  </td>
+                                  <td style={{ fontWeight: 700 }}>{rx.quantity}</td>
+                                  <td>
+                                    {rx.current_stock !== undefined && rx.current_stock !== null ? (
+                                      <span style={{ fontWeight: 600, color: isLowStock ? "var(--danger)" : "var(--success)" }}>
+                                        {rx.current_stock} {isLowStock && <span className="badge badge-danger" style={{ fontSize: "9px", marginLeft: "4px" }}>LOW &lt; 15</span>}
+                                      </span>
+                                    ) : (
+                                      <span style={{ color: "var(--text-muted)" }}>—</span>
+                                    )}
+                                  </td>
+                                  <td style={{ fontFamily: "monospace" }}>{formatCurrency(unitPrice)}</td>
+                                  <td>
+                                    <strong style={{ color: "var(--success)", fontFamily: "monospace" }}>
+                                      {formatCurrency(lineTotal)}
+                                    </strong>
+                                  </td>
+                                  <td>
+                                    <StatusBadge status={rx.status} />
+                                  </td>
+                                  <td>
+                                    <div style={{ display: "flex", gap: "6px" }}>
+                                      {["ACTIVE", "PAID"].includes(rx.status) && ["ADMIN", "PHARMACIST"].includes(user?.role) && (
+                                        <button
+                                          type="button"
+                                          className="button button-primary"
+                                          style={{ padding: "3px 8px", fontSize: "11px", fontWeight: 600 }}
+                                          onClick={() => handleOpenDispense(rx)}
+                                        >
+                                          {rx.status === "ACTIVE" ? "Pay & Dispense" : "Dispense"}
+                                        </button>
+                                      )}
+                                      <button
+                                        type="button"
+                                        className="button button-secondary"
+                                        style={{ padding: "3px 8px", fontSize: "11px" }}
+                                        onClick={() => setPrintTarget(rx)}
+                                      >
+                                        Print
+                                      </button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      {/* Summary & Real-time Total Calculation for Selected Medicines */}
+                      {["ADMIN", "PHARMACIST"].includes(user?.role) && activeRxs.length > 0 && (
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            marginTop: "14px",
+                            padding: "12px 16px",
+                            background: "var(--surface-sunken)",
+                            borderRadius: "8px",
+                            border: "1px solid var(--border)",
+                            flexWrap: "wrap",
+                            gap: "10px",
+                          }}
+                        >
+                          <div style={{ fontSize: "13px" }}>
+                            Selected Medications: <strong>{selectedRxs.length}</strong> of {activeRxs.length}
+                            <span style={{ marginLeft: "16px" }}>
+                              Selected Total:{" "}
+                              <strong style={{ color: "var(--success)", fontSize: "16px", fontFamily: "monospace" }}>
+                                {formatCurrency(selectedTotal)}
+                              </strong>
+                            </span>
+                          </div>
+
+                          <button
+                            type="button"
+                            className="button button-primary"
+                            disabled={selectedRxs.length === 0 || dispensing}
+                            onClick={() => handleOpenGroupDispense(group)}
+                          >
+                            Collect Payment & Dispense Selected ({selectedRxs.length}) →
+                          </button>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

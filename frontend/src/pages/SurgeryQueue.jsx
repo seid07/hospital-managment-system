@@ -111,7 +111,7 @@ export default function SurgeryQueue() {
             className="button button-secondary"
             onClick={() => setRefreshKey((k) => k + 1)}
           >
-            🔄 Refresh Queue
+             Refresh Queue
           </button>
         </div>
       </div>
@@ -148,7 +148,7 @@ export default function SurgeryQueue() {
           <div className="loading-state">Loading surgery queue...</div>
         ) : filteredQueue.length === 0 ? (
           <div className="empty-state">
-            <div className="empty-state-icon">🔪</div>
+            <div className="empty-state-icon"></div>
             <h3>{searchInput ? "No matching procedures found" : "No surgical procedures in queue"}</h3>
             <p>{searchInput ? "Try a different search term." : "Authorized surgery orders will appear here automatically."}</p>
           </div>

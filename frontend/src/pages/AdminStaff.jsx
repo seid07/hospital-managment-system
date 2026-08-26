@@ -5,7 +5,7 @@ import Modal from "../components/common/Modal";
 import { getStaff, getRoles, createStaff, updateStaff, updateStaffStatus } from "../services/staffService";
 import { createSchedule } from "../services/scheduleService";
 import { validateEthiopianPhone } from "../utils/phone";
-import { checkPasswordStrength } from "../utils/password";
+import { checkPasswordStrength, generateSecurePassword } from "../utils/password";
 import { useDebounce } from "../hooks/useDebounce";
 
 const DAYS = [
@@ -369,36 +369,53 @@ function AdminStaff() {
             />
           </div>
 
-          {/* Password with Strength Meter and Eye Toggle */}
           <div className="form-field">
             <label htmlFor="password">Temporary Password *</label>
-            <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
-              <input
-                id="password"
-                name="password"
-                type={showPassword ? "text" : "password"}
-                placeholder="Min 8 chars with upper, lower, digit, symbol"
-                value={form.password}
-                onChange={handleChange}
-                required
-                style={{ paddingRight: "42px" }}
-              />
+            <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+              <div style={{ position: "relative", flex: 1 }}>
+                <input
+                  id="password"
+                  name="password"
+                  type={showPassword ? "text" : "password"}
+                  placeholder="Min 8 chars with upper, lower, digit, symbol"
+                  value={form.password}
+                  onChange={handleChange}
+                  required
+                  style={{ paddingRight: "42px", width: "100%" }}
+                />
+                <button
+                  type="button"
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                  onClick={() => setShowPassword(!showPassword)}
+                  style={{
+                    position: "absolute",
+                    right: "10px",
+                    top: "50%",
+                    transform: "translateY(-50%)",
+                    background: "none",
+                    border: "none",
+                    color: "var(--text-muted)",
+                    cursor: "pointer",
+                    fontSize: "14px",
+                    padding: "4px",
+                    lineHeight: 1,
+                  }}
+                >
+                  {showPassword ? "⊙" : "○"}
+                </button>
+              </div>
               <button
                 type="button"
-                aria-label={showPassword ? "Hide password" : "Show password"}
-                onClick={() => setShowPassword(!showPassword)}
-                style={{
-                  position: "absolute",
-                  right: "10px",
-                  background: "none",
-                  border: "none",
-                  color: "var(--text-muted)",
-                  cursor: "pointer",
-                  fontSize: "16px",
-                  padding: "4px",
+                className="button button-primary"
+                style={{ whiteSpace: "nowrap", fontSize: "12px", padding: "8px 14px" }}
+                onClick={() => {
+                  const pwd = generateSecurePassword();
+                  setForm((prev) => ({ ...prev, password: pwd }));
+                  setShowPassword(true);
                 }}
+                title="Autogenerate a strong, compliant random password"
               >
-                {showPassword ? "👁️" : "🙈"}
+                ⟳ Autogenerate Password
               </button>
             </div>
 
@@ -626,7 +643,7 @@ function AdminStaff() {
                           type="button"
                           onClick={() => navigate(`/admin/schedules?staffId=${member.id}`)}
                         >
-                          📅 Schedule
+                           Schedule
                         </button>
                         <button
                           className="button button-secondary"

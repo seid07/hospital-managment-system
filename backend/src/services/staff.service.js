@@ -64,6 +64,14 @@ async function getStaff(query = {}) {
 }
 
 async function createStaff(data, createdByUserId) {
+  // Enforce single role — reject if multiple roles were passed
+  if (Array.isArray(data.role)) {
+    throw new Error("MULTIPLE_ROLES_NOT_ALLOWED: Each staff member must have exactly one role.");
+  }
+  if (!data.role || typeof data.role !== "string") {
+    throw new Error("ROLE_REQUIRED: A valid role must be specified.");
+  }
+
   const passwordCheck = validatePasswordStrength(data.password);
   if (!passwordCheck.isValid) {
     throw new Error(`WEAK_PASSWORD: ${passwordCheck.message}`);

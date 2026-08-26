@@ -22,6 +22,7 @@ function AppointmentAvailability() {
   const [selectedDoctorId, setSelectedDoctorId] = useState("");
   const [selectedDate, setSelectedDate] = useState("");
   const [selectedSlotKey, setSelectedSlotKey] = useState("");
+  const [activeDoctorDate, setActiveDoctorDate] = useState("");
 
   // Option B: Upcoming availability schedule matrix
   const [upcomingSchedule, setUpcomingSchedule] = useState(null);
@@ -241,7 +242,7 @@ function AppointmentAvailability() {
               setSelectedSlotKey("");
             }}
           >
-            👨‍⚕️ Search by Doctor (Option B)
+            Doctor → Dates → Slot
           </button>
           <button
             type="button"
@@ -251,7 +252,7 @@ function AppointmentAvailability() {
               setSelectedSlotKey("");
             }}
           >
-            📅 Search by Date (Option A)
+            Date → Doctor → Slot
           </button>
         </div>
       </div>
@@ -265,7 +266,7 @@ function AppointmentAvailability() {
       {success && (
         <div style={{ marginBottom: "24px" }}>
           <div className="alert alert-success" role="status" style={{ marginBottom: "12px" }}>
-            <strong>✓ Appointment booked successfully! Ref: {success.appointment_number}</strong>
+            <strong>Appointment booked successfully! Ref: {success.appointment_number}</strong>
           </div>
 
           <PrintableDocument
@@ -351,6 +352,7 @@ function AppointmentAvailability() {
                       setSelectedDoctorId(e.target.value);
                       setSelectedSlotKey("");
                       setSelectedDate("");
+                      setActiveDoctorDate("");
                     }}
                     disabled={doctorsLoading}
                   >
@@ -368,66 +370,118 @@ function AppointmentAvailability() {
                 {selectedDoctorId && !upcomingLoading && upcomingSchedule && (
                   <div>
                     <h3 style={{ fontSize: "14px", fontWeight: 700, margin: "16px 0 10px" }}>
-                      Upcoming Available Dates & Consultation Slots for Dr. {upcomingSchedule.doctor?.first_name}{" "}
+                      Available Dates for Dr. {upcomingSchedule.doctor?.first_name}{" "}
                       {upcomingSchedule.doctor?.last_name}:
                     </h3>
 
-                    {upcomingSchedule.availableDates.length === 0 ? (
-                      <div className="empty-state">
-                        <p>Dr. {upcomingSchedule.doctor?.first_name} {upcomingSchedule.doctor?.last_name} has no available appointment slots in the next 14 days.</p>
-                      </div>
-                    ) : (
-                      <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
-                        {upcomingSchedule.availableDates.map((dayGroup) => (
-                          <div
-                            key={dayGroup.date}
-                            style={{
+                    {(() => {
+                      const availableDays = upcomingSchedule.availableDates.filter(
+                        (d) => d.hasAvailableSlots && d.slots.some((s) => s.available)
+                      );
+                      const activeGroup = availableDays.find((d) => d.date === activeDoctorDate);
+
+                      if (availableDays.length === 0) {
+                        return (
+                          <div className="empty-state">
+                            <p>Dr. {upcomingSchedule.doctor?.first_name} {upcomingSchedule.doctor?.last_name} has no available appointment dates in the next 14 days.</p>
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div>
+                          {/* Step 1: Display Available Days with dates in bracket */}
+                          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: "10px", marginBottom: "16px" }}>
+                            {availableDays.map((dayGroup) => {
+                              const isActive = activeDoctorDate === dayGroup.date;
+                              const availableSlotCount = dayGroup.slots.filter((s) => s.available).length;
+                              return (
+                                <button
+                                  key={dayGroup.date}
+                                  type="button"
+                                  onClick={() => {
+                                    setActiveDoctorDate(dayGroup.date);
+                                    if (selectedDate !== dayGroup.date) {
+                                      setSelectedSlotKey("");
+                                    }
+                                  }}
+                                  className="card"
+                                  style={{
+                                    padding: "12px 14px",
+                                    border: isActive ? "2px solid var(--primary)" : "1px solid var(--border)",
+                                    background: isActive ? "var(--primary-light)" : "var(--surface)",
+                                    borderRadius: "8px",
+                                    textAlign: "left",
+                                    cursor: "pointer",
+                                    transition: "all 0.15s ease",
+                                    boxShadow: isActive ? "0 2px 8px rgba(79, 70, 229, 0.15)" : "none",
+                                  }}
+                                >
+                                  <div style={{ fontWeight: 700, fontSize: "13px", color: isActive ? "var(--primary-dark)" : "var(--text)" }}>
+                                    {dayGroup.formattedDate.split(",")[0]} ({dayGroup.date})
+                                  </div>
+                                  <div style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "4px" }}>
+                                    {availableSlotCount} available slot{availableSlotCount !== 1 ? "s" : ""}
+                                  </div>
+                                </button>
+                              );
+                            })}
+                          </div>
+
+                          {/* Step 2: Display available time slots for the clicked date */}
+                          {activeGroup ? (
+                            <div style={{
                               border: "1px solid var(--border)",
                               borderRadius: "8px",
-                              padding: "12px",
-                              background: dayGroup.hasAvailableSlots ? "var(--surface)" : "var(--surface-muted)",
-                            }}
-                          >
-                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
-                              <strong style={{ fontSize: "13px", color: "var(--primary-dark)" }}>
-                                📅 {dayGroup.formattedDate} ({dayGroup.date})
-                              </strong>
-                              <span style={{ fontSize: "11px", color: "var(--text-secondary)" }}>
-                                {dayGroup.slots.filter((s) => s.available).length} slots available
-                              </span>
-                            </div>
+                              padding: "16px",
+                              background: "var(--surface)",
+                              marginTop: "8px",
+                            }}>
+                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+                                <strong style={{ fontSize: "13px", color: "var(--primary-dark)" }}>
+                                  Available Time Slots on {activeGroup.formattedDate} ({activeGroup.date}):
+                                </strong>
+                                <span style={{ fontSize: "11px", color: "var(--text-secondary)" }}>
+                                  Click a time slot to select
+                                </span>
+                              </div>
 
-                            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(110px, 1fr))", gap: "8px" }}>
-                              {dayGroup.slots.map((slot) => {
-                                const slotKey = `${dayGroup.date}_${slot.startTime}-${slot.endTime}`;
-                                const isSelected = selectedSlotKey === slotKey;
-                                return (
-                                  <button
-                                    key={slotKey}
-                                    type="button"
-                                    disabled={!slot.available}
-                                    onClick={() => handleSlotSelect(dayGroup.date, slot)}
-                                    className={`slot-pill ${isSelected ? "slot-pill-selected" : slot.available ? "slot-pill-available" : "slot-pill-booked"}`}
-                                    style={{
-                                      padding: "8px",
-                                      borderRadius: "6px",
-                                      border: `1px solid ${isSelected ? "var(--primary)" : slot.available ? "#cbd5e1" : "#e2e8f0"}`,
-                                      background: isSelected ? "var(--primary)" : slot.available ? "#f8fafc" : "#f1f5f9",
-                                      color: isSelected ? "#ffffff" : slot.available ? "var(--text)" : "var(--text-muted)",
-                                      cursor: slot.available ? "pointer" : "not-allowed",
-                                      fontWeight: isSelected ? 700 : 500,
-                                      fontSize: "12px",
-                                    }}
-                                  >
-                                    {slot.startTime} – {slot.endTime}
-                                  </button>
-                                );
-                              })}
+                              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(110px, 1fr))", gap: "8px" }}>
+                                {activeGroup.slots.map((slot) => {
+                                  const slotKey = `${activeGroup.date}_${slot.startTime}-${slot.endTime}`;
+                                  const isSelected = selectedSlotKey === slotKey;
+                                  return (
+                                    <button
+                                      key={slotKey}
+                                      type="button"
+                                      disabled={!slot.available}
+                                      onClick={() => handleSlotSelect(activeGroup.date, slot)}
+                                      className={`slot-pill ${isSelected ? "slot-pill-selected" : slot.available ? "slot-pill-available" : "slot-pill-booked"}`}
+                                      style={{
+                                        padding: "8px",
+                                        borderRadius: "6px",
+                                        border: `1px solid ${isSelected ? "var(--primary)" : slot.available ? "#cbd5e1" : "#e2e8f0"}`,
+                                        background: isSelected ? "var(--primary)" : slot.available ? "#f8fafc" : "#f1f5f9",
+                                        color: isSelected ? "#ffffff" : slot.available ? "var(--text)" : "var(--text-muted)",
+                                        cursor: slot.available ? "pointer" : "not-allowed",
+                                        fontWeight: isSelected ? 700 : 500,
+                                        fontSize: "12px",
+                                      }}
+                                    >
+                                      {slot.startTime} – {slot.endTime}
+                                    </button>
+                                  );
+                                })}
+                              </div>
                             </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
+                          ) : (
+                            <p style={{ fontSize: "12px", color: "var(--text-muted)", fontStyle: "italic" }}>
+                              Click on an available date above to view its consultation time slots.
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                 )}
               </div>

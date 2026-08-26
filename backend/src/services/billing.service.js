@@ -967,6 +967,113 @@ async function reversePayment(paymentId, { reason }, userId) {
   }
 }
 
+/**
+ * Group pending cashier service orders by patient.
+ * Returns one entry per patient with their nested pending orders.
+ * Sorted by latest_order_at DESC (newest patient activity first).
+ */
+async function getPendingCashierOrdersGrouped(query = {}) {
+  const { search } = query;
+  const params = [];
+  let searchClause = "";
+
+  if (search) {
+    params.push(`%${search.trim()}%`);
+    searchClause = ` AND (p.first_name ILIKE $${params.length} OR p.last_name ILIKE $${params.length} OR p.patient_number ILIKE $${params.length} OR so.order_number ILIKE $${params.length})`;
+  }
+
+  // Fetch all pending non-pharmacy orders
+  const ordersRes = await pool.query(
+    `SELECT
+       so.id AS service_order_id,
+       so.order_number,
+       so.price,
+       so.status AS payment_status,
+       so.clinical_notes,
+       so.created_at,
+       so.visit_id,
+       so.invoice_id,
+       s.name AS service_name,
+       s.code AS service_code,
+       s.category AS service_category,
+       d.name AS department_name,
+       d.code AS department_code,
+       p.id AS patient_id,
+       p.patient_number,
+       p.first_name AS patient_first_name,
+       p.last_name AS patient_last_name,
+       p.phone AS patient_phone,
+       doc.first_name AS doctor_first_name,
+       doc.last_name AS doctor_last_name
+     FROM service_orders so
+     JOIN services s ON so.service_id = s.id
+     JOIN departments d ON so.department_id = d.id
+     JOIN patients p ON so.patient_id = p.id
+     LEFT JOIN staff doc ON so.doctor_id = doc.id
+     WHERE so.status = 'WAITING_PAYMENT'
+       AND s.payment_location != 'PHARMACY'
+       AND p.is_active = TRUE
+       ${searchClause}
+     ORDER BY so.created_at DESC`,
+    params
+  );
+
+  // Group by patient in JS
+  const patientMap = new Map();
+  for (const row of ordersRes.rows) {
+    const pid = row.patient_id;
+    if (!patientMap.has(pid)) {
+      patientMap.set(pid, {
+        patient_id: pid,
+        patient_number: row.patient_number,
+        patient_first_name: row.patient_first_name,
+        patient_last_name: row.patient_last_name,
+        patient_phone: row.patient_phone,
+        latest_order_at: row.created_at,
+        pending_count: 0,
+        orders: [],
+      });
+    }
+    const entry = patientMap.get(pid);
+    entry.orders.push(row);
+    entry.pending_count += 1;
+    // Keep latest order time
+    if (new Date(row.created_at) > new Date(entry.latest_order_at)) {
+      entry.latest_order_at = row.created_at;
+    }
+  }
+
+  // Sort patients by latest_order_at DESC
+  return Array.from(patientMap.values()).sort(
+    (a, b) => new Date(b.latest_order_at) - new Date(a.latest_order_at)
+  );
+}
+
+/**
+ * Check whether a patient's registration card service order has been paid.
+ */
+async function getRegistrationCardStatus(patientId) {
+  const res = await pool.query(
+    `SELECT so.id, so.status, so.price, s.name AS service_name
+     FROM service_orders so
+     JOIN services s ON so.service_id = s.id
+     WHERE so.patient_id = $1 AND s.code = 'ADMIN-REGISTRATION'
+     ORDER BY so.created_at DESC
+     LIMIT 1`,
+    [patientId]
+  );
+  if (res.rows.length === 0) return { exists: false, paid: false };
+  const order = res.rows[0];
+  return {
+    exists: true,
+    paid: order.status === "PAID" || order.status === "COMPLETED",
+    status: order.status,
+    serviceOrderId: order.id,
+    price: order.price,
+    serviceName: order.service_name,
+  };
+}
+
 module.exports = {
   getBillableServices,
   addBillableService,
@@ -976,5 +1083,7 @@ module.exports = {
   getInvoices,
   getInvoiceById,
   getPendingCashierOrders,
+  getPendingCashierOrdersGrouped,
+  getRegistrationCardStatus,
   reversePayment,
 };

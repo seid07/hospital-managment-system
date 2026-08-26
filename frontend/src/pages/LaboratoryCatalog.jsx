@@ -160,7 +160,7 @@ function LaboratoryCatalog() {
 
         <div className="page-actions">
           <Link to="/laboratory" className="button button-secondary">
-            🔬 Lab Orders Queue
+             Lab Orders Queue
           </Link>
           {["ADMIN", "LAB_TECH"].includes(user?.role) && (
             <button
@@ -217,7 +217,7 @@ function LaboratoryCatalog() {
           <div className="loading-state">Loading test catalog...</div>
         ) : catalog.length === 0 ? (
           <div className="empty-state">
-            <div className="empty-state-icon">🧪</div>
+            <div className="empty-state-icon"></div>
             <h3>No laboratory tests found</h3>
             <p>No tests match your search criteria.</p>
           </div>

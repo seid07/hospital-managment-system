@@ -1,5 +1,5 @@
 const pool = require("../config/database");
-const { generatePatientNumber } = require("../utils/number-generators");
+const { generatePatientNumber, generateVisitNumber, generateOrderNumber } = require("../utils/number-generators");
 const { recordAuditLog } = require("../utils/audit");
 const {
   parsePagination,
@@ -105,8 +105,51 @@ async function createPatient(data, userId) {
       details: { patientNumber: patient.patient_number, name: `${patient.first_name} ${patient.last_name}`, age: patient.age },
     });
 
+    // Auto-create Registration Card service order so cashier can collect the fee
+    let registrationOrderId = null;
+    let registrationPrice = 0;
+    try {
+      const regService = await client.query(
+        `SELECT s.id AS service_id, s.price, s.department_id
+         FROM services s
+         WHERE s.code = 'ADMIN-REGISTRATION' AND s.is_active = TRUE
+         LIMIT 1`
+      );
+      if (regService.rows.length > 0) {
+        const svc = regService.rows[0];
+        registrationPrice = svc.price;
+
+        // 1. Create a registration visit so service_order.visit_id is satisfied
+        const visitNumber = await generateVisitNumber(client);
+        const visitRes = await client.query(
+          `INSERT INTO visits (
+             visit_number, patient_id, appointment_id, status, visit_type,
+             emergency_override, notes, created_by
+           ) VALUES ($1, $2, NULL, 'OPEN', 'OUTPATIENT', FALSE, 'Registration card visit', $3)
+           RETURNING id`,
+          [visitNumber, patient.id, userId || null]
+        );
+        const visitId = visitRes.rows[0].id;
+
+        // 2. Create the service order linked to the visit
+        const orderNumber = await generateOrderNumber(client);
+        const orderRes = await client.query(
+          `INSERT INTO service_orders (
+             order_number, visit_id, patient_id, service_id, department_id,
+             price, status, created_by
+           ) VALUES ($1, $2, $3, $4, $5, $6, 'WAITING_PAYMENT', $7)
+           RETURNING id`,
+          [orderNumber, visitId, patient.id, svc.service_id, svc.department_id, svc.price, userId || null]
+        );
+        registrationOrderId = orderRes.rows[0]?.id || null;
+      }
+    } catch (regErr) {
+      // Non-fatal: patient is still created even if reg-card order fails
+      console.warn("Could not auto-create registration card order:", regErr.message);
+    }
+
     await client.query("COMMIT");
-    return patient;
+    return { ...patient, registrationOrderId, registrationPrice };
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;

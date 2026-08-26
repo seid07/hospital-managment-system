@@ -6,6 +6,7 @@ import Modal from "../components/common/Modal";
 import PrintableDocument from "../components/common/PrintableDocument";
 import { getPatientRecord, updatePatient } from "../services/patientService";
 import { recordVitals } from "../services/vitalsService";
+import { getPatientReferrals } from "../services/referralService";
 import { useAuth } from "../context/useAuth";
 import { formatCurrency } from "../utils/currency";
 
@@ -19,6 +20,8 @@ function PatientDetail() {
   const [error, setError] = useState("");
   const [activeTab, setActiveTab] = useState("encounters");
   const [reloadKey, setReloadKey] = useState(0);
+  const [referrals, setReferrals] = useState([]);
+  const [referralsLoaded, setReferralsLoaded] = useState(false);
 
   // Modals state
   const [showVitalsModal, setShowVitalsModal] = useState(false);
@@ -271,7 +274,7 @@ function PatientDetail() {
               className="button button-primary"
               onClick={() => setShowPrintModal(true)}
             >
-              🖨 Print Medical Summary
+              Print Print Medical Summary
             </button>
           </div>
         </div>
@@ -325,6 +328,7 @@ function PatientDetail() {
           { id: "labs", label: `Lab Results (${labOrders.length})` },
           { id: "billing", label: `Invoices & Billing (${invoices.length})` },
           { id: "appointments", label: `Appointments (${appointments.length})` },
+          { id: "referrals", label: `Referrals (${referrals.length})` },
         ].map((tab) => (
           <button
             key={tab.id}
@@ -760,6 +764,81 @@ function PatientDetail() {
                   ))}
                 </tbody>
               </table>
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* Tab 7: Referral History */}
+      {activeTab === "referrals" && (
+        <section className="card">
+          <div className="card-header">
+            <h2>Referral History</h2>
+            <p>Doctor-to-doctor referrals involving this patient.</p>
+          </div>
+
+          {!referralsLoaded ? (
+            <div style={{ textAlign: "center", padding: "24px" }}>
+              <button
+                className="button button-secondary"
+                onClick={async () => {
+                  try {
+                    const res = await getPatientReferrals(id);
+                    setReferrals(res.data || []);
+                  } catch (err) {
+                    console.error("Failed to load referrals:", err);
+                  } finally {
+                    setReferralsLoaded(true);
+                  }
+                }}
+              >
+                Load Referral History
+              </button>
+            </div>
+          ) : referrals.length === 0 ? (
+            <div className="empty-state">No referrals recorded for this patient.</div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+              {referrals.map((r) => {
+                const urgencyColor = r.urgency === "EMERGENCY" ? "#ef4444" : r.urgency === "URGENT" ? "#f59e0b" : "#6366f1";
+                const statusColor = r.status === "RESPONDED" ? "#10b981" : r.status === "VIEWED" ? "#6366f1" : "#f59e0b";
+                return (
+                  <div key={r.id} style={{
+                    border: "1px solid var(--border)", borderLeft: `4px solid ${urgencyColor}`,
+                    borderRadius: "8px", padding: "14px 16px", background: "var(--surface)",
+                  }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: "8px", marginBottom: "8px" }}>
+                      <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+                        <span style={{ background: urgencyColor + "20", color: urgencyColor, borderRadius: "6px", padding: "2px 8px", fontSize: "11px", fontWeight: 700 }}>
+                          {r.urgency}
+                        </span>
+                        <span style={{ background: statusColor + "20", color: statusColor, borderRadius: "6px", padding: "2px 8px", fontSize: "11px", fontWeight: 700 }}>
+                          {r.status}
+                        </span>
+                        <span style={{ fontSize: "12px", color: "var(--text-secondary)" }}>
+                          {new Date(r.created_at).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" })}
+                        </span>
+                      </div>
+                    </div>
+                    <div style={{ fontSize: "13px" }}>
+                      <strong>From:</strong> Dr. {r.referring_first_name} {r.referring_last_name}
+                      {r.referring_specialty ? ` (${r.referring_specialty})` : ""} →{" "}
+                      <strong>To:</strong> Dr. {r.receiving_first_name} {r.receiving_last_name}
+                      {r.receiving_specialty ? ` (${r.receiving_specialty})` : ""}
+                    </div>
+                    {r.case_note && (
+                      <div style={{ fontSize: "12px", color: "var(--text-secondary)", marginTop: "6px" }}>
+                        <strong>Reason:</strong> {r.case_note}
+                      </div>
+                    )}
+                    {r.status === "RESPONDED" && r.response_assessment && (
+                      <div style={{ marginTop: "8px", padding: "8px 10px", background: "#f0fdf4", borderRadius: "6px", fontSize: "12px", color: "#15803d" }}>
+                        <strong>Response:</strong> {r.response_assessment}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </section>

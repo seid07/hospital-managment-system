@@ -105,7 +105,7 @@ function ReceptionQueue() {
         <StatCard
           label="Checked In & In Clinic"
           value={checkedInList.length}
-          icon="🏥"
+          icon=""
           description="Currently in triage or doctor visit"
         />
         <StatCard

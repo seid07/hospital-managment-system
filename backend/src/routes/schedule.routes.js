@@ -67,4 +67,11 @@ router.delete(
   controller.deleteSchedule
 );
 
+// Get dates with available slots for a doctor (used by date-first booking)
+router.get(
+  "/doctors/:doctorId/available-dates",
+  authorizeRoles(...ALL_ROLES),
+  controller.getDoctorAvailableDates
+);
+
 module.exports = router;

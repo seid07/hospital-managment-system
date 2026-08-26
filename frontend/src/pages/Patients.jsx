@@ -120,7 +120,7 @@ function Patients() {
         {registeredFilter && (
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "var(--primary-light)", padding: "8px 12px", borderRadius: "6px", marginBottom: "12px" }}>
             <span style={{ fontSize: "13px", fontWeight: 600, color: "var(--primary)" }}>
-              📅 Showing patients registered today ({registeredFilter})
+               Showing patients registered today ({registeredFilter})
             </span>
             <button
               type="button"
@@ -170,7 +170,7 @@ function Patients() {
           <div className="loading-state">Loading patients database...</div>
         ) : patients.length === 0 ? (
           <div className="empty-state">
-            <div className="empty-state-icon">♙</div>
+            <div className="empty-state-icon"></div>
             <h3>No patients found</h3>
             <p>
               {debouncedSearch
@@ -275,7 +275,7 @@ function Patients() {
               <span style={{ fontFamily: "monospace" }}>{patientToDelete.patient_number}</span>)?
             </p>
             <p style={{ fontSize: "12px", color: "#e11d48", background: "#fff1f2", padding: "10px", borderRadius: "6px" }}>
-              ⚠️ This will mark the patient as inactive and prevent future appointment bookings or encounters.
+              Warning: This will mark the patient as inactive and prevent future appointment bookings or encounters.
             </p>
 
             <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px", marginTop: "20px" }}>
