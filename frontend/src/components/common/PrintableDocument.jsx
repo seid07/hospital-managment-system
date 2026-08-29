@@ -14,7 +14,7 @@ function PrintableDocument({
   date,
   children,
   onPrint,
-  defaultFormat = "standard", // "standard" | "thermal"
+  defaultFormat = "thermal", // "thermal" | "standard"
   hospitalName = "HOSPITAL MANAGEMENT SYSTEM",
   hospitalAddress = "Clinical & Patient Care Operations",
   hospitalPhone = "Tel: +251 11 000 0000",

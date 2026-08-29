@@ -45,6 +45,18 @@ router.patch(
   staffController.updateStatus
 );
 
+router.delete(
+  "/:id/permanent",
+  authorizeRoles("ADMIN"),
+  staffController.deleteStaffPermanently
+);
+
+router.delete(
+  "/:id",
+  authorizeRoles("ADMIN"),
+  staffController.deleteStaffPermanently
+);
+
 router.get(
   "/:id/scheduled-appointments",
   authorizeRoles("ADMIN"),

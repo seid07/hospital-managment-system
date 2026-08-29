@@ -145,4 +145,65 @@ test("Ethiopian Hospital Enhancements & Security Test Suite", async (t) => {
     const found = searchRes.patients.find((p) => p.id === tempPatient.id);
     assert.equal(found, undefined);
   });
+
+  await t.test("8. Staff Service: Delete Staff Permanently (Foreign Key Cascade / Set Null)", async () => {
+    const staffService = require("../src/services/staff.service.js");
+    const pool = require("../src/config/database.js");
+
+    // Create temp staff with user account
+    const uniqueSuffix = Date.now();
+    const uniquePhone = "09" + String(uniqueSuffix).slice(-8);
+    const created = await staffService.createStaff({
+      firstName: "TempDelete",
+      lastName: "Doctor",
+      email: `tempdoctor_${uniqueSuffix}@hospital.local`,
+      phone: uniquePhone,
+      department: "OPD",
+      specialty: "General Practice",
+      role: "DOCTOR",
+      username: `tempdoctor_${uniqueSuffix}`,
+      password: "Hospital@12345",
+    });
+    assert.ok(created.staffId);
+
+    const userRes = await pool.query("SELECT id FROM users WHERE staff_id = $1", [created.staffId]);
+    assert.ok(userRes.rows.length > 0);
+    const userId = userRes.rows[0].id;
+
+    // Create a dummy patient, invoice, and prescription referencing this user/staff
+    const patient = await patientService.createPatient({
+      firstName: "FKTest",
+      lastName: "Patient",
+      age: 40,
+      gender: "Male",
+      phone: "09" + String(uniqueSuffix + 1).slice(-8),
+      address: "Addis Ababa",
+    });
+
+    // Insert an invoice created_by this user
+    await pool.query(
+      `INSERT INTO invoices (invoice_number, patient_id, subtotal, total_amount, paid_amount, balance_amount, created_by)
+       VALUES ($1, $2, 100, 100, 0, 100, $3)`,
+      [`INV-FK-${uniqueSuffix}`, patient.id, userId]
+    );
+
+    // Insert a prescription dispensed_by / ordered by this doctor
+    await pool.query(
+      `INSERT INTO prescriptions (prescription_number, patient_id, doctor_id, medication_name, dosage, frequency, dispensed_by, status)
+       VALUES ($1, $2, $3, 'Amoxicillin', '500mg', 'TID', $4, 'DISPENSED')`,
+      [`RX-FK-${uniqueSuffix}`, patient.id, created.staffId, userId]
+    );
+
+    // Now permanently delete the staff member - should succeed without foreign key constraint error!
+    const deleteResult = await staffService.deleteStaffPermanently(created.staffId);
+    assert.equal(deleteResult.success, true);
+
+    // Verify staff and user records are deleted
+    const staffCheck = await pool.query("SELECT id FROM staff WHERE id = $1", [created.staffId]);
+    assert.equal(staffCheck.rows.length, 0);
+
+    const userCheck = await pool.query("SELECT id FROM users WHERE id = $1", [userId]);
+    assert.equal(userCheck.rows.length, 0);
+  });
 });
+

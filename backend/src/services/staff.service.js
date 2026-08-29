@@ -244,6 +244,22 @@ async function updateStaff(id, data, updatedByUserId) {
       return null;
     }
 
+    // Update username if provided
+    if (data.username && data.username.trim()) {
+      const newUsername = data.username.trim().toLowerCase();
+      const uCheck = await client.query(
+        "SELECT id FROM users WHERE username = $1 AND staff_id != $2",
+        [newUsername, id]
+      );
+      if (uCheck.rows.length > 0) {
+        throw new Error("USERNAME_TAKEN");
+      }
+      await client.query(
+        "UPDATE users SET username = $1 WHERE staff_id = $2",
+        [newUsername, id]
+      );
+    }
+
     const staff = result.rows[0];
 
     await recordAuditLog(client, {
@@ -251,7 +267,7 @@ async function updateStaff(id, data, updatedByUserId) {
       action: "STAFF_UPDATED",
       entity: "staff",
       entityId: id,
-      details: { name: `${staff.first_name} ${staff.last_name}`, role: data.role },
+      details: { name: `${staff.first_name} ${staff.last_name}`, role: data.role, username: data.username },
     });
 
     await client.query("COMMIT");
@@ -264,6 +280,121 @@ async function updateStaff(id, data, updatedByUserId) {
       throw new Error("DUPLICATE_STAFF");
     }
 
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function deleteStaffPermanently(id, deletedByUserId) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    // 1. Get staff info before deletion
+    const staffRes = await client.query(
+      `SELECT s.id, s.first_name, s.last_name, s.email, r.name as role
+       FROM staff s
+       JOIN roles r ON s.role_id = r.id
+       WHERE s.id = $1`,
+      [id]
+    );
+
+    if (staffRes.rows.length === 0) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    const staff = staffRes.rows[0];
+
+    // Prevent deleting the last remaining ADMIN account
+    if (staff.role === "ADMIN") {
+      const adminCountRes = await client.query(
+        `SELECT COUNT(*) as count
+         FROM staff s
+         JOIN roles r ON s.role_id = r.id
+         WHERE r.name = 'ADMIN'`
+      );
+      if (parseInt(adminCountRes.rows[0].count, 10) <= 1) {
+        throw new Error("CANNOT_DELETE_LAST_ADMIN");
+      }
+    }
+
+    // 2. Delete associated doctor schedules
+    await client.query("DELETE FROM doctor_schedules WHERE doctor_id = $1", [id]);
+
+    // 3. Delete referral messages and referrals involving this doctor
+    await client.query(
+      `DELETE FROM referral_messages
+       WHERE sender_id = $1
+          OR referral_id IN (SELECT id FROM referrals WHERE referring_doctor_id = $1 OR receiving_doctor_id = $1)`,
+      [id]
+    );
+    await client.query(
+      "DELETE FROM referrals WHERE referring_doctor_id = $1 OR receiving_doctor_id = $1",
+      [id]
+    );
+
+    // 4. Disassociate clinical orders, appointments, encounters, etc. referencing staff
+    await client.query("UPDATE appointments SET doctor_id = NULL WHERE doctor_id = $1", [id]);
+    await client.query("UPDATE service_orders SET doctor_id = NULL WHERE doctor_id = $1", [id]);
+    await client.query("UPDATE queue_entries SET assigned_staff_id = NULL WHERE assigned_staff_id = $1", [id]);
+    await client.query("UPDATE radiology_orders SET doctor_id = NULL WHERE doctor_id = $1", [id]);
+    await client.query("UPDATE procedure_orders SET doctor_id = NULL WHERE doctor_id = $1", [id]);
+    await client.query("UPDATE surgery_orders SET surgeon_id = NULL WHERE surgeon_id = $1", [id]);
+    await client.query("UPDATE encounters SET doctor_id = NULL WHERE doctor_id = $1", [id]);
+    await client.query("UPDATE prescriptions SET doctor_id = NULL WHERE doctor_id = $1", [id]);
+    await client.query("UPDATE lab_orders SET doctor_id = NULL WHERE doctor_id = $1", [id]);
+    await client.query("UPDATE diagnoses SET doctor_id = NULL WHERE doctor_id = $1", [id]);
+    await client.query("UPDATE admissions SET doctor_id = NULL WHERE doctor_id = $1", [id]);
+
+    // 5. Delete associated user login account and clean related user records
+    const userRes = await client.query("SELECT id FROM users WHERE staff_id = $1", [id]);
+    if (userRes.rows.length > 0) {
+      const userId = userRes.rows[0].id;
+      await client.query("UPDATE invoices SET created_by = NULL WHERE created_by = $1", [userId]);
+      await client.query("UPDATE prescriptions SET dispensed_by = NULL WHERE dispensed_by = $1", [userId]);
+      await client.query("UPDATE payments SET received_by = NULL WHERE received_by = $1", [userId]);
+      await client.query("UPDATE lab_results SET entered_by = NULL WHERE entered_by = $1", [userId]);
+      await client.query("UPDATE lab_orders SET specimen_collected_by = NULL WHERE specimen_collected_by = $1", [userId]);
+      await client.query("UPDATE lab_orders SET resulted_by = NULL WHERE resulted_by = $1", [userId]);
+      await client.query("UPDATE lab_orders SET verified_by = NULL WHERE verified_by = $1", [userId]);
+      await client.query("UPDATE encounters SET created_by = NULL WHERE created_by = $1", [userId]);
+      await client.query("UPDATE appointments SET created_by = NULL WHERE created_by = $1", [userId]);
+      await client.query("UPDATE patients SET created_by = NULL WHERE created_by = $1", [userId]);
+      await client.query("UPDATE vitals SET recorded_by = NULL WHERE recorded_by = $1", [userId]);
+      await client.query("UPDATE visits SET created_by = NULL WHERE created_by = $1", [userId]);
+      await client.query("UPDATE visits SET override_authorized_by = NULL WHERE override_authorized_by = $1", [userId]);
+      await client.query("UPDATE admissions SET created_by = NULL WHERE created_by = $1", [userId]);
+      await client.query("UPDATE service_orders SET created_by = NULL WHERE created_by = $1", [userId]);
+      await client.query("UPDATE service_orders SET authorized_by = NULL WHERE authorized_by = $1", [userId]);
+      await client.query("UPDATE service_orders SET cancelled_by = NULL WHERE cancelled_by = $1", [userId]);
+      await client.query("UPDATE procedure_orders SET performed_by = NULL WHERE performed_by = $1", [userId]);
+      await client.query("UPDATE radiology_orders SET performed_by = NULL WHERE performed_by = $1", [userId]);
+      await client.query("UPDATE radiology_orders SET reported_by = NULL WHERE reported_by = $1", [userId]);
+      await client.query("UPDATE surgery_orders SET performed_by = NULL WHERE performed_by = $1", [userId]);
+      await client.query("UPDATE audit_logs SET user_id = NULL WHERE user_id = $1", [userId]);
+      await client.query("DELETE FROM password_resets WHERE user_id = $1", [userId]);
+      await client.query("DELETE FROM notifications WHERE user_id = $1", [userId]);
+      await client.query("DELETE FROM users WHERE id = $1", [userId]);
+    }
+
+    // 6. Delete staff member
+    await client.query("DELETE FROM staff WHERE id = $1", [id]);
+
+    // 7. Record audit log with acting admin user
+    await recordAuditLog(client, {
+      userId: deletedByUserId,
+      action: "STAFF_DELETED_PERMANENTLY",
+      entity: "staff",
+      entityId: id,
+      details: { name: `${staff.first_name} ${staff.last_name}`, email: staff.email, role: staff.role },
+    });
+
+    await client.query("COMMIT");
+    return { success: true, id, name: `${staff.first_name} ${staff.last_name}` };
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
     throw error;
   } finally {
     client.release();
@@ -369,6 +500,7 @@ module.exports = {
   getStaff,
   createStaff,
   updateStaff,
+  deleteStaffPermanently,
   updateStaffStatus,
   getDoctorScheduledAppointments,
 };

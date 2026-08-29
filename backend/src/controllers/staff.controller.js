@@ -150,6 +150,13 @@ async function updateStaff(req, res) {
       });
     }
 
+    if (error.message === "USERNAME_TAKEN") {
+      return res.status(409).json({
+        success: false,
+        message: "This username is already taken by another staff member.",
+      });
+    }
+
     if (error.message === "DUPLICATE_STAFF") {
       return res.status(409).json({
         success: false,
@@ -162,6 +169,48 @@ async function updateStaff(req, res) {
     return res.status(500).json({
       success: false,
       message: "Unable to update staff member.",
+    });
+  }
+}
+
+async function deleteStaffPermanently(req, res) {
+  try {
+    const { id } = req.params;
+
+    if (!isValidUUID(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid staff ID format.",
+      });
+    }
+
+    const result = await staffService.deleteStaffPermanently(id, req.user?.userId);
+
+    if (!result) {
+      return res.status(404).json({
+        success: false,
+        message: "Staff member not found.",
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: `Staff member ${result.name} deleted permanently.`,
+      data: result,
+    });
+  } catch (error) {
+    if (error.message === "CANNOT_DELETE_LAST_ADMIN") {
+      return res.status(400).json({
+        success: false,
+        message: "Cannot permanently delete the only remaining System Administrator account.",
+      });
+    }
+
+    console.error("Delete staff permanently error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Unable to permanently delete staff member.",
     });
   }
 }
@@ -250,6 +299,7 @@ module.exports = {
   getStaff,
   createStaff,
   updateStaff,
+  deleteStaffPermanently,
   updateStatus,
   getDoctorScheduledAppointments,
 };

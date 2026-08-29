@@ -122,6 +122,26 @@ function DoctorSchedules({ isDoctorSelfView = false }) {
     }));
   }
 
+  const [selectedDays, setSelectedDays] = useState([1]); // default to Monday
+
+  function toggleDay(dayVal) {
+    setSelectedDays((prev) =>
+      prev.includes(dayVal) ? prev.filter((d) => d !== dayVal) : [...prev, dayVal].sort((a, b) => a - b)
+    );
+  }
+
+  function selectWeekdays() {
+    setSelectedDays([1, 2, 3, 4, 5]);
+  }
+
+  function selectAllDays() {
+    setSelectedDays([0, 1, 2, 3, 4, 5, 6]);
+  }
+
+  function clearDays() {
+    setSelectedDays([]);
+  }
+
   async function handleSubmit(event) {
     event.preventDefault();
     setError("");
@@ -129,14 +149,30 @@ function DoctorSchedules({ isDoctorSelfView = false }) {
 
     const targetDocId = isDoctor ? user?.staff_id : selectedDoctor;
     if (!targetDocId) {
-      setError("Please select a doctor.");
+      setError("Please select a staff member.");
+      return;
+    }
+
+    if (selectedDays.length === 0) {
+      setError("Please select at least one day of the week.");
+      return;
+    }
+
+    if (form.startTime >= form.endTime) {
+      setError("Start time must be before end time.");
       return;
     }
 
     try {
       setSubmitting(true);
-      await createSchedule(targetDocId, form);
-      setSuccess("Doctor schedule rule created successfully.");
+      await createSchedule(targetDocId, {
+        daysOfWeek: selectedDays,
+        startTime: form.startTime,
+        endTime: form.endTime,
+        slotDurationMinutes: Number(form.slotDurationMinutes),
+      });
+      const dayNames = selectedDays.map((d) => DAYS.find((x) => x.value === d)?.label).join(", ");
+      setSuccess(`Weekly schedule saved successfully for: ${dayNames} (${form.startTime} - ${form.endTime}).`);
       setReloadKey((prev) => prev + 1);
     } catch (err) {
       setError(err.message || "Unable to create schedule.");
@@ -216,26 +252,75 @@ function DoctorSchedules({ isDoctorSelfView = false }) {
               {selectedDoctorDetails?.first_name} {selectedDoctorDetails?.last_name}
             </h2>
             <p>
-              Configure weekday, hours, and slot intervals. The database prevents overlapping shifts.
+              Choose one or multiple days of the week, working hours, and slot intervals.
             </p>
           </div>
 
           <form className="form-grid" onSubmit={handleSubmit}>
-            <div className="form-field">
-              <label htmlFor="dayOfWeek">Day of week *</label>
-              <select
-                id="dayOfWeek"
-                name="dayOfWeek"
-                value={form.dayOfWeek}
-                onChange={handleFormChange}
-                required
-              >
-                {DAYS.map((day) => (
-                  <option key={day.value} value={day.value}>
-                    {day.label}
-                  </option>
-                ))}
-              </select>
+            {/* Multi-Day of Week Checkboxes */}
+            <div className="form-field" style={{ gridColumn: "1 / -1" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px", flexWrap: "wrap", gap: "8px" }}>
+                <label style={{ fontWeight: 600, margin: 0 }}>Days of Week *</label>
+                <div style={{ display: "flex", gap: "6px" }}>
+                  <button
+                    type="button"
+                    className="button button-secondary button-sm"
+                    onClick={selectWeekdays}
+                    style={{ fontSize: "11px", padding: "3px 8px" }}
+                  >
+                    Weekdays (Mon-Fri)
+                  </button>
+                  <button
+                    type="button"
+                    className="button button-secondary button-sm"
+                    onClick={selectAllDays}
+                    style={{ fontSize: "11px", padding: "3px 8px" }}
+                  >
+                    All 7 Days
+                  </button>
+                  <button
+                    type="button"
+                    className="button button-secondary button-sm"
+                    onClick={clearDays}
+                    style={{ fontSize: "11px", padding: "3px 8px" }}
+                  >
+                    Clear
+                  </button>
+                </div>
+              </div>
+
+              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                {DAYS.map((day) => {
+                  const isChecked = selectedDays.includes(day.value);
+                  return (
+                    <label
+                      key={day.value}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "6px",
+                        padding: "8px 14px",
+                        borderRadius: "6px",
+                        border: isChecked ? "1.5px solid var(--primary)" : "1px solid var(--border)",
+                        background: isChecked ? "rgba(2, 132, 199, 0.08)" : "var(--surface)",
+                        cursor: "pointer",
+                        fontWeight: isChecked ? 700 : 500,
+                        fontSize: "13px",
+                        color: isChecked ? "var(--primary)" : "var(--text-primary)",
+                        transition: "all 150ms ease",
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={() => toggleDay(day.value)}
+                        style={{ cursor: "pointer" }}
+                      />
+                      {day.label}
+                    </label>
+                  );
+                })}
+              </div>
             </div>
 
             <div className="form-field">
@@ -283,9 +368,9 @@ function DoctorSchedules({ isDoctorSelfView = false }) {
               <button
                 className="button button-primary button-large"
                 type="submit"
-                disabled={submitting || !selectedDoctor}
+                disabled={submitting || !selectedDoctor || selectedDays.length === 0}
               >
-                {submitting ? "Saving schedule..." : "Save Schedule Slot →"}
+                {submitting ? "Saving schedule..." : `Save Schedule for ${selectedDays.length} Selected Day${selectedDays.length === 1 ? "" : "s"} →`}
               </button>
             </div>
           </form>

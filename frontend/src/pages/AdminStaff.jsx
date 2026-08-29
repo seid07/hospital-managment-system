@@ -2,7 +2,8 @@ import { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import AppShell from "../components/layout/AppShell";
 import Modal from "../components/common/Modal";
-import { getStaff, getRoles, createStaff, updateStaff, updateStaffStatus, getDoctorScheduledAppointments } from "../services/staffService";
+import ToastPrompt from "../components/common/ToastPrompt";
+import { getStaff, getRoles, createStaff, updateStaff, deleteStaffPermanently, updateStaffStatus, getDoctorScheduledAppointments } from "../services/staffService";
 import { createSchedule } from "../services/scheduleService";
 import { validateEthiopianPhone } from "../utils/phone";
 import { checkPasswordStrength, generateSecurePassword } from "../utils/password";
@@ -51,16 +52,21 @@ function AdminStaff() {
   const debouncedSearch = useDebounce(search, 300);
   const [reloadTrigger, setReloadTrigger] = useState(0);
 
-  // Available Work Date / Consultation Slot builder — used during staff
-  // creation so an admin can set up an initial weekly schedule right away.
+  // Available Work Date / Consultation Slot builder — multi-day selection
   const [scheduleSlots, setScheduleSlots] = useState([]);
   const [newSlot, setNewSlot] = useState(INITIAL_SLOT);
+  const [slotSelectedDays, setSlotSelectedDays] = useState([1, 2, 3, 4, 5]); // default Mon-Fri
 
   // Edit Staff Modal State
   const [editingMember, setEditingMember] = useState(null);
   const [editForm, setEditForm] = useState(null);
   const [editSubmitting, setEditSubmitting] = useState(false);
   const [editError, setEditError] = useState("");
+
+  // Permanent Delete Modal State
+  const [deletingMember, setDeletingMember] = useState(null);
+  const [deleteSubmitting, setDeleteSubmitting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
 
   // Deactivation Modal State (Requirement 7)
   const [deactivatingMember, setDeactivatingMember] = useState(null);
@@ -112,6 +118,52 @@ function AdminStaff() {
     };
   }, [debouncedSearch, reloadTrigger]);
 
+  // Auto-dismiss success & error notifications after 4 seconds (Requirement 2)
+  useEffect(() => {
+    if (success) {
+      const timer = setTimeout(() => {
+        setSuccess("");
+      }, 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [success]);
+
+  useEffect(() => {
+    if (error) {
+      const timer = setTimeout(() => {
+        setError("");
+      }, 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [error]);
+
+  useEffect(() => {
+    if (editError) {
+      const timer = setTimeout(() => {
+        setEditError("");
+      }, 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [editError]);
+
+  useEffect(() => {
+    if (deleteError) {
+      const timer = setTimeout(() => {
+        setDeleteError("");
+      }, 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [deleteError]);
+
+  useEffect(() => {
+    if (deactivationError) {
+      const timer = setTimeout(() => {
+        setDeactivationError("");
+      }, 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [deactivationError]);
+
   function handleChange(event) {
     const { name, value } = event.target;
     setForm((prev) => ({
@@ -124,18 +176,43 @@ function AdminStaff() {
     const { name, value } = event.target;
     setNewSlot((prev) => ({
       ...prev,
-      [name]: name === "dayOfWeek" || name === "slotDurationMinutes" ? Number(value) : value,
+      [name]: name === "slotDurationMinutes" ? Number(value) : value,
     }));
   }
 
+  function toggleSlotDay(dayVal) {
+    setSlotSelectedDays((prev) =>
+      prev.includes(dayVal) ? prev.filter((d) => d !== dayVal) : [...prev, dayVal].sort((a, b) => a - b)
+    );
+  }
+
+  function selectAllSlotWeekdays() {
+    setSlotSelectedDays([1, 2, 3, 4, 5]);
+  }
+
+  function selectAllSlotDays() {
+    setSlotSelectedDays([0, 1, 2, 3, 4, 5, 6]);
+  }
+
+  function clearSlotDays() {
+    setSlotSelectedDays([]);
+  }
+
   function handleAddSlot() {
+    if (slotSelectedDays.length === 0) {
+      setError("Please select at least one day of the week for the schedule.");
+      return;
+    }
     if (newSlot.startTime >= newSlot.endTime) {
       setError("Slot start time must be before end time.");
       return;
     }
     setError("");
-    setScheduleSlots((prev) => [...prev, newSlot]);
-    setNewSlot(INITIAL_SLOT);
+    const newSlots = slotSelectedDays.map((day) => ({
+      ...newSlot,
+      dayOfWeek: day,
+    }));
+    setScheduleSlots((prev) => [...prev, ...newSlots]);
   }
 
   function handleRemoveSlot(index) {
@@ -195,6 +272,7 @@ function AdminStaff() {
     setEditForm({
       firstName: member.first_name || "",
       lastName: member.last_name || "",
+      username: member.username || "",
       email: member.email || "",
       phone: member.phone || "",
       department: member.department || "",
@@ -232,6 +310,22 @@ function AdminStaff() {
       setEditError(err.message || "Unable to update staff member.");
     } finally {
       setEditSubmitting(false);
+    }
+  }
+
+  async function handleDeletePermanently() {
+    if (!deletingMember) return;
+    setDeleteError("");
+    try {
+      setDeleteSubmitting(true);
+      await deleteStaffPermanently(deletingMember.id);
+      setSuccess(`Staff member ${deletingMember.first_name} ${deletingMember.last_name} deleted permanently.`);
+      setDeletingMember(null);
+      refreshData();
+    } catch (err) {
+      setDeleteError(err.message || "Failed to permanently delete staff member.");
+    } finally {
+      setDeleteSubmitting(false);
     }
   }
 
@@ -337,6 +431,25 @@ function AdminStaff() {
           </p>
         </div>
       </div>
+
+      {/* Floating 4-Second Animated Toast Prompt (Requirement 2) */}
+      {success && (
+        <ToastPrompt
+          type="success"
+          message={success}
+          duration={4000}
+          onClose={() => setSuccess("")}
+        />
+      )}
+
+      {error && (
+        <ToastPrompt
+          type="error"
+          message={error}
+          duration={4000}
+          onClose={() => setError("")}
+        />
+      )}
 
       {error && (
         <div className="alert alert-error" role="alert">
@@ -542,26 +655,81 @@ function AdminStaff() {
               <strong>Manage Schedule</strong>.
             </p>
 
+            {/* Multi-Day of Week Checkbox Selector */}
+            <div style={{ marginBottom: "12px", background: "var(--surface-muted)", padding: "10px 14px", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px", flexWrap: "wrap", gap: "8px" }}>
+                <span style={{ fontSize: "12px", fontWeight: 600 }}>Select Days of Week:</span>
+                <div style={{ display: "flex", gap: "6px" }}>
+                  <button
+                    type="button"
+                    className="button button-secondary button-sm"
+                    onClick={selectAllSlotWeekdays}
+                    style={{ fontSize: "11px", padding: "2px 8px" }}
+                  >
+                    Weekdays (Mon-Fri)
+                  </button>
+                  <button
+                    type="button"
+                    className="button button-secondary button-sm"
+                    onClick={selectAllSlotDays}
+                    style={{ fontSize: "11px", padding: "2px 8px" }}
+                  >
+                    All 7 Days
+                  </button>
+                  <button
+                    type="button"
+                    className="button button-secondary button-sm"
+                    onClick={clearSlotDays}
+                    style={{ fontSize: "11px", padding: "2px 8px" }}
+                  >
+                    Clear
+                  </button>
+                </div>
+              </div>
+
+              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                {DAYS.map((day) => {
+                  const isChecked = slotSelectedDays.includes(day.value);
+                  return (
+                    <label
+                      key={day.value}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "6px",
+                        padding: "6px 12px",
+                        borderRadius: "6px",
+                        border: isChecked ? "1.5px solid var(--primary)" : "1px solid var(--border)",
+                        background: isChecked ? "rgba(2, 132, 199, 0.08)" : "var(--surface)",
+                        cursor: "pointer",
+                        fontWeight: isChecked ? 700 : 500,
+                        fontSize: "12px",
+                        color: isChecked ? "var(--primary)" : "var(--text-primary)",
+                        transition: "all 150ms ease",
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={() => toggleSlotDay(day.value)}
+                        style={{ cursor: "pointer" }}
+                      />
+                      {day.label}
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: "1.2fr 1fr 1fr 1fr auto",
+                gridTemplateColumns: "1fr 1fr 1fr auto",
                 gap: "8px",
                 alignItems: "end",
                 marginBottom: "10px",
               }}
             >
-              <div className="form-field" style={{ marginBottom: 0 }}>
-                <label htmlFor="slotDay" style={{ fontSize: "11px" }}>Day of week</label>
-                <select id="slotDay" name="dayOfWeek" value={newSlot.dayOfWeek} onChange={handleNewSlotChange}>
-                  {DAYS.map((day) => (
-                    <option key={day.value} value={day.value}>
-                      {day.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
               <div className="form-field" style={{ marginBottom: 0 }}>
                 <label htmlFor="slotStart" style={{ fontSize: "11px" }}>Start time</label>
                 <input
@@ -597,8 +765,13 @@ function AdminStaff() {
                 />
               </div>
 
-              <button type="button" className="button button-secondary" onClick={handleAddSlot}>
-                + Add Slot
+              <button
+                type="button"
+                className="button button-secondary"
+                onClick={handleAddSlot}
+                disabled={slotSelectedDays.length === 0}
+              >
+                + Add Slot{slotSelectedDays.length > 1 ? `s (${slotSelectedDays.length} Days)` : ""}
               </button>
             </div>
 
@@ -813,6 +986,17 @@ function AdminStaff() {
               </div>
 
               <div className="form-field">
+                <label htmlFor="editUsername">Username (Login ID) *</label>
+                <input
+                  id="editUsername"
+                  name="username"
+                  value={editForm.username}
+                  onChange={handleEditChange}
+                  required
+                />
+              </div>
+
+              <div className="form-field">
                 <label htmlFor="editEmail">Email Address *</label>
                 <input
                   id="editEmail"
@@ -889,6 +1073,58 @@ function AdminStaff() {
               </button>
             </div>
           </form>
+        </Modal>
+      )}
+
+      {/* Permanent Delete Modal */}
+      {deletingMember && (
+        <Modal
+          isOpen={true}
+          onClose={() => setDeletingMember(null)}
+          title="⚠️ Delete Staff Member Permanently"
+        >
+          <div>
+            {deleteError && (
+              <div className="alert alert-error" role="alert" style={{ marginBottom: "14px" }}>
+                {deleteError}
+              </div>
+            )}
+
+            <div style={{ background: "rgba(239, 68, 68, 0.08)", border: "1px solid rgba(239, 68, 68, 0.3)", padding: "14px", borderRadius: "var(--radius-sm)", marginBottom: "16px" }}>
+              <p style={{ margin: "0 0 8px 0", fontWeight: 700, color: "#dc2626" }}>
+                Are you sure you want to permanently delete this staff member?
+              </p>
+              <div style={{ fontSize: "13px", color: "var(--text-primary)" }}>
+                <strong>Name:</strong> {deletingMember.first_name} {deletingMember.last_name}<br />
+                <strong>Role:</strong> {deletingMember.role}<br />
+                <strong>Username:</strong> {deletingMember.username || "—"}<br />
+                <strong>Email:</strong> {deletingMember.email}
+              </div>
+              <p style={{ margin: "10px 0 0 0", fontSize: "12px", color: "#dc2626" }}>
+                ⚠️ Warning: This will permanently remove their user credentials, clinic schedules, and staff profile from the hospital database. This action cannot be undone.
+              </p>
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px" }}>
+              <button
+                type="button"
+                className="button button-secondary"
+                onClick={() => setDeletingMember(null)}
+                disabled={deleteSubmitting}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="button"
+                style={{ background: "#dc2626", color: "#fff", borderColor: "#dc2626" }}
+                onClick={handleDeletePermanently}
+                disabled={deleteSubmitting}
+              >
+                {deleteSubmitting ? "Deleting..." : "🗑 Yes, Delete Permanently"}
+              </button>
+            </div>
+          </div>
         </Modal>
       )}
 
@@ -1025,22 +1261,46 @@ function AdminStaff() {
               </div>
             )}
 
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
+            <div style={{ marginTop: "20px", paddingTop: "14px", borderTop: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px" }}>
               <button
                 type="button"
-                className="button button-secondary"
-                onClick={() => setDeactivatingMember(null)}
+                className="button"
+                style={{
+                  background: "rgba(239, 68, 68, 0.1)",
+                  color: "#dc2626",
+                  borderColor: "rgba(239, 68, 68, 0.4)",
+                  fontWeight: 600,
+                  fontSize: "13px",
+                  padding: "8px 14px",
+                }}
+                onClick={() => {
+                  const targetMember = deactivatingMember;
+                  setDeactivatingMember(null);
+                  setDeleteError("");
+                  setDeletingMember(targetMember);
+                }}
+                title="Permanently remove staff account from system"
               >
-                Cancel
+                🗑 Delete Permanently
               </button>
-              <button
-                type="submit"
-                className="button button-primary"
-                style={{ background: "var(--danger)", borderColor: "var(--danger)" }}
-                disabled={deactivationSubmitting}
-              >
-                {deactivationSubmitting ? "Deactivating..." : "Confirm & Deactivate Staff"}
-              </button>
+
+              <div style={{ display: "flex", gap: "10px" }}>
+                <button
+                  type="button"
+                  className="button button-secondary"
+                  onClick={() => setDeactivatingMember(null)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="button button-primary"
+                  style={{ background: "var(--danger)", borderColor: "var(--danger)" }}
+                  disabled={deactivationSubmitting}
+                >
+                  {deactivationSubmitting ? "Deactivating..." : "Confirm & Deactivate Staff"}
+                </button>
+              </div>
             </div>
           </form>
         </Modal>

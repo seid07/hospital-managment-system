@@ -60,15 +60,14 @@ export function checkPasswordStrength(password) {
 
 /**
  * Generate a cryptographically secure random password.
- * Guarantees at least one uppercase, one lowercase, one digit, one special char.
- * Total length: 14 characters.
+ * Guarantees at least 2 uppercase, 2 lowercase, 2 digits, and 2 special symbols.
+ * Total length: exactly 8 characters.
  */
 export function generateSecurePassword() {
   const upper = "ABCDEFGHJKLMNPQRSTUVWXYZ";
   const lower = "abcdefghjkmnpqrstuvwxyz";
   const digits = "23456789";
   const special = "!@#$%^&*_+-=?";
-  const all = upper + lower + digits + special;
 
   const getChar = (charset) => {
     const arr = new Uint32Array(1);
@@ -76,8 +75,8 @@ export function generateSecurePassword() {
     return charset[arr[0] % charset.length];
   };
 
-  // Ensure at least one of each required type
-  const required = [
+  // Ensure 2 of each required type -> 2 + 2 + 2 + 2 = exactly 8 characters
+  const combined = [
     getChar(upper),
     getChar(upper),
     getChar(lower),
@@ -88,11 +87,7 @@ export function generateSecurePassword() {
     getChar(special),
   ];
 
-  // Fill remaining 6 chars from all
-  const remaining = Array.from({ length: 6 }, () => getChar(all));
-
   // Shuffle combined array using Fisher-Yates with crypto random
-  const combined = [...required, ...remaining];
   for (let i = combined.length - 1; i > 0; i--) {
     const arr = new Uint32Array(1);
     crypto.getRandomValues(arr);

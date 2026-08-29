@@ -235,28 +235,44 @@ async function createSchedule(doctorId, data) {
     throw new Error("INVALID_TIME_RANGE");
   }
 
-  const result = await pool.query(
-    `
-      INSERT INTO doctor_schedules (
-        doctor_id,
-        day_of_week,
-        start_time,
-        end_time,
-        slot_duration_minutes
-      )
-      VALUES ($1,$2,$3,$4,$5)
-      RETURNING *
-    `,
-    [
-      doctorId,
-      data.dayOfWeek,
-      data.startTime,
-      data.endTime,
-      data.slotDurationMinutes || 30,
-    ]
-  );
+  const days = Array.isArray(data.daysOfWeek)
+    ? data.daysOfWeek
+    : Array.isArray(data.dayOfWeek)
+    ? data.dayOfWeek
+    : data.dayOfWeek !== undefined
+    ? [data.dayOfWeek]
+    : [1];
 
-  return result.rows[0];
+  if (days.length === 0) {
+    throw new Error("DAY_OF_WEEK_REQUIRED");
+  }
+
+  const createdSchedules = [];
+  for (const day of days) {
+    const result = await pool.query(
+      `
+        INSERT INTO doctor_schedules (
+          doctor_id,
+          day_of_week,
+          start_time,
+          end_time,
+          slot_duration_minutes
+        )
+        VALUES ($1,$2,$3,$4,$5)
+        RETURNING *
+      `,
+      [
+        doctorId,
+        parseInt(day, 10),
+        data.startTime,
+        data.endTime,
+        data.slotDurationMinutes || 30,
+      ]
+    );
+    createdSchedules.push(result.rows[0]);
+  }
+
+  return createdSchedules.length === 1 ? createdSchedules[0] : createdSchedules;
 }
 
 async function deleteSchedule(scheduleId) {
