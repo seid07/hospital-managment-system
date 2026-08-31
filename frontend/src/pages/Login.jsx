@@ -201,17 +201,7 @@ function Login() {
               <label htmlFor="password">Password</label>
               <button
                 type="button"
-                onClick={() => {
-                  setShowForgotModal(true);
-                  setForgotResult(null);
-                  setForgotForm({
-                    username: "",
-                    lastName: "",
-                    email: "",
-                    phone: "",
-                    department: "",
-                  });
-                }}
+                onClick={() => navigate("/reset-password")}
                 style={{
                   background: "none",
                   border: "none",
@@ -225,6 +215,7 @@ function Login() {
                 Forgot password?
               </button>
             </div>
+
 
             <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
               <input

@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import { getNotifications, markAsRead, markAllAsRead } from "../../services/notificationService";
 
 function getInitials(user) {
@@ -16,10 +17,12 @@ function formatRole(role) {
 }
 
 function Topbar({ user, logout, onToggleSidebar }) {
+  const navigate = useNavigate();
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [showNotifications, setShowNotifications] = useState(false);
   const dropdownRef = useRef(null);
+
 
   useEffect(() => {
     let cancelled = false;
@@ -213,11 +216,23 @@ function Topbar({ user, logout, onToggleSidebar }) {
         <button
           type="button"
           className="button button-secondary"
+          onClick={() => navigate("/change-password")}
+          style={{ fontSize: "12px", padding: "6px 12px" }}
+          aria-label="Change Password"
+          title="Update your account password"
+        >
+          🔑 Change Password
+        </button>
+
+        <button
+          type="button"
+          className="button button-secondary"
           onClick={logout}
           aria-label="Logout"
         >
           Logout
         </button>
+
       </div>
     </header>
   );

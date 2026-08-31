@@ -22,10 +22,23 @@ router.get(
 );
 
 router.get(
-  "/",
+  "/check-email",
   authorizeRoles("ADMIN"),
-  staffController.getStaff
+  staffController.checkEmail
 );
+
+router.post(
+  "/send-email-verification",
+  authorizeRoles("ADMIN"),
+  staffController.sendEmailVerification
+);
+
+router.post(
+  "/:id/resend-credentials",
+  authorizeRoles("ADMIN"),
+  staffController.resendCredentials
+);
+
 
 router.post(
   "/",

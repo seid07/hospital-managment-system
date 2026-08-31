@@ -89,8 +89,28 @@ export async function forgotPassword(identityData) {
   return post("/auth/forgot-password", typeof identityData === "string" ? { username: identityData } : identityData);
 }
 
-export async function resetPassword(token, newPassword) {
-  return post("/auth/reset-password", { token, newPassword });
+export async function requestPasswordResetOtp(username, email) {
+  return post("/auth/forgot-password/request-otp", { username, email });
+}
+
+export async function verifyPasswordResetOtp(username, email, otp) {
+  return post("/auth/forgot-password/verify-otp", { username, email, otp });
+}
+
+export async function resendPasswordResetOtp(username, email) {
+  return post("/auth/forgot-password/resend-otp", { username, email });
+}
+
+export async function resetPassword(token, newPassword, confirmPassword) {
+  return post("/auth/reset-password", { token, resetToken: token, newPassword, confirmPassword });
+}
+
+export async function verifyCurrentPassword(currentPassword) {
+  return post("/auth/verify-password", { currentPassword });
+}
+
+export async function changePassword(currentPassword, newPassword, confirmNewPassword) {
+  return post("/auth/change-password", { currentPassword, newPassword, confirmNewPassword });
 }
 
 export async function getProtectedData() {
@@ -114,6 +134,18 @@ export async function getServicePriceHistory(serviceId) {
   return get(`/services/${serviceId}/history`);
 }
 
+export async function verifyEmail(token) {
+  return post("/auth/verify-email", { token });
+}
+
+export async function sendEmailVerification(email) {
+  return post("/staff/send-email-verification", { email });
+}
+
+export async function resendStaffCredentials(staffId) {
+  return post(`/staff/${staffId}/resend-credentials`, {});
+}
+
 const api = {
   get,
   post,
@@ -125,7 +157,15 @@ const api = {
   setupAdmin,
   login,
   forgotPassword,
+  requestPasswordResetOtp,
+  verifyPasswordResetOtp,
+  resendPasswordResetOtp,
   resetPassword,
+  verifyCurrentPassword,
+  changePassword,
+  verifyEmail,
+  sendEmailVerification,
+  resendStaffCredentials,
   recordSelectivePayment,
   reversePayment,
   getInventoryTransactions,
@@ -133,3 +173,5 @@ const api = {
 };
 
 export default api;
+
+

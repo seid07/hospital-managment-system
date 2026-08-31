@@ -376,6 +376,20 @@ async function sendReferralMessage(referralId, message, callerStaffId, callerUse
 
     const msg = result.rows[0];
 
+    // Fetch sender info for response
+    const senderRes = await client.query(
+      `SELECT s.first_name AS sender_first_name, s.last_name AS sender_last_name, r.name AS sender_role
+       FROM staff s JOIN roles r ON s.role_id = r.id
+       WHERE s.id = $1`,
+      [callerStaffId]
+    );
+
+    if (senderRes.rows.length > 0) {
+      msg.sender_first_name = senderRes.rows[0].sender_first_name;
+      msg.sender_last_name = senderRes.rows[0].sender_last_name;
+      msg.sender_role = senderRes.rows[0].sender_role;
+    }
+
     await recordAuditLog(client, {
       userId: callerUserId,
       action: "REFERRAL_MESSAGE_SENT",
@@ -386,6 +400,7 @@ async function sendReferralMessage(referralId, message, callerStaffId, callerUse
 
     await client.query("COMMIT");
     return msg;
+
   } catch (err) {
     await client.query("ROLLBACK");
     throw err;

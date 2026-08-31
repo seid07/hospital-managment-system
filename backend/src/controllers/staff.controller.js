@@ -37,6 +37,115 @@ async function getStaff(req, res) {
   }
 }
 
+async function checkEmail(req, res) {
+  try {
+    const { email, excludeStaffId } = req.query;
+    const result = await staffService.checkEmailAvailability(email, excludeStaffId);
+    return res.status(200).json({
+      success: true,
+      ...result,
+    });
+  } catch (error) {
+    console.error("Check email error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Unable to check email availability.",
+    });
+  }
+}
+
+async function sendEmailVerification(req, res) {
+  try {
+    const { email } = req.body;
+    const result = await staffService.sendStaffEmailVerification(
+      email,
+      req.user?.userId || req.user?.id
+    );
+    return res.status(200).json(result);
+  } catch (error) {
+    if (error.message?.startsWith("COOLDOWN_ACTIVE")) {
+      return res.status(429).json({
+        success: false,
+        message: error.message.replace(/^[^:]+:\s*/, ""),
+      });
+    }
+    if (
+      error.message?.startsWith("INVALID_EMAIL_FORMAT") ||
+      error.message?.startsWith("DUPLICATE_EMAIL")
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: error.message.replace(/^[^:]+:\s*/, ""),
+      });
+    }
+    console.error("Send email verification error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Unable to send email verification link.",
+    });
+  }
+}
+
+async function verifyEmail(req, res) {
+  try {
+    const token = req.query.token || req.body.token;
+    const result = await staffService.verifyStaffEmailToken(token);
+    return res.status(200).json(result);
+  } catch (error) {
+    if (
+      error.message?.startsWith("INVALID_TOKEN") ||
+      error.message?.startsWith("TOKEN_EXPIRED")
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: error.message.replace(/^[^:]+:\s*/, ""),
+      });
+    }
+    console.error("Verify email token error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Unable to verify email address.",
+    });
+  }
+}
+
+async function resendCredentials(req, res) {
+  try {
+    const { id } = req.params;
+    if (!isValidUUID(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid staff ID format.",
+      });
+    }
+
+    const result = await staffService.resendStaffCredentials(
+      id,
+      req.user?.userId || req.user?.id
+    );
+
+    return res.status(200).json(result);
+  } catch (error) {
+    if (error.message === "STAFF_NOT_FOUND") {
+      return res.status(404).json({
+        success: false,
+        message: "Staff member not found.",
+      });
+    }
+    if (error.message?.startsWith("CANNOT_RESEND")) {
+      return res.status(400).json({
+        success: false,
+        message: error.message.replace(/^[^:]+:\s*/, ""),
+      });
+    }
+    console.error("Resend credentials error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Unable to resend staff credentials.",
+    });
+  }
+}
+
 async function createStaff(req, res) {
   try {
     const {
@@ -65,7 +174,7 @@ async function createStaff(req, res) {
       });
     }
 
-    const staff = await staffService.createStaff(req.body, req.user?.userId);
+    const staff = await staffService.createStaff(req.body, req.user?.userId || req.user?.id);
 
     return res.status(201).json({
       success: true,
@@ -73,6 +182,35 @@ async function createStaff(req, res) {
       data: staff,
     });
   } catch (error) {
+    if (error.message?.startsWith("EMAIL_NOT_VERIFIED")) {
+      return res.status(400).json({
+        success: false,
+        code: "EMAIL_NOT_VERIFIED",
+        message: "Email must be verified before creating the staff account.",
+      });
+    }
+
+    if (error.message?.startsWith("FIELD_REQUIRED")) {
+      return res.status(400).json({
+        success: false,
+        message: error.message.replace("FIELD_REQUIRED: ", ""),
+      });
+    }
+
+    if (error.message?.startsWith("MULTIPLE_ROLES_NOT_ALLOWED")) {
+      return res.status(400).json({
+        success: false,
+        message: "Each staff member can have only ONE role.",
+      });
+    }
+
+    if (error.message?.startsWith("INVALID_EMAIL_FORMAT")) {
+      return res.status(400).json({
+        success: false,
+        message: error.message.replace("INVALID_EMAIL_FORMAT: ", ""),
+      });
+    }
+
     if (error.message?.startsWith("WEAK_PASSWORD")) {
       return res.status(400).json({
         success: false,
@@ -94,7 +232,21 @@ async function createStaff(req, res) {
       });
     }
 
-    if (error.message === "DUPLICATE_STAFF") {
+    if (error.message === "DUPLICATE_EMAIL" || error.message?.startsWith("DUPLICATE_EMAIL")) {
+      return res.status(409).json({
+        success: false,
+        message: "A staff account with this email already exists.",
+      });
+    }
+
+    if (error.message === "DUPLICATE_USERNAME" || error.message?.startsWith("DUPLICATE_USERNAME")) {
+      return res.status(409).json({
+        success: false,
+        message: "A staff account with this username already exists.",
+      });
+    }
+
+    if (error.message === "DUPLICATE_STAFF" || error.message?.startsWith("DUPLICATE_STAFF")) {
       return res.status(409).json({
         success: false,
         message: "A staff account with this email, phone, or username already exists.",
@@ -110,9 +262,11 @@ async function createStaff(req, res) {
   }
 }
 
+
 async function updateStaff(req, res) {
   try {
     const { id } = req.params;
+
 
     if (!isValidUUID(id)) {
       return res.status(400).json({
@@ -297,9 +451,15 @@ async function getDoctorScheduledAppointments(req, res) {
 module.exports = {
   getRoles,
   getStaff,
+  checkEmail,
+  sendEmailVerification,
+  verifyEmail,
+  resendCredentials,
   createStaff,
   updateStaff,
   deleteStaffPermanently,
   updateStatus,
   getDoctorScheduledAppointments,
 };
+
+

@@ -60,14 +60,15 @@ export function checkPasswordStrength(password) {
 
 /**
  * Generate a cryptographically secure random password.
- * Guarantees at least 2 uppercase, 2 lowercase, 2 digits, and 2 special symbols.
- * Total length: exactly 8 characters.
+ * Guarantees at least 3 uppercase, 3 lowercase, 3 digits, and 3 special symbols.
+ * Total length: exactly 12 characters.
+ * Does NOT use Math.random().
  */
-export function generateSecurePassword() {
+export function generateSecurePassword(forbiddenTerms = []) {
   const upper = "ABCDEFGHJKLMNPQRSTUVWXYZ";
   const lower = "abcdefghjkmnpqrstuvwxyz";
   const digits = "23456789";
-  const special = "!@#$%^&*_+-=?";
+  const special = "!@#$%^&*_+=";
 
   const getChar = (charset) => {
     const arr = new Uint32Array(1);
@@ -75,25 +76,41 @@ export function generateSecurePassword() {
     return charset[arr[0] % charset.length];
   };
 
-  // Ensure 2 of each required type -> 2 + 2 + 2 + 2 = exactly 8 characters
-  const combined = [
-    getChar(upper),
-    getChar(upper),
-    getChar(lower),
-    getChar(lower),
-    getChar(digits),
-    getChar(digits),
-    getChar(special),
-    getChar(special),
-  ];
+  let generated = "";
+  let isSafe = false;
+  let attempts = 0;
 
-  // Shuffle combined array using Fisher-Yates with crypto random
-  for (let i = combined.length - 1; i > 0; i--) {
-    const arr = new Uint32Array(1);
-    crypto.getRandomValues(arr);
-    const j = arr[0] % (i + 1);
-    [combined[i], combined[j]] = [combined[j], combined[i]];
+  while (!isSafe && attempts < 20) {
+    attempts++;
+    // 3 upper + 3 lower + 3 digits + 3 special = 12 characters
+    const combined = [
+      getChar(upper), getChar(upper), getChar(upper),
+      getChar(lower), getChar(lower), getChar(lower),
+      getChar(digits), getChar(digits), getChar(digits),
+      getChar(special), getChar(special), getChar(special),
+    ];
+
+    // Fisher-Yates shuffle with crypto.getRandomValues
+    for (let i = combined.length - 1; i > 0; i--) {
+      const arr = new Uint32Array(1);
+      crypto.getRandomValues(arr);
+      const j = arr[0] % (i + 1);
+      [combined[i], combined[j]] = [combined[j], combined[i]];
+    }
+
+    generated = combined.join("");
+
+    // Check against forbidden terms (name, username, phone, department, hospital, dates)
+    const lowerGen = generated.toLowerCase();
+    const hasForbidden = forbiddenTerms.some(
+      (term) => term && term.length >= 3 && lowerGen.includes(term.toLowerCase())
+    );
+
+    if (!hasForbidden) {
+      isSafe = true;
+    }
   }
 
-  return combined.join("");
+  return generated;
 }
+

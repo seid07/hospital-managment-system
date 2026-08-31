@@ -153,10 +153,18 @@ test("Ethiopian Hospital Enhancements & Security Test Suite", async (t) => {
     // Create temp staff with user account
     const uniqueSuffix = Date.now();
     const uniquePhone = "09" + String(uniqueSuffix).slice(-8);
+    const testEmail = `tempdoctor_${uniqueSuffix}@hospital.local`;
+    await pool.query(
+      `INSERT INTO staff_email_verifications (email, verified, verified_at)
+       VALUES ($1, TRUE, CURRENT_TIMESTAMP)
+       ON CONFLICT (email) DO UPDATE SET verified = TRUE, verified_at = CURRENT_TIMESTAMP`,
+      [testEmail]
+    );
+
     const created = await staffService.createStaff({
       firstName: "TempDelete",
       lastName: "Doctor",
-      email: `tempdoctor_${uniqueSuffix}@hospital.local`,
+      email: testEmail,
       phone: uniquePhone,
       department: "OPD",
       specialty: "General Practice",
@@ -165,6 +173,7 @@ test("Ethiopian Hospital Enhancements & Security Test Suite", async (t) => {
       password: "Hospital@12345",
     });
     assert.ok(created.staffId);
+
 
     const userRes = await pool.query("SELECT id FROM users WHERE staff_id = $1", [created.staffId]);
     assert.ok(userRes.rows.length > 0);

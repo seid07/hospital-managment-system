@@ -12,6 +12,7 @@ import {
   createInvoice,
   recordPayment,
   getServices,
+  getFullTransactionHistory,
 } from "../services/billingService";
 import { useAuth } from "../context/useAuth";
 import { formatCurrency } from "../utils/currency";
@@ -56,6 +57,13 @@ function BillingInvoices() {
 
   // Print Invoice Modal
   const [printTarget, setPrintTarget] = useState(null);
+
+  // Full Transaction History Print & Export Modal (Requirement 6: Strictly ADMIN & REGISTRAR)
+  const [showFullHistoryPrint, setShowFullHistoryPrint] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [transactionsList, setTransactionsList] = useState([]);
+  const [exporting, setExporting] = useState(false);
+
 
   useEffect(() => {
     let cancelled = false;
@@ -208,6 +216,65 @@ function BillingInvoices() {
     }
   }
 
+  // Requirement 6: Full Transaction History Print & Export (Strictly ADMIN & REGISTRAR)
+  async function handleOpenFullHistoryPrint() {
+    try {
+      setHistoryLoading(true);
+      setError("");
+      const res = await getFullTransactionHistory({ limit: 200 });
+      if (res.data) {
+        setTransactionsList(res.data);
+        setShowFullHistoryPrint(true);
+      }
+    } catch (err) {
+      setError(err.message || "Unable to retrieve full transaction history. Access restricted.");
+    } finally {
+      setHistoryLoading(false);
+    }
+  }
+
+  async function handleExportCsv() {
+    try {
+      setExporting(true);
+      setError("");
+      const res = await getFullTransactionHistory({ limit: 500 });
+      const txs = res.data || [];
+      if (txs.length === 0) {
+        setError("No transaction records to export.");
+        return;
+      }
+
+      // Build CSV content
+      const headers = ["Payment Number", "Date", "Patient Name", "MRN", "Invoice Number", "Amount", "Method", "Status", "Received By"];
+      const rows = txs.map((t) => [
+        t.payment_number || "",
+        t.payment_date ? new Date(t.payment_date).toLocaleString() : "",
+        `"${(t.patient_first_name || "") + " " + (t.patient_last_name || "")}"`,
+        t.patient_number || "",
+        t.invoice_number || "",
+        parseFloat(t.amount || 0).toFixed(2),
+        t.payment_method || "",
+        t.status || "",
+        `"${(t.received_by_first_name || "") + " " + (t.received_by_last_name || "")}"`,
+      ]);
+
+      const csvContent = [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
+      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.setAttribute("href", url);
+      link.setAttribute("download", `Hospital_Transactions_${new Date().toISOString().split("T")[0]}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setSuccess("Full transaction ledger exported to CSV successfully.");
+    } catch (err) {
+      setError(err.message || "Unable to export transaction history.");
+    } finally {
+      setExporting(false);
+    }
+  }
+
   return (
     <AppShell>
       <div className="page-header">
@@ -219,7 +286,32 @@ function BillingInvoices() {
           </p>
         </div>
 
-        <div className="page-actions">
+        <div className="page-actions" style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+          {/* Requirement 6: Strictly ADMIN and REGISTRAR only */}
+          {["ADMIN", "REGISTRAR"].includes(user?.role) && (
+            <>
+              <button
+                type="button"
+                className="button button-secondary"
+                onClick={handleOpenFullHistoryPrint}
+                disabled={historyLoading}
+                title="Print complete hospital transaction and payment history"
+              >
+                🖨️ {historyLoading ? "Loading..." : "Print Full Transaction History"}
+              </button>
+
+              <button
+                type="button"
+                className="button button-secondary"
+                onClick={handleExportCsv}
+                disabled={exporting}
+                title="Export complete transaction ledger to CSV"
+              >
+                📥 {exporting ? "Exporting..." : "Export"}
+              </button>
+            </>
+          )}
+
           {["ADMIN", "FINANCE", "REGISTRAR"].includes(user?.role) && (
             <button
               type="button"
@@ -234,6 +326,7 @@ function BillingInvoices() {
 
       {error && <div className="alert alert-error">{error}</div>}
       {success && <div className="alert alert-success">{success}</div>}
+
 
       {/* Filter Bar */}
       <section className="card" style={{ marginBottom: "20px" }}>
@@ -658,8 +751,92 @@ function BillingInvoices() {
           </PrintableDocument>
         )}
       </Modal>
+
+      {/* Requirement 6: Modal: Print Full Hospital Transaction History (ADMIN & REGISTRAR Only) */}
+      <Modal
+        isOpen={showFullHistoryPrint}
+        onClose={() => setShowFullHistoryPrint(false)}
+        title="Hospital Transaction & Revenue History Ledger"
+        maxWidth="950px"
+      >
+        <PrintableDocument
+          title="HOSPITAL COMPLETE TRANSACTION & CASHIER REVENUE REPORT"
+          subtitle="Strict Administrative & Registrar Financial Audit Record"
+          documentNumber={`TX-AUDIT-${new Date().toISOString().split("T")[0]}`}
+          date={new Date().toLocaleDateString()}
+        >
+          <div style={{ marginBottom: "16px", fontSize: "12px", color: "#64748b" }}>
+            <span>Generated on: <strong>{new Date().toLocaleString()}</strong></span> |{" "}
+            <span>Authorized by: <strong>{user?.first_name} {user?.last_name} ({user?.role})</strong></span> |{" "}
+            <span>Total Transactions: <strong>{transactionsList.length}</strong></span>
+          </div>
+
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
+            <thead>
+              <tr style={{ background: "#f1f5f9", textAlign: "left" }}>
+                <th style={{ padding: "6px 8px", border: "1px solid #cbd5e1" }}>Payment #</th>
+                <th style={{ padding: "6px 8px", border: "1px solid #cbd5e1" }}>Date & Time</th>
+                <th style={{ padding: "6px 8px", border: "1px solid #cbd5e1" }}>Patient / MRN</th>
+                <th style={{ padding: "6px 8px", border: "1px solid #cbd5e1" }}>Invoice #</th>
+                <th style={{ padding: "6px 8px", border: "1px solid #cbd5e1" }}>Method</th>
+                <th style={{ padding: "6px 8px", border: "1px solid #cbd5e1" }}>Received By</th>
+                <th style={{ padding: "6px 8px", border: "1px solid #cbd5e1", textAlign: "right" }}>Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              {transactionsList.length === 0 ? (
+                <tr>
+                  <td colSpan={7} style={{ textAlign: "center", padding: "16px", color: "#94a3b8" }}>
+                    No recorded transactions in this reporting period.
+                  </td>
+                </tr>
+              ) : (
+                transactionsList.map((tx) => (
+                  <tr key={tx.id}>
+                    <td style={{ padding: "6px 8px", border: "1px solid #e2e8f0", fontFamily: "monospace" }}>
+                      {tx.payment_number}
+                    </td>
+                    <td style={{ padding: "6px 8px", border: "1px solid #e2e8f0" }}>
+                      {tx.payment_date ? new Date(tx.payment_date).toLocaleString([], { dateStyle: "short", timeStyle: "short" }) : "—"}
+                    </td>
+                    <td style={{ padding: "6px 8px", border: "1px solid #e2e8f0" }}>
+                      <strong>{tx.patient_first_name} {tx.patient_last_name}</strong>
+                      <div style={{ fontSize: "10px", color: "#64748b" }}>{tx.patient_number}</div>
+                    </td>
+                    <td style={{ padding: "6px 8px", border: "1px solid #e2e8f0" }}>
+                      {tx.invoice_number || "—"}
+                    </td>
+                    <td style={{ padding: "6px 8px", border: "1px solid #e2e8f0" }}>
+                      {tx.payment_method}
+                    </td>
+                    <td style={{ padding: "6px 8px", border: "1px solid #e2e8f0" }}>
+                      {tx.received_by_first_name ? `${tx.received_by_first_name} ${tx.received_by_last_name}` : "System"}
+                    </td>
+                    <td style={{ padding: "6px 8px", border: "1px solid #e2e8f0", textAlign: "right", fontWeight: 700 }}>
+                      {formatCurrency(tx.amount)}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+            <tfoot>
+              <tr style={{ background: "#f8fafc", fontWeight: 700, borderTop: "2px solid #334155" }}>
+                <td colSpan={6} style={{ padding: "8px", textAlign: "right" }}>
+                  TOTAL RECORDED REVENUE:
+                </td>
+                <td style={{ padding: "8px", textAlign: "right", color: "#0f766e", fontSize: "13px" }}>
+                  {formatCurrency(
+                    transactionsList.reduce((acc, t) => acc + parseFloat(t.amount || 0), 0)
+                  )}
+                </td>
+              </tr>
+            </tfoot>
+          </table>
+        </PrintableDocument>
+      </Modal>
     </AppShell>
   );
 }
 
 export default BillingInvoices;
+

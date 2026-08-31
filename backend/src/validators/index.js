@@ -175,12 +175,26 @@ function validateVitals(data) {
   };
 }
 
+function validateEmail(email) {
+  if (!email || typeof email !== "string") return false;
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return emailRegex.test(email.trim());
+}
+
+function validateOtp(otp) {
+  if (!otp || typeof otp !== "string") return false;
+  return /^\d{6}$/.test(otp.trim());
+}
+
 module.exports = {
   isValidUUID,
   parsePagination,
   validateEthiopianPhone,
   normalizeEthiopianPhone,
   validatePasswordStrength,
+  validateEmail,
+  validateOtp,
   calculateDobFromAge,
   validateVitals,
 };
+

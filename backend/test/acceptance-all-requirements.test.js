@@ -58,11 +58,18 @@ test("Acceptance Tests for All 12 Hospital Management System Requirements", asyn
       if (existingUser.rows.length > 0) {
         return existingUser.rows[0];
       }
+      const email = `${username}@hospital.local`;
+      await pool.query(
+        `INSERT INTO staff_email_verifications (email, verified, verified_at)
+         VALUES ($1, TRUE, CURRENT_TIMESTAMP)
+         ON CONFLICT (email) DO UPDATE SET verified = TRUE, verified_at = CURRENT_TIMESTAMP`,
+        [email]
+      );
       const staffRes = await staffService.createStaff(
         {
           firstName,
           lastName,
-          email: `${username}@hospital.local`,
+          email,
           phone,
           department,
           specialty,
@@ -72,6 +79,7 @@ test("Acceptance Tests for All 12 Hospital Management System Requirements", asyn
         },
         adminUser.id
       );
+
       const userRow = await pool.query("SELECT id FROM users WHERE staff_id = $1", [staffRes.staffId]);
       return { id: userRow.rows[0].id, username, role: roleName, staff_id: staffRes.staffId };
     }

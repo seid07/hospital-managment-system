@@ -27,6 +27,20 @@ function errorHandler(err, req, res, next) {
     });
   }
 
+  if (err.message && err.message.includes("REFERRAL_ACCESS_DENIED")) {
+    return res.status(403).json({
+      success: false,
+      message: "You do not have permission to access or participate in this referral.",
+    });
+  }
+
+  if (err.message && err.message.includes("REFERRAL_NOT_FOUND")) {
+    return res.status(404).json({
+      success: false,
+      message: "Referral record not found.",
+    });
+  }
+
   const statusCode = err.statusCode || (err.status && typeof err.status === "number" ? err.status : 500);
 
   return res.status(statusCode).json({
@@ -34,6 +48,7 @@ function errorHandler(err, req, res, next) {
     message: err.message || "An internal server error occurred.",
   });
 }
+
 
 module.exports = {
   errorHandler,

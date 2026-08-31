@@ -1074,6 +1074,100 @@ async function getRegistrationCardStatus(patientId) {
   };
 }
 
+/**
+ * Requirement 6: Full Transaction History & Payment Records
+ * Used for administrative reporting, cashier reconciliation, and strict printing/exporting.
+ */
+async function getFullTransactionHistory(query = {}) {
+  const { startDate, endDate, search, paymentMethod, page = 1, limit = 50 } = query;
+  const conditions = [];
+  const params = [];
+
+  if (startDate) {
+    params.push(startDate);
+    conditions.push(`p.created_at >= $${params.length}::date`);
+  }
+  if (endDate) {
+    params.push(endDate);
+    conditions.push(`p.created_at <= ($${params.length}::date + INTERVAL '1 day')`);
+  }
+  if (paymentMethod) {
+    params.push(paymentMethod);
+    conditions.push(`p.payment_method = $${params.length}`);
+  }
+  if (search && search.trim()) {
+    params.push(`%${search.trim()}%`);
+    conditions.push(`(
+      p.payment_number ILIKE $${params.length}
+      OR p.transaction_reference ILIKE $${params.length}
+      OR pat.patient_number ILIKE $${params.length}
+      OR pat.first_name ILIKE $${params.length}
+      OR pat.last_name ILIKE $${params.length}
+      OR inv.invoice_number ILIKE $${params.length}
+    )`);
+  }
+
+  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+
+  const countRes = await pool.query(
+    `SELECT COUNT(*) AS total
+     FROM payments p
+     LEFT JOIN invoices inv ON p.invoice_id = inv.id
+     LEFT JOIN patients pat ON p.patient_id = pat.id
+     ${whereClause}`,
+    params
+  );
+  const total = parseInt(countRes.rows[0]?.total || 0, 10);
+
+  const parsedPage = Math.max(1, parseInt(page, 10) || 1);
+  const parsedLimit = Math.min(200, Math.max(1, parseInt(limit, 10) || 50));
+  const offset = (parsedPage - 1) * parsedLimit;
+  const listParams = [...params, parsedLimit, offset];
+
+  const listRes = await pool.query(
+    `SELECT
+       p.id,
+       p.payment_number,
+       p.amount,
+       p.payment_method,
+       p.transaction_reference,
+       p.created_at AS payment_date,
+       p.created_at,
+       inv.status AS status,
+       p.notes,
+       inv.id AS invoice_id,
+       inv.invoice_number,
+       pat.id AS patient_id,
+       pat.patient_number,
+       pat.first_name AS patient_first_name,
+       pat.last_name AS patient_last_name,
+       pat.phone AS patient_phone,
+       rec_staff.first_name AS received_by_first_name,
+       rec_staff.last_name AS received_by_last_name,
+       r.name AS received_by_role
+     FROM payments p
+     LEFT JOIN invoices inv ON p.invoice_id = inv.id
+     LEFT JOIN patients pat ON p.patient_id = pat.id
+     LEFT JOIN users u ON p.received_by = u.id
+
+     LEFT JOIN staff rec_staff ON u.staff_id = rec_staff.id
+     LEFT JOIN roles r ON rec_staff.role_id = r.id
+     ${whereClause}
+     ORDER BY p.created_at DESC
+     LIMIT $${listParams.length - 1} OFFSET $${listParams.length}`,
+    listParams
+  );
+
+
+  return {
+    transactions: listRes.rows,
+    total,
+    page: parsedPage,
+    limit: parsedLimit,
+    totalPages: Math.ceil(total / parsedLimit) || 1,
+  };
+}
+
 module.exports = {
   getBillableServices,
   addBillableService,
@@ -1085,5 +1179,7 @@ module.exports = {
   getPendingCashierOrders,
   getPendingCashierOrdersGrouped,
   getRegistrationCardStatus,
+  getFullTransactionHistory,
   reversePayment,
 };
+

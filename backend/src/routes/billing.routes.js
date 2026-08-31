@@ -66,4 +66,26 @@ router.get(
   billingController.getPendingCashierOrdersGrouped
 );
 
+// Requirement 6: Full Transaction History Print & Export
+// ONLY REGISTRAR and ADMIN are permitted to print / export full transaction history.
+// Any other role (DOCTOR, NURSE, LAB_TECH, RADIOLOGIST, PHARMACIST, SURGEON, FINANCE, etc.) will receive 403 Forbidden.
+router.get(
+  "/transactions/full-history",
+  authorizeRoles("ADMIN", "REGISTRAR"),
+  billingController.getFullTransactionHistory
+);
+
+router.get(
+  "/transactions/print",
+  authorizeRoles("ADMIN", "REGISTRAR"),
+  billingController.getFullTransactionHistory
+);
+
+router.get(
+  "/transactions/export",
+  authorizeRoles("ADMIN", "REGISTRAR"),
+  billingController.getFullTransactionHistory
+);
+
+
 module.exports = router;

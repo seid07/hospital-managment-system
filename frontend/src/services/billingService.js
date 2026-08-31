@@ -52,3 +52,16 @@ export async function getPendingCashierOrdersGrouped(query = {}) {
   if (query.search) params.append("search", query.search);
   return get(`/billing/pending-orders-grouped?${params.toString()}`);
 }
+
+export async function getFullTransactionHistory(query = {}) {
+  const params = new URLSearchParams();
+  if (query.page) params.append("page", query.page);
+  if (query.limit) params.append("limit", query.limit);
+  if (query.startDate) params.append("startDate", query.startDate);
+  if (query.endDate) params.append("endDate", query.endDate);
+  if (query.paymentMethod) params.append("paymentMethod", query.paymentMethod);
+  if (query.search) params.append("search", query.search);
+
+  return get(`/billing/transactions/full-history?${params.toString()}`);
+}
+

@@ -59,13 +59,15 @@ async function login(req, res) {
 
     return res.status(200).json({
       success: true,
+      token: result.token,
+      user: result.user,
       data: result,
     });
   } catch (error) {
     if (error.message === "ACCOUNT_INACTIVE") {
       return res.status(403).json({
         success: false,
-        message: "This staff account is inactive.",
+        message: "This staff account is inactive. Please contact the administrator.",
       });
     }
 
@@ -80,57 +82,224 @@ async function login(req, res) {
 
     return res.status(500).json({
       success: false,
-      message: "Unable to process login.",
+      message: "Unable to sign in.",
     });
   }
 }
 
-async function forgotPassword(req, res) {
+/**
+ * Change Password Step 1: Verify current password
+ */
+async function verifyCurrentPassword(req, res) {
   try {
-    const { username, lastName, email, phone, department } = req.body;
-    const result = await authService.requestPasswordReset({
+    const { currentPassword } = req.body;
+    const userId = req.user?.userId || req.user?.id;
+
+    if (!currentPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "Current password is required.",
+      });
+    }
+
+    const result = await authService.verifyCurrentPassword(userId, currentPassword);
+    return res.status(200).json({
+      success: true,
+      valid: result.valid,
+      message: result.message,
+      data: result,
+    });
+  } catch (error) {
+    if (
+      error.message?.startsWith("INVALID_CURRENT_PASSWORD") ||
+      error.message?.startsWith("CURRENT_PASSWORD_REQUIRED")
+    ) {
+      return res.status(400).json({
+        success: false,
+        valid: false,
+        message: error.message.replace(/^[^:]+:\s*/, ""),
+      });
+    }
+
+    console.error("Verify password error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Unable to verify current password.",
+    });
+  }
+}
+
+/**
+ * Change Password Step 2: Set new password
+ */
+async function changePassword(req, res) {
+  try {
+    const { currentPassword, newPassword, confirmNewPassword } = req.body;
+    const userId = req.user?.userId || req.user?.id;
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "Current password and new password are required.",
+      });
+    }
+
+    const result = await authService.changePassword(
+      userId,
+      currentPassword,
+      newPassword,
+      confirmNewPassword
+    );
+
+    return res.status(200).json({
+      success: true,
+      token: result.token,
+      user: result.user,
+      data: result,
+    });
+  } catch (error) {
+    if (
+      error.message?.startsWith("INVALID_CURRENT_PASSWORD") ||
+      error.message?.startsWith("SAME_PASSWORD") ||
+      error.message?.startsWith("PASSWORD_MISMATCH") ||
+      error.message?.startsWith("WEAK_PASSWORD") ||
+      error.message?.startsWith("CURRENT_PASSWORD_REQUIRED") ||
+      error.message?.startsWith("NEW_PASSWORD_REQUIRED")
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: error.message.replace(/^[^:]+:\s*/, ""),
+      });
+    }
+
+    console.error("Change password error:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Unable to change password.",
+    });
+  }
+}
+
+/**
+ * Forgot Password Step 1: Request 6-digit OTP
+ */
+async function requestResetOtp(req, res) {
+  try {
+    const { username, email, lastName, phone, department } = req.body;
+
+    if (!username || !email) {
+      return res.status(400).json({
+        success: false,
+        message: "Username and email are required.",
+      });
+    }
+
+    const result = await authService.requestPasswordResetOtp({
       username,
-      lastName,
       email,
+      lastName,
       phone,
       department,
     });
+
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+
     return res.status(200).json(result);
   } catch (error) {
-    console.error("Forgot password error:", error);
+    if (error.message?.startsWith("COOLDOWN_ACTIVE")) {
+      return res.status(429).json({
+        success: false,
+        message: error.message.replace(/^[^:]+:\s*/, ""),
+      });
+    }
+    console.error("Request reset OTP error:", error);
     return res.status(500).json({
       success: false,
-      message: "Unable to process password reset request.",
+      message: "Unable to process verification code request.",
     });
   }
 }
 
+/**
+ * Forgot Password Step 2: Verify 6-digit OTP
+ */
+async function verifyResetOtp(req, res) {
+  try {
+    const { username, email, otp } = req.body;
+
+    if (!username || !email || !otp) {
+      return res.status(400).json({
+        success: false,
+        message: "Username, email, and 6-digit verification code are required.",
+      });
+    }
+
+    const result = await authService.verifyPasswordResetOtp({
+      username,
+      email,
+      otp,
+    });
+
+    return res.status(200).json({
+      success: true,
+      resetToken: result.resetToken,
+      message: result.message,
+      data: result,
+    });
+  } catch (error) {
+
+    if (
+      error.message?.startsWith("INVALID_OTP") ||
+      error.message?.startsWith("INVALID_OTP_FORMAT") ||
+      error.message?.startsWith("OTP_EXPIRED") ||
+      error.message?.startsWith("MAX_ATTEMPTS_EXCEEDED") ||
+      error.message?.startsWith("INVALID_OR_EXPIRED_CODE")
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: error.message.replace(/^[^:]+:\s*/, ""),
+      });
+    }
+
+    console.error("Verify reset OTP error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Unable to verify verification code.",
+    });
+  }
+}
+
+/**
+ * Forgot Password Step 3: Set new password
+ */
 async function resetPassword(req, res) {
   try {
-    const { token, newPassword } = req.body;
+    const { token, resetToken, newPassword, confirmPassword } = req.body;
+    const effectiveToken = resetToken || token;
 
-    if (!token || !newPassword) {
+    if (!effectiveToken || !newPassword) {
       return res.status(400).json({
         success: false,
         message: "Reset token and new password are required.",
       });
     }
 
-    const result = await authService.resetPassword(token, newPassword);
+    const result = await authService.resetPassword(effectiveToken, newPassword, confirmPassword);
     return res.status(200).json(result);
   } catch (error) {
-    if (error.message?.startsWith("WEAK_PASSWORD")) {
+    if (
+      error.message?.startsWith("WEAK_PASSWORD") ||
+      error.message?.startsWith("PASSWORD_MISMATCH") ||
+      error.message?.startsWith("INVALID_OR_EXPIRED_TOKEN")
+    ) {
       return res.status(400).json({
         success: false,
-        message: error.message.replace("WEAK_PASSWORD: ", ""),
+        message: error.message.replace(/^[^:]+:\s*/, ""),
       });
     }
-    if (error.message === "INVALID_OR_EXPIRED_TOKEN") {
-      return res.status(400).json({
-        success: false,
-        message: "Password reset token is invalid or has expired. Please request a new one.",
-      });
-    }
+
     console.error("Reset password error:", error);
     return res.status(500).json({
       success: false,
@@ -143,6 +312,12 @@ module.exports = {
   getSystemStatus,
   setupAdmin,
   login,
-  forgotPassword,
+  verifyPassword: verifyCurrentPassword,
+  verifyCurrentPassword,
+  changePassword,
+  requestResetOtp,
+  verifyResetOtp,
   resetPassword,
+  forgotPassword: requestResetOtp,
 };
+

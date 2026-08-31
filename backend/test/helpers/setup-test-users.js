@@ -8,23 +8,71 @@ async function ensureTestUsers() {
   const passwordHash = await bcrypt.hash("Admin@12345", 10);
   const staffPassHash = await bcrypt.hash("Hospital@12345", 10);
 
-  // 1. Admin
-  const adminStaffRes = await pool.query(
-    `INSERT INTO staff (first_name, last_name, email, phone, department, role_id)
-     VALUES ('System', 'Administrator', 'admin@hospital.local', '0911000000', 'Administration', $1)
-     ON CONFLICT (email) DO UPDATE SET first_name = EXCLUDED.first_name, last_name = EXCLUDED.last_name, department = EXCLUDED.department, phone = EXCLUDED.phone
-     RETURNING id`,
-    [roleMap.ADMIN]
-  );
-  const adminStaffId = adminStaffRes.rows[0].id;
-  await pool.query(
-    `INSERT INTO users (staff_id, username, password_hash)
-     VALUES ($1, 'admin', $2)
-     ON CONFLICT (username) DO UPDATE SET password_hash = EXCLUDED.password_hash, staff_id = EXCLUDED.staff_id`,
-    [adminStaffId, passwordHash]
-  );
+  // Helper to upsert a staff member and their corresponding user record
+  async function upsertStaffUser({ username, role, first, last, email, phone, dept, spec, passHash }) {
+    if (!roleMap[role]) return;
 
-  // 2. Helper for staff users
+    // Check if staff already exists by email or phone
+    const existingStaff = await pool.query(
+      "SELECT id FROM staff WHERE email = $1 OR phone = $2 LIMIT 1",
+      [email, phone]
+    );
+
+    let staffId;
+    if (existingStaff.rows.length > 0) {
+      staffId = existingStaff.rows[0].id;
+      await pool.query(
+        `UPDATE staff 
+         SET first_name = $1, last_name = $2, email = $3, phone = $4, department = $5, specialty = $6, role_id = $7, is_active = TRUE
+         WHERE id = $8`,
+        [first, last, email, phone, dept, spec || null, roleMap[role], staffId]
+      );
+    } else {
+      const inserted = await pool.query(
+        `INSERT INTO staff (first_name, last_name, email, phone, department, specialty, role_id, is_active)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE)
+         RETURNING id`,
+        [first, last, email, phone, dept, spec || null, roleMap[role]]
+      );
+      staffId = inserted.rows[0].id;
+    }
+
+    // Now upsert the user record for this staffId and username
+    const userByStaff = await pool.query("SELECT id FROM users WHERE staff_id = $1", [staffId]);
+    const userByUsername = await pool.query("SELECT id FROM users WHERE username = $1", [username]);
+
+    if (userByStaff.rows.length > 0) {
+      await pool.query(
+        "UPDATE users SET username = $1, password_hash = $2 WHERE staff_id = $3",
+        [username, passHash, staffId]
+      );
+    } else if (userByUsername.rows.length > 0) {
+      await pool.query(
+        "UPDATE users SET staff_id = $1, password_hash = $2 WHERE username = $3",
+        [staffId, passHash, username]
+      );
+    } else {
+      await pool.query(
+        "INSERT INTO users (staff_id, username, password_hash) VALUES ($1, $2, $3)",
+        [staffId, username, passHash]
+      );
+    }
+  }
+
+  // 1. Admin
+  await upsertStaffUser({
+    username: "admin",
+    role: "ADMIN",
+    first: "System",
+    last: "Administrator",
+    email: "admin@hospital.local",
+    phone: "0911000000",
+    dept: "Administration",
+    spec: "Hospital System Administrator",
+    passHash: passwordHash,
+  });
+
+  // 2. Staff users
   const staffDefinitions = [
     { username: "registrar", role: "REGISTRAR", first: "Abebe", last: "Kebede", email: "registrar@hospital.local", phone: "0911111111", dept: "Patient Services" },
     { username: "doctor_smith", role: "DOCTOR", first: "Dawit", last: "Smith", email: "doctor@hospital.local", phone: "0922222222", dept: "Cardiology", spec: "Cardiology" },
@@ -36,22 +84,19 @@ async function ensureTestUsers() {
   ];
 
   for (const s of staffDefinitions) {
-    if (roleMap[s.role]) {
-      const staffRes = await pool.query(
-        `INSERT INTO staff (first_name, last_name, email, phone, department, specialty, role_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
-         ON CONFLICT (email) DO UPDATE SET first_name = EXCLUDED.first_name, last_name = EXCLUDED.last_name, department = EXCLUDED.department, phone = EXCLUDED.phone
-         RETURNING id`,
-        [s.first, s.last, s.email, s.phone, s.dept, s.spec || null, roleMap[s.role]]
-      );
-      await pool.query(
-        `INSERT INTO users (staff_id, username, password_hash)
-         VALUES ($1, $2, $3)
-         ON CONFLICT (username) DO UPDATE SET password_hash = EXCLUDED.password_hash, staff_id = EXCLUDED.staff_id`,
-        [staffRes.rows[0].id, s.username, staffPassHash]
-      );
-    }
+    await upsertStaffUser({
+      username: s.username,
+      role: s.role,
+      first: s.first,
+      last: s.last,
+      email: s.email,
+      phone: s.phone,
+      dept: s.dept,
+      spec: s.spec,
+      passHash: staffPassHash,
+    });
   }
 }
 
 module.exports = { ensureTestUsers };
+

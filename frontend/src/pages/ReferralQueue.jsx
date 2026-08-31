@@ -1,7 +1,8 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { Link } from "react-router-dom";
 import AppShell from "../components/layout/AppShell";
 import Modal from "../components/common/Modal";
+import { useAuth } from "../context/useAuth";
 import {
   getReferralQueue,
   getSentReferrals,
@@ -19,6 +20,8 @@ import {
   ChevronDown, ChevronUp, MessageSquare, FileCheck, Search, RefreshCw,
   Stethoscope
 } from "lucide-react";
+
+
 
 const URGENCY_CONFIG = {
   EMERGENCY: { label: "EMERGENCY", color: "#ef4444", bg: "#fef2f2", icon: AlertTriangle },
@@ -80,6 +83,8 @@ export default function ReferralQueue() {
   const [refreshTrigger, setRefreshTrigger] = useState(0);
 
   // Response modal
+  const { user } = useAuth();
+  const messagesEndRef = useRef(null);
   const [showResponseModal, setShowResponseModal] = useState(false);
   const [respondingReferral, setRespondingReferral] = useState(null);
   const [responseForm, setResponseForm] = useState({
@@ -99,6 +104,7 @@ export default function ReferralQueue() {
   const [newMessage, setNewMessage] = useState("");
   const [sendingMsg, setSendingMsg] = useState(false);
   const [msgError, setMsgError] = useState("");
+
 
   // New Referral Form state
   const [doctorsList, setDoctorsList] = useState([]);
@@ -254,6 +260,37 @@ export default function ReferralQueue() {
     }
   }
 
+  // Auto-scroll chat to bottom
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  useEffect(() => {
+    if (showMessagesModal) {
+      scrollToBottom();
+    }
+  }, [messages, showMessagesModal]);
+
+  // Polling for active referral chat messages (every 4s)
+  useEffect(() => {
+    let timer = null;
+    if (showMessagesModal && activeReferral?.id) {
+      timer = setInterval(async () => {
+        try {
+          const res = await getReferralMessages(activeReferral.id);
+          if (res.data) {
+            setMessages(res.data);
+          }
+        } catch {
+          // silent polling fail
+        }
+      }, 4000);
+    }
+    return () => {
+      if (timer) clearInterval(timer);
+    };
+  }, [showMessagesModal, activeReferral]);
+
   async function handleOpenMessages(referral) {
     setActiveReferral(referral);
     setMsgError("");
@@ -276,12 +313,14 @@ export default function ReferralQueue() {
       const res = await sendReferralMessage(activeReferral.id, newMessage.trim());
       setMessages((prev) => [...prev, res.data]);
       setNewMessage("");
+      setTimeout(scrollToBottom, 50);
     } catch (err) {
       setMsgError(err.message || "Failed to send message.");
     } finally {
       setSendingMsg(false);
     }
   }
+
 
   function handleOpenRespond(referral) {
     setRespondingReferral(referral);
@@ -1059,56 +1098,218 @@ export default function ReferralQueue() {
         </Modal>
       )}
 
-      {/* Messages Thread Modal */}
+      {/* Telegram-style Doctor-to-Doctor Referral Chat Modal (Requirement 5) */}
       {showMessagesModal && (
         <Modal
-          title={`Case Discussion — ${activeReferral?.patient_first_name} ${activeReferral?.patient_last_name}`}
+          title={`Doctor Case Discussion — ${activeReferral?.patient_first_name} ${activeReferral?.patient_last_name} (${activeReferral?.patient_number || "MRN"})`}
           isOpen={showMessagesModal}
           onClose={() => setShowMessagesModal(false)}
         >
-          {msgError && <div className="alert alert-danger" style={{ marginBottom: "12px" }}>{msgError}</div>}
-
-          <div style={{ maxHeight: "300px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "10px", marginBottom: "14px", padding: "10px", background: "var(--surface-muted)", borderRadius: "var(--radius-sm)" }}>
-            {messages.length === 0 ? (
-              <div style={{ textAlign: "center", color: "var(--text-muted)", padding: "20px 0", fontSize: "13px" }}>
-                No messages yet. Send a note to the other doctor below.
-              </div>
-            ) : (
-              messages.map((m) => (
-                <div
-                  key={m.id}
-                  style={{
-                    padding: "8px 12px",
-                    borderRadius: "8px",
-                    background: "var(--surface)",
-                    border: "1px solid var(--border)",
-                  }}
-                >
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px", color: "var(--text-muted)", marginBottom: "4px" }}>
-                    <strong>Dr. {m.sender_first_name} {m.sender_last_name} ({m.sender_role})</strong>
-                    <span>{new Date(m.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
-                  </div>
-                  <div style={{ fontSize: "13px", color: "var(--text-main)" }}>{m.message}</div>
-                </div>
-              ))
-            )}
+          {/* Referral Context Header Banner */}
+          <div
+            style={{
+              background: "var(--surface-muted, #f8fafc)",
+              border: "1px solid var(--border)",
+              borderRadius: "8px",
+              padding: "10px 14px",
+              marginBottom: "14px",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              flexWrap: "wrap",
+              gap: "8px",
+              fontSize: "12px",
+            }}
+          >
+            <div>
+              <span style={{ color: "var(--text-muted)" }}>Referring: </span>
+              <strong>Dr. {activeReferral?.referring_first_name} {activeReferral?.referring_last_name}</strong>
+              <span style={{ color: "var(--text-muted)", margin: "0 6px" }}>➔</span>
+              <span style={{ color: "var(--text-muted)" }}>Receiving: </span>
+              <strong>Dr. {activeReferral?.receiving_first_name} {activeReferral?.receiving_last_name}</strong>
+            </div>
+            <div>
+              <UrgencyBadge urgency={activeReferral?.urgency} />
+            </div>
           </div>
 
-          <form onSubmit={handleSendMessage} style={{ display: "flex", gap: "8px" }}>
+          {msgError && (
+            <div className="alert alert-error" style={{ marginBottom: "12px", fontSize: "12px" }}>
+              {msgError}
+            </div>
+          )}
+
+          {/* Telegram-Style Chat Messages Stream */}
+          <div
+            style={{
+              height: "360px",
+              overflowY: "auto",
+              display: "flex",
+              flexDirection: "column",
+              gap: "10px",
+              padding: "16px",
+              background: "var(--surface-subtle, #0f172a10)",
+              borderRadius: "10px",
+              border: "1px solid var(--border)",
+              marginBottom: "12px",
+            }}
+          >
+            {messages.length === 0 ? (
+              <div style={{ textAlign: "center", color: "var(--text-muted)", padding: "40px 10px", fontSize: "13px" }}>
+                <Stethoscope size={36} color="var(--primary)" style={{ opacity: 0.5, margin: "0 auto 8px auto" }} />
+                <div style={{ fontWeight: 600, color: "var(--text-main)", marginBottom: "4px" }}>
+                  Clinical Case Discussion Thread
+                </div>
+                <div>No messages exchanged yet. Send a direct consultation note below.</div>
+              </div>
+            ) : (
+              messages.map((m, idx) => {
+                const currentStaffId = user?.staffId || user?.staff_id;
+                const isSentByMe = m.sender_id === currentStaffId;
+
+                // Date separator logic
+                const prevMsg = idx > 0 ? messages[idx - 1] : null;
+                const showDateSeparator =
+                  !prevMsg ||
+                  new Date(m.created_at).toDateString() !== new Date(prevMsg.created_at).toDateString();
+
+                const msgDateStr = new Date(m.created_at).toLocaleDateString(undefined, {
+                  weekday: "short",
+                  month: "short",
+                  day: "numeric",
+                });
+
+                return (
+                  <div key={m.id || idx} style={{ display: "flex", flexDirection: "column" }}>
+                    {showDateSeparator && (
+                      <div
+                        style={{
+                          textAlign: "center",
+                          margin: "10px 0",
+                          position: "relative",
+                        }}
+                      >
+                        <span
+                          style={{
+                            background: "var(--surface, #1e293b)",
+                            border: "1px solid var(--border)",
+                            color: "var(--text-muted)",
+                            fontSize: "10px",
+                            fontWeight: 700,
+                            padding: "2px 10px",
+                            borderRadius: "10px",
+                            textTransform: "uppercase",
+                            letterSpacing: "0.5px",
+                          }}
+                        >
+                          {msgDateStr}
+                        </span>
+                      </div>
+                    )}
+
+                    {/* Chat Bubble */}
+                    <div
+                      style={{
+                        alignSelf: isSentByMe ? "flex-end" : "flex-start",
+                        maxWidth: "78%",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: "2px",
+                      }}
+                    >
+                      {/* Sender label for received messages */}
+                      {!isSentByMe && (
+                        <span
+                          style={{
+                            fontSize: "11px",
+                            fontWeight: 600,
+                            color: "var(--primary, #38bdf8)",
+                            paddingLeft: "4px",
+                          }}
+                        >
+                          Dr. {m.sender_first_name} {m.sender_last_name} ({m.sender_role || "Doctor"})
+                        </span>
+                      )}
+
+                      <div
+                        style={{
+                          padding: "9px 13px",
+                          borderRadius: isSentByMe
+                            ? "14px 14px 2px 14px"
+                            : "14px 14px 14px 2px",
+                          background: isSentByMe
+                            ? "linear-gradient(135deg, #0284c7 0%, #0369a1 100%)"
+                            : "var(--surface, #ffffff)",
+                          color: isSentByMe ? "#ffffff" : "var(--text-main)",
+                          border: isSentByMe ? "none" : "1px solid var(--border)",
+                          boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
+                          fontSize: "13px",
+                          lineHeight: "1.4",
+                          wordBreak: "break-word",
+                        }}
+                      >
+                        <div>{m.message}</div>
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "flex-end",
+                            alignItems: "center",
+                            gap: "3px",
+                            fontSize: "10px",
+                            color: isSentByMe ? "rgba(255,255,255,0.75)" : "var(--text-muted)",
+                            marginTop: "4px",
+                          }}
+                        >
+                          <span>
+                            {new Date(m.created_at).toLocaleTimeString([], {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </span>
+                          {isSentByMe && <span>✓✓</span>}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+            <div ref={messagesEndRef} />
+          </div>
+
+          {/* Message Input Box */}
+          <form onSubmit={handleSendMessage} style={{ display: "flex", gap: "8px", alignItems: "center" }}>
             <input
               type="text"
-              placeholder="Type message to consulting doctor..."
+              placeholder="Type your clinical notes or question... (Press Enter to send)"
               value={newMessage}
               onChange={(e) => setNewMessage(e.target.value)}
               className="input"
-              style={{ flex: 1 }}
+              style={{ flex: 1, padding: "10px 14px", borderRadius: "20px" }}
+              disabled={sendingMsg}
+              autoFocus
             />
-            <button type="submit" className="button button-primary" disabled={sendingMsg || !newMessage.trim()}>
-              <Send size={14} />
+            <button
+              type="submit"
+              className="button button-primary"
+              disabled={sendingMsg || !newMessage.trim()}
+              style={{
+                borderRadius: "50%",
+                width: "40px",
+                height: "40px",
+                padding: 0,
+                display: "grid",
+                placeItems: "center",
+                flexShrink: 0,
+              }}
+              title="Send message (Enter)"
+            >
+              <Send size={16} />
             </button>
           </form>
         </Modal>
       )}
     </AppShell>
   );
+
 }

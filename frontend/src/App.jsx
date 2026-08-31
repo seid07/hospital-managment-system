@@ -4,6 +4,7 @@ import ProtectedRoute from "./routes/ProtectedRoute";
 
 import Login from "./pages/Login";
 import ResetPassword from "./pages/ResetPassword";
+import ChangePassword from "./pages/ChangePassword";
 import Dashboard from "./pages/Dashboard";
 import RegistrarVisitDesk from "./pages/RegistrarVisitDesk";
 import Patients from "./pages/Patients";
@@ -30,6 +31,7 @@ import DoctorSchedules from "./pages/DoctorSchedules";
 import AdminAuditLogs from "./pages/AdminAuditLogs";
 import Reports from "./pages/Reports";
 import ReferralQueue from "./pages/ReferralQueue";
+import VerifyEmail from "./pages/VerifyEmail";
 
 function App() {
   return (
@@ -38,10 +40,16 @@ function App() {
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/reset-password" element={<ResetPassword />} />
+          <Route path="/verify-email" element={<VerifyEmail />} />
 
           <Route element={<ProtectedRoute />}>
+
+            {/* Security & Authentication */}
+            <Route path="/change-password" element={<ChangePassword />} />
+
             {/* Dashboards */}
             <Route path="/dashboard/:role" element={<Dashboard />} />
+
 
             {/* Service-First Registrar Workspace */}
             <Route path="/registrar/desk" element={<RegistrarVisitDesk />} />

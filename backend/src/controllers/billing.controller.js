@@ -324,6 +324,28 @@ async function getPendingCashierOrdersGrouped(req, res) {
   }
 }
 
+async function getFullTransactionHistory(req, res) {
+  try {
+    const result = await billingService.getFullTransactionHistory(req.query);
+    return res.status(200).json({
+      success: true,
+      data: result.transactions,
+      pagination: {
+        total: result.total,
+        page: result.page,
+        limit: result.limit,
+        totalPages: result.totalPages,
+      },
+    });
+  } catch (error) {
+    console.error("Get full transaction history error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Unable to retrieve full transaction history.",
+    });
+  }
+}
+
 module.exports = {
   getServices,
   addService,
@@ -334,5 +356,7 @@ module.exports = {
   getInvoice,
   getPendingCashierOrders,
   getPendingCashierOrdersGrouped,
+  getFullTransactionHistory,
   reversePayment,
 };
+

@@ -1,13 +1,26 @@
 import { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
+
 import AppShell from "../components/layout/AppShell";
 import Modal from "../components/common/Modal";
 import ToastPrompt from "../components/common/ToastPrompt";
-import { getStaff, getRoles, createStaff, updateStaff, deleteStaffPermanently, updateStaffStatus, getDoctorScheduledAppointments } from "../services/staffService";
+import {
+  getStaff,
+  getRoles,
+  createStaff,
+  updateStaff,
+  deleteStaffPermanently,
+  updateStaffStatus,
+  getDoctorScheduledAppointments,
+  checkEmailAvailability,
+  sendStaffEmailVerification,
+  resendStaffCredentials,
+} from "../services/staffService";
 import { createSchedule } from "../services/scheduleService";
 import { validateEthiopianPhone } from "../utils/phone";
 import { checkPasswordStrength, generateSecurePassword } from "../utils/password";
 import { useDebounce } from "../hooks/useDebounce";
+
 
 const DAYS = [
   { value: 0, label: "Sunday" },
@@ -48,8 +61,15 @@ function AdminStaff() {
   const [success, setSuccess] = useState("");
   const [form, setForm] = useState(INITIAL_FORM);
   const [showPassword, setShowPassword] = useState(false);
+  const [copiedPassword, setCopiedPassword] = useState(false);
+  const [emailStatus, setEmailStatus] = useState({ checking: false, available: null, verified: null, verifiedAt: null, message: "" });
+  const [sendingVerification, setSendingVerification] = useState(false);
+  const [verificationCooldown, setVerificationCooldown] = useState(0);
+  const [verificationSent, setVerificationSent] = useState(false);
+  const [resendingCredentials, setResendingCredentials] = useState({});
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebounce(search, 300);
+  const debouncedEmail = useDebounce(form.email, 400);
   const [reloadTrigger, setReloadTrigger] = useState(0);
 
   // Available Work Date / Consultation Slot builder — multi-day selection
@@ -118,7 +138,7 @@ function AdminStaff() {
     };
   }, [debouncedSearch, reloadTrigger]);
 
-  // Auto-dismiss success & error notifications after 4 seconds (Requirement 2)
+  // Auto-dismiss success & error notifications after 4 seconds
   useEffect(() => {
     if (success) {
       const timer = setTimeout(() => {
@@ -164,12 +184,207 @@ function AdminStaff() {
     }
   }, [deactivationError]);
 
+  // Cooldown countdown timer for resending email verification
+  useEffect(() => {
+    if (verificationCooldown > 0) {
+      const timer = setTimeout(() => {
+        setVerificationCooldown((prev) => prev - 1);
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [verificationCooldown]);
+
+
+  // Real-time email validation and verification check
+  useEffect(() => {
+    let cancelled = false;
+    async function validateEmailLive() {
+      const emailVal = debouncedEmail ? debouncedEmail.trim() : "";
+      if (!emailVal) {
+        setEmailStatus({ checking: false, available: null, verified: null, verifiedAt: null, message: "" });
+        setVerificationSent(false);
+        return;
+      }
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(emailVal)) {
+        setEmailStatus({
+          checking: false,
+          available: false,
+          verified: false,
+          verifiedAt: null,
+          message: "Invalid email format (e.g. user@hospital.local)",
+        });
+        return;
+      }
+
+      setEmailStatus((prev) => ({ ...prev, checking: true, message: "Checking email verification status..." }));
+      try {
+        const res = await checkEmailAvailability(emailVal);
+        if (!cancelled) {
+          setEmailStatus({
+            checking: false,
+            available: res.available,
+            verified: res.verified || false,
+            verifiedAt: res.verifiedAt || null,
+            message: res.available
+              ? res.verified
+                ? "✓ Email verified & available"
+                : "Email available. Ownership verification required."
+              : res.message || "Email already exists ✕",
+          });
+        }
+      } catch {
+        if (!cancelled) {
+          setEmailStatus({ checking: false, available: null, verified: null, verifiedAt: null, message: "" });
+        }
+      }
+    }
+
+    validateEmailLive();
+    return () => {
+      cancelled = true;
+    };
+  }, [debouncedEmail]);
+
+  // Auto-polling verification status while awaiting recipient click
+  useEffect(() => {
+    let timer = null;
+    let cancelled = false;
+
+    async function pollStatus() {
+      const emailVal = form.email ? form.email.trim() : "";
+      if (!emailVal || !verificationSent) return;
+
+      try {
+        const res = await checkEmailAvailability(emailVal);
+        if (!cancelled && res.available) {
+          if (res.verified) {
+            setEmailStatus({
+              checking: false,
+              available: true,
+              verified: true,
+              verifiedAt: res.verifiedAt,
+              message: "✓ Email verified & available",
+            });
+            setSuccess(`✓ Email address ${emailVal} verified by recipient! You can now create the staff account.`);
+          }
+        }
+      } catch {
+        // quiet error
+      }
+    }
+
+    if (verificationSent && emailStatus.available && !emailStatus.verified) {
+      timer = setInterval(pollStatus, 4000);
+    }
+
+    return () => {
+      cancelled = true;
+      if (timer) clearInterval(timer);
+    };
+  }, [verificationSent, emailStatus.available, emailStatus.verified, form.email]);
+
+  async function handleSendVerification() {
+    const emailVal = form.email ? form.email.trim() : "";
+    if (!emailVal) {
+      setError("Please enter an email address first.");
+      return;
+    }
+    if (emailStatus.available === false) {
+      setError("Please provide a valid and non-duplicate email address.");
+      return;
+    }
+
+    try {
+      setSendingVerification(true);
+      setError("");
+      const res = await sendStaffEmailVerification(emailVal);
+      setVerificationSent(true);
+      setVerificationCooldown(60);
+      setSuccess(res.message || `Verification link sent to ${emailVal}. Waiting for recipient to click link...`);
+    } catch (err) {
+      setError(err.message || "Failed to send email verification.");
+    } finally {
+      setSendingVerification(false);
+    }
+  }
+
+  async function handleManualCheckVerification() {
+    const emailVal = form.email ? form.email.trim() : "";
+    if (!emailVal) return;
+
+    try {
+      setEmailStatus((prev) => ({ ...prev, checking: true }));
+      const res = await checkEmailAvailability(emailVal);
+      setEmailStatus({
+        checking: false,
+        available: res.available,
+        verified: res.verified || false,
+        verifiedAt: res.verifiedAt || null,
+        message: res.available
+          ? res.verified
+            ? "✓ Email verified & available"
+            : "Verification email sent. Waiting for recipient to click link."
+          : res.message || "Email already exists",
+      });
+
+      if (res.verified) {
+        setSuccess(`✓ Email ${emailVal} has been verified successfully!`);
+      } else {
+        setError("Email has not been verified yet. Please make sure the recipient clicks the link in their email.");
+      }
+    } catch (err) {
+      setError(err.message || "Unable to check verification status.");
+    }
+  }
+
+  async function handleResendCredentials(member) {
+    setError("");
+    setSuccess("");
+    try {
+      setResendingCredentials((prev) => ({ ...prev, [member.id]: true }));
+      const res = await resendStaffCredentials(member.id);
+      setSuccess(res.message || `New temporary login credentials sent to ${member.email}.`);
+      refreshData();
+    } catch (err) {
+      setError(err.message || "Failed to resend credentials.");
+    } finally {
+      setResendingCredentials((prev) => ({ ...prev, [member.id]: false }));
+    }
+  }
+
+
   function handleChange(event) {
     const { name, value } = event.target;
     setForm((prev) => ({
       ...prev,
       [name]: value,
     }));
+  }
+
+  function handleGeneratePassword() {
+    const forbidden = [
+      form.firstName,
+      form.lastName,
+      form.username,
+      form.phone,
+      form.department,
+      "hospital",
+    ].filter(Boolean);
+    const pwd = generateSecurePassword(forbidden);
+    setForm((prev) => ({ ...prev, password: pwd }));
+    setShowPassword(true);
+  }
+
+  async function handleCopyPassword() {
+    if (!form.password) return;
+    try {
+      await navigator.clipboard.writeText(form.password);
+      setCopiedPassword(true);
+      setTimeout(() => setCopiedPassword(false), 2500);
+    } catch {
+      // Fallback
+    }
   }
 
   function handleNewSlotChange(event) {
@@ -224,6 +439,21 @@ function AdminStaff() {
     setError("");
     setSuccess("");
 
+    if (emailStatus.available === false) {
+      setError("Please provide a valid and available email address.");
+      return;
+    }
+
+    if (!emailStatus.verified) {
+      setError("Email must be verified before creating the staff account. Please send a verification link and ensure the recipient clicks it.");
+      return;
+    }
+
+    if (!form.firstName?.trim() || !form.lastName?.trim() || !form.username?.trim() || !form.email?.trim() || !form.department?.trim() || !form.role) {
+      setError("All required fields (First Name, Last Name, Username, Email, Phone, Department, Role, Password) must be filled.");
+      return;
+    }
+
     if (!validateEthiopianPhone(form.phone)) {
       setError("Please enter a valid Ethiopian phone number starting with 09, 07, or +251.");
       return;
@@ -238,6 +468,7 @@ function AdminStaff() {
       setSubmitting(true);
       const result = await createStaff(form);
       const staffId = result?.data?.staffId;
+      const emailDelivery = result?.data?.emailDelivery;
 
       let scheduleWarning = "";
       if (staffId && scheduleSlots.length > 0) {
@@ -254,8 +485,19 @@ function AdminStaff() {
         }
       }
 
-      setSuccess(`Staff account created for ${form.firstName} ${form.lastName} (${form.role}).${scheduleWarning}`);
+      let emailMsg = "";
+      if (emailDelivery?.sent) {
+        emailMsg = ` Temporary password dispatched to ${form.email}.`;
+      } else if (emailDelivery?.warning) {
+        emailMsg = ` (Email Notice: ${emailDelivery.warning})`;
+      } else if (emailDelivery && !emailDelivery.sent) {
+        emailMsg = ` (Warning: Email delivery failed: ${emailDelivery.error || "SMTP error"})`;
+      }
+
+      setSuccess(`Staff account created for ${form.firstName} ${form.lastName} (${form.role}). Must change password on first login.${emailMsg}${scheduleWarning}`);
       setForm(INITIAL_FORM);
+      setEmailStatus({ checking: false, available: null, verified: null, verifiedAt: null, message: "" });
+      setVerificationSent(false);
       setScheduleSlots([]);
       setNewSlot(INITIAL_SLOT);
       refreshData();
@@ -265,6 +507,8 @@ function AdminStaff() {
       setSubmitting(false);
     }
   }
+
+
 
   function handleOpenEdit(member) {
     setEditError("");
@@ -494,18 +738,130 @@ function AdminStaff() {
             />
           </div>
 
-          <div className="form-field">
-            <label htmlFor="email">Email Address *</label>
-            <input
-              id="email"
-              name="email"
-              type="email"
-              placeholder="staff@hospital.local"
-              value={form.email}
-              onChange={handleChange}
-              required
-            />
+          <div className="form-field" style={{ gridColumn: "1 / -1" }}>
+            <label htmlFor="email">Email Address * (Real Ownership Verification Required)</label>
+            <div style={{ display: "flex", gap: "8px", alignItems: "flex-start", flexWrap: "wrap" }}>
+              <div style={{ flex: "1 1 280px" }}>
+                <input
+                  id="email"
+                  name="email"
+                  type="email"
+                  placeholder="staff@hospital.local"
+                  value={form.email}
+                  onChange={handleChange}
+                  required
+                  style={{
+                    width: "100%",
+                    borderColor:
+                      emailStatus.verified === true
+                        ? "var(--success)"
+                        : emailStatus.available === true
+                        ? "var(--primary)"
+                        : emailStatus.available === false
+                        ? "var(--danger)"
+                        : undefined,
+                  }}
+                />
+                {emailStatus.message && (
+                  <div
+                    style={{
+                      fontSize: "12px",
+                      marginTop: "5px",
+                      fontWeight: 600,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "5px",
+                      color: emailStatus.checking
+                        ? "var(--text-muted)"
+                        : emailStatus.verified
+                        ? "var(--success)"
+                        : emailStatus.available
+                        ? "var(--primary)"
+                        : "var(--danger)",
+                    }}
+                  >
+                    {emailStatus.verified && "✓"} {emailStatus.message}
+                  </div>
+                )}
+              </div>
+
+              {/* Action button to send / resend verification link */}
+              {emailStatus.available && !emailStatus.verified && (
+                <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                  <button
+                    type="button"
+                    className="button button-primary"
+                    style={{ whiteSpace: "nowrap", padding: "8px 14px", fontSize: "12px" }}
+                    onClick={handleSendVerification}
+                    disabled={sendingVerification || verificationCooldown > 0}
+                  >
+                    {sendingVerification
+                      ? "Sending link..."
+                      : verificationCooldown > 0
+                      ? `Resend in ${verificationCooldown}s`
+                      : verificationSent
+                      ? "✉ Resend Link"
+                      : "✉ Send Verification Link"}
+                  </button>
+
+                  {verificationSent && (
+                    <button
+                      type="button"
+                      className="button button-secondary"
+                      style={{ whiteSpace: "nowrap", padding: "8px 12px", fontSize: "12px" }}
+                      onClick={handleManualCheckVerification}
+                      title="Check if recipient clicked the verification link"
+                    >
+                      🔄 Check Status
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Explanatory security banner for pending verification */}
+            {emailStatus.available && !emailStatus.verified && (
+              <div
+                style={{
+                  marginTop: "8px",
+                  padding: "10px 14px",
+                  background: "rgba(245, 158, 11, 0.08)",
+                  border: "1px solid rgba(245, 158, 11, 0.25)",
+                  borderRadius: "6px",
+                  fontSize: "12px",
+                  color: "var(--warning)",
+                  lineHeight: "1.4",
+                }}
+              >
+                <strong>Security Notice:</strong> A secure verification link must be sent to this email address. The recipient must click the link to confirm mailbox ownership before this staff account can be created.
+                {verificationSent && (
+                  <div style={{ marginTop: "4px", color: "var(--primary)", fontWeight: 600 }}>
+                    ⏳ Verification link active (expires in 30 mins). Auto-checking for recipient click...
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Success banner for verified email */}
+            {emailStatus.verified && (
+              <div
+                style={{
+                  marginTop: "8px",
+                  padding: "10px 14px",
+                  background: "rgba(16, 185, 129, 0.08)",
+                  border: "1px solid rgba(16, 185, 129, 0.25)",
+                  borderRadius: "6px",
+                  fontSize: "12px",
+                  color: "var(--success)",
+                  lineHeight: "1.4",
+                  fontWeight: 500,
+                }}
+              >
+                ✓ <strong>Email Verified:</strong> Mailbox ownership confirmed{emailStatus.verifiedAt ? ` at ${new Date(emailStatus.verifiedAt).toLocaleTimeString()}` : ""}. You may now create the staff account.
+              </div>
+            )}
           </div>
+
 
           <div className="form-field">
             <label htmlFor="phone">Phone Number (Ethiopian Format) *</label>
@@ -520,7 +876,7 @@ function AdminStaff() {
           </div>
 
           <div className="form-field">
-            <label htmlFor="role">System Role *</label>
+            <label htmlFor="role">System Role * (One Role Only)</label>
             <select
               id="role"
               name="role"
@@ -537,13 +893,14 @@ function AdminStaff() {
           </div>
 
           <div className="form-field">
-            <label htmlFor="department">Department</label>
+            <label htmlFor="department">Department *</label>
             <input
               id="department"
               name="department"
               placeholder="e.g. Cardiology, Outpatient, Lab"
               value={form.department}
               onChange={handleChange}
+              required
             />
           </div>
 
@@ -572,8 +929,8 @@ function AdminStaff() {
 
           <div className="form-field">
             <label htmlFor="password">Temporary Password *</label>
-            <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
-              <div style={{ position: "relative", flex: 1 }}>
+            <div style={{ display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" }}>
+              <div style={{ position: "relative", flex: "1 1 200px" }}>
                 <input
                   id="password"
                   name="password"
@@ -597,28 +954,45 @@ function AdminStaff() {
                     border: "none",
                     color: "var(--text-muted)",
                     cursor: "pointer",
-                    fontSize: "14px",
+                    fontSize: "13px",
                     padding: "4px",
                     lineHeight: 1,
                   }}
+                  title={showPassword ? "Hide password" : "Show password"}
                 >
-                  {showPassword ? "⊙" : "○"}
+                  {showPassword ? "Hide" : "Show"}
                 </button>
               </div>
+
               <button
                 type="button"
-                className="button button-primary"
-                style={{ whiteSpace: "nowrap", fontSize: "12px", padding: "8px 14px" }}
-                onClick={() => {
-                  const pwd = generateSecurePassword();
-                  setForm((prev) => ({ ...prev, password: pwd }));
-                  setShowPassword(true);
-                }}
-                title="Autogenerate a strong, compliant random password"
+                className="button button-secondary"
+                style={{ whiteSpace: "nowrap", fontSize: "12px", padding: "8px 12px" }}
+                onClick={handleGeneratePassword}
+                title="Generate cryptographically secure compliant password"
               >
-                ⟳ Autogenerate Password
+                ⚡ Generate Password
+              </button>
+
+              <button
+                type="button"
+                className="button button-secondary"
+                style={{
+                  whiteSpace: "nowrap",
+                  fontSize: "12px",
+                  padding: "8px 12px",
+                  background: copiedPassword ? "var(--success-light)" : undefined,
+                  color: copiedPassword ? "var(--success)" : undefined,
+                  borderColor: copiedPassword ? "var(--success)" : undefined,
+                }}
+                onClick={handleCopyPassword}
+                disabled={!form.password}
+                title="Copy password to clipboard"
+              >
+                {copiedPassword ? "✓ Copied" : "📋 Copy"}
               </button>
             </div>
+
 
             {/* Live Strength Feedback */}
             {form.password && (
@@ -815,7 +1189,8 @@ function AdminStaff() {
             <button
               className="button button-primary button-large"
               type="submit"
-              disabled={submitting || !passwordStrength.isValid}
+              disabled={submitting || !passwordStrength.isValid || !emailStatus.verified}
+              title={!emailStatus.verified ? "Please verify email ownership before creating the staff account." : undefined}
             >
               {submitting ? "Creating account..." : "Create Staff Member →"}
             </button>
@@ -854,8 +1229,9 @@ function AdminStaff() {
                   <th>Department / Specialty</th>
                   <th>Username</th>
                   <th>Email & Phone</th>
-                  <th>Status</th>
-                  <th>Action</th>
+                  <th>Email Status</th>
+                  <th>Account Status</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -882,6 +1258,17 @@ function AdminStaff() {
                       <small style={{ color: "var(--text-muted)", fontFamily: "monospace" }}>{member.phone}</small>
                     </td>
                     <td>
+                      {member.email_verified ? (
+                        <span className="badge badge-success" style={{ display: "inline-flex", alignItems: "center", gap: "3px" }}>
+                          ✓ Verified
+                        </span>
+                      ) : (
+                        <span className="badge badge-warning" style={{ display: "inline-flex", alignItems: "center", gap: "3px" }}>
+                          ⏳ Pending
+                        </span>
+                      )}
+                    </td>
+                    <td>
                       <div>
                         <span
                           className={`status ${
@@ -902,7 +1289,7 @@ function AdminStaff() {
                       </div>
                     </td>
                     <td>
-                      <div style={{ display: "flex", gap: "6px" }}>
+                      <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
                         <button
                           className="button button-secondary"
                           type="button"
@@ -917,6 +1304,18 @@ function AdminStaff() {
                         >
                            Schedule
                         </button>
+                        {member.is_active && (
+                          <button
+                            className="button button-secondary"
+                            type="button"
+                            onClick={() => handleResendCredentials(member)}
+                            disabled={resendingCredentials[member.id]}
+                            title="Generate and email new temporary password to verified staff email"
+                            style={{ fontSize: "12px" }}
+                          >
+                            {resendingCredentials[member.id] ? "Sending..." : "🔑 Resend Credentials"}
+                          </button>
+                        )}
                         {member.is_active ? (
                           <button
                             className="button button-secondary"
@@ -944,6 +1343,7 @@ function AdminStaff() {
           </div>
         )}
       </section>
+
 
       {/* Edit Staff Member Modal */}
       {editingMember && editForm && (
