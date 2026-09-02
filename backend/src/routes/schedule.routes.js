@@ -60,12 +60,20 @@ router.post(
   controller.createSchedule
 );
 
+// Update schedule - strictly ADMIN
+router.put(
+  "/:id",
+  authorizeRoles("ADMIN"),
+  controller.updateSchedule
+);
+
 // Delete schedule - strictly ADMIN
 router.delete(
   "/:id",
   authorizeRoles("ADMIN"),
   controller.deleteSchedule
 );
+
 
 // Get dates with available slots for a doctor (used by date-first booking)
 router.get(

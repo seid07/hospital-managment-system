@@ -134,14 +134,6 @@ export async function getServicePriceHistory(serviceId) {
   return get(`/services/${serviceId}/history`);
 }
 
-export async function verifyEmail(token) {
-  return post("/auth/verify-email", { token });
-}
-
-export async function sendEmailVerification(email) {
-  return post("/staff/send-email-verification", { email });
-}
-
 export async function resendStaffCredentials(staffId) {
   return post(`/staff/${staffId}/resend-credentials`, {});
 }
@@ -163,8 +155,6 @@ const api = {
   resetPassword,
   verifyCurrentPassword,
   changePassword,
-  verifyEmail,
-  sendEmailVerification,
   resendStaffCredentials,
   recordSelectivePayment,
   reversePayment,
@@ -173,5 +163,6 @@ const api = {
 };
 
 export default api;
+
 
 

@@ -1,6 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-
 import AppShell from "../components/layout/AppShell";
 import Modal from "../components/common/Modal";
 import ToastPrompt from "../components/common/ToastPrompt";
@@ -13,29 +12,97 @@ import {
   updateStaffStatus,
   getDoctorScheduledAppointments,
   checkEmailAvailability,
-  sendStaffEmailVerification,
   resendStaffCredentials,
 } from "../services/staffService";
 import { createSchedule } from "../services/scheduleService";
-import { validateEthiopianPhone } from "../utils/phone";
-import { checkPasswordStrength, generateSecurePassword } from "../utils/password";
-import { useDebounce } from "../hooks/useDebounce";
 
+function useDebounce(value, delay) {
+  const [debouncedValue, setDebouncedValue] = useState(value);
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedValue(value);
+    }, delay);
+    return () => clearTimeout(handler);
+  }, [value, delay]);
+  return debouncedValue;
+}
+
+function checkPasswordStrength(password) {
+  if (!password) {
+    return { score: 0, label: "Empty", color: "#94a3b8", isValid: false, feedback: "Enter a password" };
+  }
+  let score = 0;
+  const hasMinLength = password.length >= 8;
+  const hasUpper = /[A-Z]/.test(password);
+  const hasLower = /[a-z]/.test(password);
+  const hasDigit = /[0-9]/.test(password);
+  const hasSpecial = /[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(password);
+
+  if (hasMinLength) score++;
+  if (hasUpper) score++;
+  if (hasLower) score++;
+  if (hasDigit) score++;
+  if (hasSpecial) score++;
+
+  const isValid = hasMinLength && hasUpper && hasLower && hasDigit && hasSpecial;
+
+  if (score <= 2) {
+    return { score, label: "Weak", color: "#ef4444", isValid, feedback: "Requires min 8 chars with upper, lower, digit & special symbol." };
+  }
+  if (score <= 4) {
+    return { score, label: "Medium", color: "#f59e0b", isValid, feedback: "Add missing uppercase, digit, or special character." };
+  }
+  return { score, label: "Strong", color: "#10b981", isValid, feedback: "Complies with hospital security policy." };
+}
+
+function generateSecurePassword() {
+  const upper = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+  const lower = "abcdefghjkmnpqrstuvwxyz";
+  const digits = "23456789";
+  const special = "!@#$%^&*";
+  const allChars = upper + lower + digits + special;
+
+  const cryptoObj = window.crypto || window.msCrypto;
+  const getRandomByte = () => {
+    const arr = new Uint8Array(1);
+    cryptoObj.getRandomValues(arr);
+    return arr[0];
+  };
+
+  let passwordChars = [
+    upper[getRandomByte() % upper.length],
+    lower[getRandomByte() % lower.length],
+    digits[getRandomByte() % digits.length],
+    special[getRandomByte() % special.length],
+  ];
+
+  for (let i = passwordChars.length; i < 12; i++) {
+    passwordChars.push(allChars[getRandomByte() % allChars.length]);
+  }
+
+
+  for (let i = passwordChars.length - 1; i > 0; i--) {
+    const j = getRandomByte() % (i + 1);
+    [passwordChars[i], passwordChars[j]] = [passwordChars[j], passwordChars[i]];
+  }
+
+  return passwordChars.join("");
+}
 
 const DAYS = [
-  { value: 0, label: "Sunday" },
-  { value: 1, label: "Monday" },
-  { value: 2, label: "Tuesday" },
-  { value: 3, label: "Wednesday" },
-  { value: 4, label: "Thursday" },
-  { value: 5, label: "Friday" },
-  { value: 6, label: "Saturday" },
+  { value: 0, label: "Sun" },
+  { value: 1, label: "Mon" },
+  { value: 2, label: "Tue" },
+  { value: 3, label: "Wed" },
+  { value: 4, label: "Thu" },
+  { value: 5, label: "Fri" },
+  { value: 6, label: "Sat" },
 ];
 
 const INITIAL_SLOT = {
   dayOfWeek: 1,
   startTime: "08:00",
-  endTime: "12:00",
+  endTime: "16:00",
   slotDurationMinutes: 30,
 };
 
@@ -43,10 +110,10 @@ const INITIAL_FORM = {
   firstName: "",
   lastName: "",
   email: "",
-  phone: "09",
+  phone: "",
+  role: "DOCTOR",
   department: "",
   specialty: "",
-  role: "DOCTOR",
   username: "",
   password: "",
 };
@@ -59,13 +126,13 @@ function AdminStaff() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
-  const [form, setForm] = useState(INITIAL_FORM);
+  const [form, setForm] = useState(() => ({
+    ...INITIAL_FORM,
+    password: generateSecurePassword(),
+  }));
   const [showPassword, setShowPassword] = useState(false);
   const [copiedPassword, setCopiedPassword] = useState(false);
-  const [emailStatus, setEmailStatus] = useState({ checking: false, available: null, verified: null, verifiedAt: null, message: "" });
-  const [sendingVerification, setSendingVerification] = useState(false);
-  const [verificationCooldown, setVerificationCooldown] = useState(0);
-  const [verificationSent, setVerificationSent] = useState(false);
+  const [emailValidation, setEmailValidation] = useState({ checking: false, available: null, reason: null, message: "" });
   const [resendingCredentials, setResendingCredentials] = useState({});
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebounce(search, 300);
@@ -138,12 +205,12 @@ function AdminStaff() {
     };
   }, [debouncedSearch, reloadTrigger]);
 
-  // Auto-dismiss success & error notifications after 4 seconds
+  // Auto-dismiss success & error notifications after 5 seconds
   useEffect(() => {
     if (success) {
       const timer = setTimeout(() => {
         setSuccess("");
-      }, 4000);
+      }, 5000);
       return () => clearTimeout(timer);
     }
   }, [success]);
@@ -152,7 +219,7 @@ function AdminStaff() {
     if (error) {
       const timer = setTimeout(() => {
         setError("");
-      }, 4000);
+      }, 5000);
       return () => clearTimeout(timer);
     }
   }, [error]);
@@ -161,7 +228,7 @@ function AdminStaff() {
     if (editError) {
       const timer = setTimeout(() => {
         setEditError("");
-      }, 4000);
+      }, 5000);
       return () => clearTimeout(timer);
     }
   }, [editError]);
@@ -170,7 +237,7 @@ function AdminStaff() {
     if (deleteError) {
       const timer = setTimeout(() => {
         setDeleteError("");
-      }, 4000);
+      }, 5000);
       return () => clearTimeout(timer);
     }
   }, [deleteError]);
@@ -179,63 +246,54 @@ function AdminStaff() {
     if (deactivationError) {
       const timer = setTimeout(() => {
         setDeactivationError("");
-      }, 4000);
+      }, 5000);
       return () => clearTimeout(timer);
     }
   }, [deactivationError]);
 
-  // Cooldown countdown timer for resending email verification
-  useEffect(() => {
-    if (verificationCooldown > 0) {
-      const timer = setTimeout(() => {
-        setVerificationCooldown((prev) => prev - 1);
-      }, 1000);
-      return () => clearTimeout(timer);
-    }
-  }, [verificationCooldown]);
-
-
-  // Real-time email validation and verification check
+  // Real-time email validation and duplicate check
   useEffect(() => {
     let cancelled = false;
     async function validateEmailLive() {
       const emailVal = debouncedEmail ? debouncedEmail.trim() : "";
       if (!emailVal) {
-        setEmailStatus({ checking: false, available: null, verified: null, verifiedAt: null, message: "" });
-        setVerificationSent(false);
+        setEmailValidation({ checking: false, available: null, reason: null, message: "" });
         return;
       }
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       if (!emailRegex.test(emailVal)) {
-        setEmailStatus({
+        setEmailValidation({
           checking: false,
           available: false,
-          verified: false,
-          verifiedAt: null,
-          message: "Invalid email format (e.g. user@hospital.local)",
+          reason: "INVALID_FORMAT",
+          message: "✕ Enter a valid email address",
         });
         return;
       }
 
-      setEmailStatus((prev) => ({ ...prev, checking: true, message: "Checking email verification status..." }));
+      setEmailValidation((prev) => ({ ...prev, checking: true }));
       try {
         const res = await checkEmailAvailability(emailVal);
         if (!cancelled) {
-          setEmailStatus({
-            checking: false,
-            available: res.available,
-            verified: res.verified || false,
-            verifiedAt: res.verifiedAt || null,
-            message: res.available
-              ? res.verified
-                ? "✓ Email verified & available"
-                : "Email available. Ownership verification required."
-              : res.message || "Email already exists ✕",
-          });
+          if (res.available) {
+            setEmailValidation({
+              checking: false,
+              available: true,
+              reason: null,
+              message: "✓ Valid email format",
+            });
+          } else {
+            setEmailValidation({
+              checking: false,
+              available: false,
+              reason: res.reason,
+              message: res.reason === "DUPLICATE" ? "✕ Email already registered" : "✕ Enter a valid email address",
+            });
+          }
         }
       } catch {
         if (!cancelled) {
-          setEmailStatus({ checking: false, available: null, verified: null, verifiedAt: null, message: "" });
+          setEmailValidation({ checking: false, available: null, reason: null, message: "" });
         }
       }
     }
@@ -246,153 +304,48 @@ function AdminStaff() {
     };
   }, [debouncedEmail]);
 
-  // Auto-polling verification status while awaiting recipient click
-  useEffect(() => {
-    let timer = null;
-    let cancelled = false;
-
-    async function pollStatus() {
-      const emailVal = form.email ? form.email.trim() : "";
-      if (!emailVal || !verificationSent) return;
-
-      try {
-        const res = await checkEmailAvailability(emailVal);
-        if (!cancelled && res.available) {
-          if (res.verified) {
-            setEmailStatus({
-              checking: false,
-              available: true,
-              verified: true,
-              verifiedAt: res.verifiedAt,
-              message: "✓ Email verified & available",
-            });
-            setSuccess(`✓ Email address ${emailVal} verified by recipient! You can now create the staff account.`);
-          }
-        }
-      } catch {
-        // quiet error
-      }
-    }
-
-    if (verificationSent && emailStatus.available && !emailStatus.verified) {
-      timer = setInterval(pollStatus, 4000);
-    }
-
-    return () => {
-      cancelled = true;
-      if (timer) clearInterval(timer);
-    };
-  }, [verificationSent, emailStatus.available, emailStatus.verified, form.email]);
-
-  async function handleSendVerification() {
-    const emailVal = form.email ? form.email.trim() : "";
-    if (!emailVal) {
-      setError("Please enter an email address first.");
-      return;
-    }
-    if (emailStatus.available === false) {
-      setError("Please provide a valid and non-duplicate email address.");
-      return;
-    }
-
-    try {
-      setSendingVerification(true);
-      setError("");
-      const res = await sendStaffEmailVerification(emailVal);
-      setVerificationSent(true);
-      setVerificationCooldown(60);
-      setSuccess(res.message || `Verification link sent to ${emailVal}. Waiting for recipient to click link...`);
-    } catch (err) {
-      setError(err.message || "Failed to send email verification.");
-    } finally {
-      setSendingVerification(false);
-    }
-  }
-
-  async function handleManualCheckVerification() {
-    const emailVal = form.email ? form.email.trim() : "";
-    if (!emailVal) return;
-
-    try {
-      setEmailStatus((prev) => ({ ...prev, checking: true }));
-      const res = await checkEmailAvailability(emailVal);
-      setEmailStatus({
-        checking: false,
-        available: res.available,
-        verified: res.verified || false,
-        verifiedAt: res.verifiedAt || null,
-        message: res.available
-          ? res.verified
-            ? "✓ Email verified & available"
-            : "Verification email sent. Waiting for recipient to click link."
-          : res.message || "Email already exists",
-      });
-
-      if (res.verified) {
-        setSuccess(`✓ Email ${emailVal} has been verified successfully!`);
-      } else {
-        setError("Email has not been verified yet. Please make sure the recipient clicks the link in their email.");
-      }
-    } catch (err) {
-      setError(err.message || "Unable to check verification status.");
-    }
-  }
-
-  async function handleResendCredentials(member) {
-    setError("");
-    setSuccess("");
-    try {
-      setResendingCredentials((prev) => ({ ...prev, [member.id]: true }));
-      const res = await resendStaffCredentials(member.id);
-      setSuccess(res.message || `New temporary login credentials sent to ${member.email}.`);
-      refreshData();
-    } catch (err) {
-      setError(err.message || "Failed to resend credentials.");
-    } finally {
-      setResendingCredentials((prev) => ({ ...prev, [member.id]: false }));
-    }
-  }
-
-
   function handleChange(event) {
     const { name, value } = event.target;
-    setForm((prev) => ({
-      ...prev,
-      [name]: value,
-    }));
+    setForm((prev) => {
+      const updated = { ...prev, [name]: value };
+
+      // Auto-suggest username if firstName or lastName changes
+      if (name === "firstName" || name === "lastName") {
+        const fn = (name === "firstName" ? value : prev.firstName).trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+        const ln = (name === "lastName" ? value : prev.lastName).trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+        const prefix = prev.role === "DOCTOR" ? "dr_" : "";
+        if (fn && ln) {
+          updated.username = `${prefix}${fn}_${ln}`;
+        } else if (fn) {
+          updated.username = `${prefix}${fn}`;
+        }
+      }
+
+      if (name === "role" && prev.firstName) {
+        const fn = prev.firstName.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+        const ln = prev.lastName.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+        const prefix = value === "DOCTOR" ? "dr_" : "";
+        if (fn && ln) {
+          updated.username = `${prefix}${fn}_${ln}`;
+        }
+      }
+
+      return updated;
+    });
   }
 
   function handleGeneratePassword() {
-    const forbidden = [
-      form.firstName,
-      form.lastName,
-      form.username,
-      form.phone,
-      form.department,
-      "hospital",
-    ].filter(Boolean);
-    const pwd = generateSecurePassword(forbidden);
-    setForm((prev) => ({ ...prev, password: pwd }));
-    setShowPassword(true);
+    const newPass = generateSecurePassword();
+    setForm((prev) => ({ ...prev, password: newPass }));
+    setCopiedPassword(false);
   }
 
-  async function handleCopyPassword() {
+  function handleCopyPassword() {
     if (!form.password) return;
-    try {
-      await navigator.clipboard.writeText(form.password);
+    navigator.clipboard.writeText(form.password).then(() => {
       setCopiedPassword(true);
-      setTimeout(() => setCopiedPassword(false), 2500);
-    } catch {
-      // Fallback
-    }
-  }
-
-  function handleNewSlotChange(event) {
-    const { name, value } = event.target;
-    setNewSlot((prev) => ({
-      ...prev,
-      [name]: name === "slotDurationMinutes" ? Number(value) : value,
-    }));
+      setTimeout(() => setCopiedPassword(false), 2000);
+    });
   }
 
   function toggleSlotDay(dayVal) {
@@ -413,21 +366,30 @@ function AdminStaff() {
     setSlotSelectedDays([]);
   }
 
-  function handleAddSlot() {
+  function handleAddSlots() {
     if (slotSelectedDays.length === 0) {
-      setError("Please select at least one day of the week for the schedule.");
+      setError("Please select at least one day of the week (e.g. Mon-Fri).");
       return;
     }
     if (newSlot.startTime >= newSlot.endTime) {
-      setError("Slot start time must be before end time.");
+      setError("Start time must be before end time.");
       return;
     }
     setError("");
-    const newSlots = slotSelectedDays.map((day) => ({
-      ...newSlot,
-      dayOfWeek: day,
+
+    const newEntries = slotSelectedDays.map((dayVal) => ({
+      dayOfWeek: dayVal,
+      startTime: newSlot.startTime,
+      endTime: newSlot.endTime,
+      slotDurationMinutes: Number(newSlot.slotDurationMinutes || 30),
     }));
-    setScheduleSlots((prev) => [...prev, ...newSlots]);
+
+    setScheduleSlots((prev) => {
+      const existing = prev.filter(
+        (s) => !slotSelectedDays.includes(s.dayOfWeek) || s.startTime !== newSlot.startTime
+      );
+      return [...existing, ...newEntries].sort((a, b) => a.dayOfWeek - b.dayOfWeek);
+    });
   }
 
   function handleRemoveSlot(index) {
@@ -439,113 +401,152 @@ function AdminStaff() {
     setError("");
     setSuccess("");
 
-    if (emailStatus.available === false) {
-      setError("Please provide a valid and available email address.");
-      return;
-    }
-
-    if (!emailStatus.verified) {
-      setError("Email must be verified before creating the staff account. Please send a verification link and ensure the recipient clicks it.");
-      return;
-    }
-
-    if (!form.firstName?.trim() || !form.lastName?.trim() || !form.username?.trim() || !form.email?.trim() || !form.department?.trim() || !form.role) {
-      setError("All required fields (First Name, Last Name, Username, Email, Phone, Department, Role, Password) must be filled.");
-      return;
-    }
-
-    if (!validateEthiopianPhone(form.phone)) {
-      setError("Please enter a valid Ethiopian phone number starting with 09, 07, or +251.");
-      return;
-    }
-
     if (!passwordStrength.isValid) {
-      setError(`Password requirement: ${passwordStrength.feedback}`);
+      setError("Password does not meet complexity requirements. Use Generate Password for a compliant password.");
+      return;
+    }
+
+    if (emailValidation.available === false) {
+      setError(emailValidation.message || "Please provide a valid and available email address.");
       return;
     }
 
     try {
       setSubmitting(true);
-      const result = await createStaff(form);
-      const staffId = result?.data?.staffId;
-      const emailDelivery = result?.data?.emailDelivery;
 
-      let scheduleWarning = "";
-      if (staffId && scheduleSlots.length > 0) {
-        const failures = [];
-        for (const slot of scheduleSlots) {
-          try {
-            await createSchedule(staffId, slot);
-          } catch (slotErr) {
-            failures.push(slotErr.message || "Unknown error");
+      const staffPayload = {
+        firstName: form.firstName.trim(),
+        lastName: form.lastName.trim(),
+        email: form.email.trim(),
+        phone: form.phone.trim(),
+        role: form.role,
+        department: form.department.trim(),
+        specialty: form.specialty ? form.specialty.trim() : undefined,
+        username: form.username.trim(),
+        password: form.password,
+      };
+
+      const res = await createStaff(staffPayload);
+      const createdStaffId = res?.data?.staffId || res?.data?.id || res?.staffId || res?.id;
+
+      // Determine all consultation slots to create: explicitly added table slots + any active day selection
+      let slotsToCreate = [...scheduleSlots];
+      if (slotsToCreate.length === 0 && slotSelectedDays.length > 0 && newSlot.startTime && newSlot.endTime) {
+        if (newSlot.startTime < newSlot.endTime) {
+          slotsToCreate = slotSelectedDays.map((dayVal) => ({
+            dayOfWeek: dayVal,
+            startTime: newSlot.startTime,
+            endTime: newSlot.endTime,
+            slotDurationMinutes: Number(newSlot.slotDurationMinutes || 30),
+          }));
+        }
+      }
+
+      if (createdStaffId && slotsToCreate.length > 0) {
+        try {
+          // Group by identical time window for efficient batch schedule insertion
+          const grouped = {};
+          for (const s of slotsToCreate) {
+            const key = `${s.startTime}_${s.endTime}_${s.slotDurationMinutes}`;
+            if (!grouped[key]) {
+              grouped[key] = {
+                daysOfWeek: [],
+                startTime: s.startTime,
+                endTime: s.endTime,
+                slotDurationMinutes: s.slotDurationMinutes,
+              };
+            }
+            if (!grouped[key].daysOfWeek.includes(s.dayOfWeek)) {
+              grouped[key].daysOfWeek.push(s.dayOfWeek);
+            }
           }
-        }
-        if (failures.length > 0) {
-          scheduleWarning = ` (Note: ${failures.length} of ${scheduleSlots.length} schedule slots could not be saved — you can add them from Manage Schedule.)`;
+
+          for (const key of Object.keys(grouped)) {
+            const config = grouped[key];
+            await createSchedule(createdStaffId, {
+              daysOfWeek: config.daysOfWeek,
+              startTime: config.startTime,
+              endTime: config.endTime,
+              slotDurationMinutes: config.slotDurationMinutes,
+            });
+          }
+        } catch (schedErr) {
+          console.warn("Schedule save error:", schedErr);
         }
       }
 
-      let emailMsg = "";
-      if (emailDelivery?.sent) {
-        emailMsg = ` Temporary password dispatched to ${form.email}.`;
-      } else if (emailDelivery?.warning) {
-        emailMsg = ` (Email Notice: ${emailDelivery.warning})`;
-      } else if (emailDelivery && !emailDelivery.sent) {
-        emailMsg = ` (Warning: Email delivery failed: ${emailDelivery.error || "SMTP error"})`;
-      }
+      setSuccess(
+        `✓ Staff account for ${form.firstName} ${form.lastName} created successfully! Temporary login credentials have been sent directly to ${form.email}.`
+      );
 
-      setSuccess(`Staff account created for ${form.firstName} ${form.lastName} (${form.role}). Must change password on first login.${emailMsg}${scheduleWarning}`);
-      setForm(INITIAL_FORM);
-      setEmailStatus({ checking: false, available: null, verified: null, verifiedAt: null, message: "" });
-      setVerificationSent(false);
+      setForm({
+        ...INITIAL_FORM,
+        password: generateSecurePassword(),
+      });
       setScheduleSlots([]);
-      setNewSlot(INITIAL_SLOT);
+      setSlotSelectedDays([1, 2, 3, 4, 5]);
+      setEmailValidation({ checking: false, available: null, reason: null, message: "" });
       refreshData();
     } catch (err) {
-      setError(err.message || "Unable to create staff.");
+      setError(err.message || "Unable to create staff member.");
     } finally {
       setSubmitting(false);
     }
   }
 
 
+  // Resend Credentials Action
+  async function handleResendCredentials(member) {
+    if (resendingCredentials[member.id]) return;
+    try {
+      setResendingCredentials((prev) => ({ ...prev, [member.id]: true }));
+      setError("");
+      await resendStaffCredentials(member.id);
+      setSuccess(`✓ Temporary credentials regenerated and emailed to ${member.email} for ${member.first_name} ${member.last_name}.`);
+    } catch (err) {
+
+      setError(err.message || "Unable to resend staff credentials.");
+    } finally {
+      setResendingCredentials((prev) => ({ ...prev, [member.id]: false }));
+    }
+  }
 
   function handleOpenEdit(member) {
-    setEditError("");
     setEditingMember(member);
     setEditForm({
       firstName: member.first_name || "",
       lastName: member.last_name || "",
-      username: member.username || "",
       email: member.email || "",
       phone: member.phone || "",
+      role: member.role || "DOCTOR",
       department: member.department || "",
       specialty: member.specialty || "",
-      role: member.role || "DOCTOR",
+      username: member.username || "",
     });
-  }
-
-  function handleEditChange(event) {
-    const { name, value } = event.target;
-    setEditForm((prev) => ({
-      ...prev,
-      [name]: value,
-    }));
-  }
-
-  async function handleEditSubmit(event) {
-    event.preventDefault();
     setEditError("");
+  }
 
-    if (!validateEthiopianPhone(editForm.phone)) {
-      setEditError("Please enter a valid Ethiopian phone number starting with 09, 07, or +251.");
-      return;
-    }
+  function handleEditChange(e) {
+    const { name, value } = e.target;
+    setEditForm((prev) => ({ ...prev, [name]: value }));
+  }
 
+  async function handleEditSubmit(e) {
+    e.preventDefault();
+    if (!editingMember) return;
+    setEditError("");
     try {
       setEditSubmitting(true);
-      await updateStaff(editingMember.id, editForm);
-
+      await updateStaff(editingMember.id, {
+        firstName: editForm.firstName.trim(),
+        lastName: editForm.lastName.trim(),
+        email: editForm.email.trim(),
+        phone: editForm.phone.trim(),
+        role: editForm.role,
+        department: editForm.department ? editForm.department.trim() : null,
+        specialty: editForm.specialty ? editForm.specialty.trim() : null,
+        username: editForm.username ? editForm.username.trim() : undefined,
+      });
       setSuccess(`Staff member ${editForm.firstName} ${editForm.lastName} updated successfully.`);
       setEditingMember(null);
       setEditForm(null);
@@ -554,6 +555,78 @@ function AdminStaff() {
       setEditError(err.message || "Unable to update staff member.");
     } finally {
       setEditSubmitting(false);
+    }
+  }
+
+  function handleOpenDeactivate(member) {
+    setDeactivatingMember(member);
+    setDeactivationError("");
+    setScheduledAppointments([]);
+    const start = new Date().toISOString().split("T")[0];
+    const end = new Date(Date.now() + 7 * 86400000).toISOString().split("T")[0];
+    setDeactivationForm({
+      reason: "Annual / Sick Leave",
+      startDate: start,
+      endDate: end,
+    });
+
+    if (member.role === "DOCTOR") {
+      setLoadingAppointments(true);
+      getDoctorScheduledAppointments(member.id, start, end)
+        .then((res) => {
+          setScheduledAppointments(res.data || []);
+        })
+        .catch(() => {})
+        .finally(() => setLoadingAppointments(false));
+    }
+  }
+
+  function handleDeactivationDatesChange(e) {
+    const { name, value } = e.target;
+    const updated = { ...deactivationForm, [name]: value };
+    setDeactivationForm(updated);
+
+    if (deactivatingMember?.role === "DOCTOR" && updated.startDate && updated.endDate) {
+      setLoadingAppointments(true);
+      getDoctorScheduledAppointments(deactivatingMember.id, updated.startDate, updated.endDate)
+        .then((res) => {
+          setScheduledAppointments(res.data || []);
+        })
+        .catch(() => {})
+        .finally(() => setLoadingAppointments(false));
+    }
+  }
+
+  async function handleDeactivateSubmit(e) {
+    e.preventDefault();
+    if (!deactivatingMember) return;
+    setDeactivationError("");
+    try {
+      setDeactivationSubmitting(true);
+      await updateStaffStatus(deactivatingMember.id, {
+        isActive: false,
+        deactivationReason: deactivationForm.reason,
+        deactivationStartDate: deactivationForm.startDate,
+        deactivationEndDate: deactivationForm.endDate,
+      });
+      setSuccess(`Staff member ${deactivatingMember.first_name} ${deactivatingMember.last_name} deactivated successfully.`);
+      setDeactivatingMember(null);
+      refreshData();
+    } catch (err) {
+      setDeactivationError(err.message || "Unable to deactivate staff member.");
+    } finally {
+      setDeactivationSubmitting(false);
+    }
+  }
+
+  async function handleDirectActivate(member) {
+    try {
+      setError("");
+      await updateStaffStatus(member.id, { isActive: true });
+      setSuccess(`Staff member ${member.first_name} ${member.last_name} activated successfully.`);
+      refreshData();
+    } catch (err) {
+      setError(err.message || "Unable to activate staff member.");
     }
   }
 
@@ -567,100 +640,9 @@ function AdminStaff() {
       setDeletingMember(null);
       refreshData();
     } catch (err) {
-      setDeleteError(err.message || "Failed to permanently delete staff member.");
+      setDeleteError(err.message || "Unable to delete staff member.");
     } finally {
       setDeleteSubmitting(false);
-    }
-  }
-
-  async function handleOpenDeactivate(member) {
-    setDeactivationError("");
-    setDeactivatingMember(member);
-    const start = new Date().toISOString().split("T")[0];
-    const end = new Date(Date.now() + 7 * 86400000).toISOString().split("T")[0];
-    const initialForm = {
-      reason: member.deactivation_reason || "Annual / Sick Leave",
-      startDate: member.deactivation_start_date ? member.deactivation_start_date.split("T")[0] : start,
-      endDate: member.deactivation_end_date ? member.deactivation_end_date.split("T")[0] : end,
-    };
-    setDeactivationForm(initialForm);
-
-    if (member.role === "DOCTOR") {
-      try {
-        setLoadingAppointments(true);
-        const res = await getDoctorScheduledAppointments(member.id, initialForm.startDate, initialForm.endDate);
-        setScheduledAppointments(res.data || []);
-      } catch {
-        setScheduledAppointments([]);
-      } finally {
-        setLoadingAppointments(false);
-      }
-    } else {
-      setScheduledAppointments([]);
-    }
-  }
-
-  async function handleDeactivationDatesChange(field, val) {
-    const updated = { ...deactivationForm, [field]: val };
-    setDeactivationForm(updated);
-
-    if (deactivatingMember?.role === "DOCTOR" && updated.startDate && updated.endDate) {
-      try {
-        setLoadingAppointments(true);
-        const res = await getDoctorScheduledAppointments(deactivatingMember.id, updated.startDate, updated.endDate);
-        setScheduledAppointments(res.data || []);
-      } catch {
-        setScheduledAppointments([]);
-      } finally {
-        setLoadingAppointments(false);
-      }
-    }
-  }
-
-  async function handleDeactivateSubmit(e) {
-    e.preventDefault();
-    setDeactivationError("");
-
-    if (!deactivationForm.reason?.trim()) {
-      setDeactivationError("Please provide a reason for deactivation.");
-      return;
-    }
-    if (!deactivationForm.startDate || !deactivationForm.endDate) {
-      setDeactivationError("Start date and end date are required.");
-      return;
-    }
-    if (deactivationForm.startDate > deactivationForm.endDate) {
-      setDeactivationError("Start date cannot be after end date.");
-      return;
-    }
-
-    try {
-      setDeactivationSubmitting(true);
-      await updateStaffStatus(deactivatingMember.id, false, {
-        reason: deactivationForm.reason.trim(),
-        startDate: deactivationForm.startDate,
-        endDate: deactivationForm.endDate,
-      });
-
-      setSuccess(`Staff member ${deactivatingMember.first_name} ${deactivatingMember.last_name} deactivated from ${deactivationForm.startDate} until ${deactivationForm.endDate}.`);
-      setDeactivatingMember(null);
-      refreshData();
-    } catch (err) {
-      setDeactivationError(err.message || "Failed to deactivate staff.");
-    } finally {
-      setDeactivationSubmitting(false);
-    }
-  }
-
-  async function handleDirectActivate(member) {
-    setError("");
-    setSuccess("");
-    try {
-      await updateStaffStatus(member.id, true);
-      setSuccess(`Staff member ${member.first_name} ${member.last_name} activated successfully.`);
-      refreshData();
-    } catch (err) {
-      setError(err.message || "Unable to activate staff member.");
     }
   }
 
@@ -668,49 +650,28 @@ function AdminStaff() {
     <AppShell>
       <div className="page-header">
         <div>
-          <p className="page-eyebrow">Administration</p>
-          <h1>Staff & Role Management</h1>
+          <p className="page-eyebrow">Administration & User Access</p>
+          <h1>Staff & Provider Directory</h1>
           <p className="page-description">
-            Create and manage hospital personnel accounts, security credentials, and system access roles.
+            Register hospital personnel, assign roles and departments, manage temporary login credentials, and configure consultation availability.
           </p>
         </div>
       </div>
 
-      {/* Floating 4-Second Animated Toast Prompt (Requirement 2) */}
-      {success && (
-        <ToastPrompt
-          type="success"
-          message={success}
-          duration={4000}
-          onClose={() => setSuccess("")}
-        />
-      )}
-
       {error && (
-        <ToastPrompt
-          type="error"
-          message={error}
-          duration={4000}
-          onClose={() => setError("")}
-        />
+        <ToastPrompt message={error} type="error" onClose={() => setError("")} />
       )}
-
-      {error && (
-        <div className="alert alert-error" role="alert">
-          {error}
-        </div>
-      )}
-
       {success && (
-        <div className="alert alert-success" role="status">
-          {success}
-        </div>
+        <ToastPrompt message={success} type="success" onClose={() => setSuccess("")} />
       )}
 
-      <section className="card">
+      {/* Staff Registration Form */}
+      <section className="card" style={{ marginBottom: "24px" }}>
         <div className="card-header">
-          <h2>Create New Staff Account</h2>
-          <p>Create a staff profile with strong authentication credentials.</p>
+          <h2>Create New Staff Member</h2>
+          <p>
+            Enter provider credentials. The system will automatically email a secure temporary password to the entered email address.
+          </p>
         </div>
 
         <form className="form-grid" onSubmit={handleSubmit}>
@@ -731,137 +692,53 @@ function AdminStaff() {
             <input
               id="lastName"
               name="lastName"
-              placeholder="e.g. Haile"
+              placeholder="e.g. Tadesse"
               value={form.lastName}
               onChange={handleChange}
               required
             />
           </div>
 
-          <div className="form-field" style={{ gridColumn: "1 / -1" }}>
-            <label htmlFor="email">Email Address * (Real Ownership Verification Required)</label>
-            <div style={{ display: "flex", gap: "8px", alignItems: "flex-start", flexWrap: "wrap" }}>
-              <div style={{ flex: "1 1 280px" }}>
-                <input
-                  id="email"
-                  name="email"
-                  type="email"
-                  placeholder="staff@hospital.local"
-                  value={form.email}
-                  onChange={handleChange}
-                  required
-                  style={{
-                    width: "100%",
-                    borderColor:
-                      emailStatus.verified === true
-                        ? "var(--success)"
-                        : emailStatus.available === true
-                        ? "var(--primary)"
-                        : emailStatus.available === false
-                        ? "var(--danger)"
-                        : undefined,
-                  }}
-                />
-                {emailStatus.message && (
-                  <div
-                    style={{
-                      fontSize: "12px",
-                      marginTop: "5px",
-                      fontWeight: 600,
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "5px",
-                      color: emailStatus.checking
-                        ? "var(--text-muted)"
-                        : emailStatus.verified
-                        ? "var(--success)"
-                        : emailStatus.available
-                        ? "var(--primary)"
-                        : "var(--danger)",
-                    }}
-                  >
-                    {emailStatus.verified && "✓"} {emailStatus.message}
-                  </div>
-                )}
-              </div>
-
-              {/* Action button to send / resend verification link */}
-              {emailStatus.available && !emailStatus.verified && (
-                <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
-                  <button
-                    type="button"
-                    className="button button-primary"
-                    style={{ whiteSpace: "nowrap", padding: "8px 14px", fontSize: "12px" }}
-                    onClick={handleSendVerification}
-                    disabled={sendingVerification || verificationCooldown > 0}
-                  >
-                    {sendingVerification
-                      ? "Sending link..."
-                      : verificationCooldown > 0
-                      ? `Resend in ${verificationCooldown}s`
-                      : verificationSent
-                      ? "✉ Resend Link"
-                      : "✉ Send Verification Link"}
-                  </button>
-
-                  {verificationSent && (
-                    <button
-                      type="button"
-                      className="button button-secondary"
-                      style={{ whiteSpace: "nowrap", padding: "8px 12px", fontSize: "12px" }}
-                      onClick={handleManualCheckVerification}
-                      title="Check if recipient clicked the verification link"
-                    >
-                      🔄 Check Status
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* Explanatory security banner for pending verification */}
-            {emailStatus.available && !emailStatus.verified && (
-              <div
+          {/* Email field with real-time format and duplicate validation */}
+          <div className="form-field">
+            <label htmlFor="email">Email Address *</label>
+            <input
+              id="email"
+              name="email"
+              type="email"
+              placeholder="e.g. doctor@hospital.local"
+              value={form.email}
+              onChange={handleChange}
+              required
+              autoComplete="off"
+              style={{
+                borderColor:
+                  emailValidation.available === true
+                    ? "var(--success)"
+                    : emailValidation.available === false
+                    ? "var(--danger)"
+                    : undefined,
+              }}
+            />
+            {emailValidation.message && (
+              <p
                 style={{
-                  marginTop: "8px",
-                  padding: "10px 14px",
-                  background: "rgba(245, 158, 11, 0.08)",
-                  border: "1px solid rgba(245, 158, 11, 0.25)",
-                  borderRadius: "6px",
+                  margin: "4px 0 0 0",
                   fontSize: "12px",
-                  color: "var(--warning)",
-                  lineHeight: "1.4",
-                }}
-              >
-                <strong>Security Notice:</strong> A secure verification link must be sent to this email address. The recipient must click the link to confirm mailbox ownership before this staff account can be created.
-                {verificationSent && (
-                  <div style={{ marginTop: "4px", color: "var(--primary)", fontWeight: 600 }}>
-                    ⏳ Verification link active (expires in 30 mins). Auto-checking for recipient click...
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Success banner for verified email */}
-            {emailStatus.verified && (
-              <div
-                style={{
-                  marginTop: "8px",
-                  padding: "10px 14px",
-                  background: "rgba(16, 185, 129, 0.08)",
-                  border: "1px solid rgba(16, 185, 129, 0.25)",
-                  borderRadius: "6px",
-                  fontSize: "12px",
-                  color: "var(--success)",
-                  lineHeight: "1.4",
+                  color:
+                    emailValidation.available === true
+                      ? "var(--success)"
+                      : "var(--danger)",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "4px",
                   fontWeight: 500,
                 }}
               >
-                ✓ <strong>Email Verified:</strong> Mailbox ownership confirmed{emailStatus.verifiedAt ? ` at ${new Date(emailStatus.verifiedAt).toLocaleTimeString()}` : ""}. You may now create the staff account.
-              </div>
+                {emailValidation.message}
+              </p>
             )}
           </div>
-
 
           <div className="form-field">
             <label htmlFor="phone">Phone Number (Ethiopian Format) *</label>
@@ -993,7 +870,6 @@ function AdminStaff() {
               </button>
             </div>
 
-
             {/* Live Strength Feedback */}
             {form.password && (
               <div style={{ marginTop: "6px" }}>
@@ -1098,55 +974,53 @@ function AdminStaff() {
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: "1fr 1fr 1fr auto",
-                gap: "8px",
+                gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",
+                gap: "10px",
                 alignItems: "end",
-                marginBottom: "10px",
+                marginBottom: "8px",
               }}
             >
-              <div className="form-field" style={{ marginBottom: 0 }}>
-                <label htmlFor="slotStart" style={{ fontSize: "11px" }}>Start time</label>
+              <div>
+                <label style={{ fontSize: "12px" }}>Start Time</label>
                 <input
-                  id="slotStart"
                   type="time"
-                  name="startTime"
                   value={newSlot.startTime}
-                  onChange={handleNewSlotChange}
+                  onChange={(e) => setNewSlot((prev) => ({ ...prev, startTime: e.target.value }))}
                 />
               </div>
-
-              <div className="form-field" style={{ marginBottom: 0 }}>
-                <label htmlFor="slotEnd" style={{ fontSize: "11px" }}>End time</label>
+              <div>
+                <label style={{ fontSize: "12px" }}>End Time</label>
                 <input
-                  id="slotEnd"
                   type="time"
-                  name="endTime"
                   value={newSlot.endTime}
-                  onChange={handleNewSlotChange}
+                  onChange={(e) => setNewSlot((prev) => ({ ...prev, endTime: e.target.value }))}
                 />
               </div>
-
-              <div className="form-field" style={{ marginBottom: 0 }}>
-                <label htmlFor="slotDuration" style={{ fontSize: "11px" }}>Slot length (min)</label>
-                <input
-                  id="slotDuration"
-                  type="number"
-                  min="5"
-                  step="5"
-                  name="slotDurationMinutes"
+              <div>
+                <label style={{ fontSize: "12px" }}>Slot Duration</label>
+                <select
                   value={newSlot.slotDurationMinutes}
-                  onChange={handleNewSlotChange}
-                />
+                  onChange={(e) =>
+                    setNewSlot((prev) => ({ ...prev, slotDurationMinutes: Number(e.target.value) }))
+                  }
+                >
+                  <option value={15}>15 min</option>
+                  <option value={20}>20 min</option>
+                  <option value={30}>30 min</option>
+                  <option value={45}>45 min</option>
+                  <option value={60}>60 min</option>
+                </select>
               </div>
-
-              <button
-                type="button"
-                className="button button-secondary"
-                onClick={handleAddSlot}
-                disabled={slotSelectedDays.length === 0}
-              >
-                + Add Slot{slotSelectedDays.length > 1 ? `s (${slotSelectedDays.length} Days)` : ""}
-              </button>
+              <div>
+                <button
+                  type="button"
+                  className="button button-secondary"
+                  style={{ width: "100%", whiteSpace: "nowrap" }}
+                  onClick={handleAddSlots}
+                >
+                  + Add Days ({slotSelectedDays.length})
+                </button>
+              </div>
             </div>
 
             {scheduleSlots.length > 0 && (
@@ -1189,8 +1063,7 @@ function AdminStaff() {
             <button
               className="button button-primary button-large"
               type="submit"
-              disabled={submitting || !passwordStrength.isValid || !emailStatus.verified}
-              title={!emailStatus.verified ? "Please verify email ownership before creating the staff account." : undefined}
+              disabled={submitting || !passwordStrength.isValid || emailValidation.available === false}
             >
               {submitting ? "Creating account..." : "Create Staff Member →"}
             </button>
@@ -1198,6 +1071,7 @@ function AdminStaff() {
         </form>
       </section>
 
+      {/* Staff Directory Table */}
       <section className="card">
         <div className="card-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div>
@@ -1229,8 +1103,7 @@ function AdminStaff() {
                   <th>Department / Specialty</th>
                   <th>Username</th>
                   <th>Email & Phone</th>
-                  <th>Email Status</th>
-                  <th>Account Status</th>
+                  <th>Status</th>
                   <th>Actions</th>
                 </tr>
               </thead>
@@ -1256,17 +1129,6 @@ function AdminStaff() {
                       {member.email}
                       <br />
                       <small style={{ color: "var(--text-muted)", fontFamily: "monospace" }}>{member.phone}</small>
-                    </td>
-                    <td>
-                      {member.email_verified ? (
-                        <span className="badge badge-success" style={{ display: "inline-flex", alignItems: "center", gap: "3px" }}>
-                          ✓ Verified
-                        </span>
-                      ) : (
-                        <span className="badge badge-warning" style={{ display: "inline-flex", alignItems: "center", gap: "3px" }}>
-                          ⏳ Pending
-                        </span>
-                      )}
                     </td>
                     <td>
                       <div>
@@ -1302,7 +1164,7 @@ function AdminStaff() {
                           type="button"
                           onClick={() => navigate(`/admin/schedules?staffId=${member.id}`)}
                         >
-                           Schedule
+                          Schedule
                         </button>
                         {member.is_active && (
                           <button
@@ -1310,10 +1172,10 @@ function AdminStaff() {
                             type="button"
                             onClick={() => handleResendCredentials(member)}
                             disabled={resendingCredentials[member.id]}
-                            title="Generate and email new temporary password to verified staff email"
+                            title="Generate and email new temporary password to staff email"
                             style={{ fontSize: "12px" }}
                           >
-                            {resendingCredentials[member.id] ? "Sending..." : "🔑 Resend Credentials"}
+                            {resendingCredentials[member.id] ? "Sending..." : "🔑 Resend Temporary Password"}
                           </button>
                         )}
                         {member.is_active ? (
@@ -1338,12 +1200,13 @@ function AdminStaff() {
                     </td>
                   </tr>
                 ))}
+
+
               </tbody>
             </table>
           </div>
         )}
       </section>
-
 
       {/* Edit Staff Member Modal */}
       {editingMember && editForm && (
@@ -1549,159 +1412,130 @@ function AdminStaff() {
               </div>
             </div>
 
-            <div className="form-field" style={{ marginBottom: "14px" }}>
-              <label htmlFor="deactReason" style={{ fontWeight: 600 }}>Reason for Deactivation *</label>
-              <select
-                id="deactReason"
-                value={deactivationForm.reason}
-                onChange={(e) => setDeactivationForm({ ...deactivationForm, reason: e.target.value })}
-                className="input"
-                style={{ width: "100%", marginBottom: "6px" }}
-              >
-                <option value="Annual / Personal Leave">Annual / Personal Leave</option>
-                <option value="Medical / Sick Leave">Medical / Sick Leave</option>
-                <option value="Maternity / Paternity Leave">Maternity / Paternity Leave</option>
-                <option value="Professional Training / Conference">Professional Training / Conference</option>
-                <option value="Administrative Suspension">Administrative Suspension</option>
-                <option value="Temporary Off-duty">Temporary Off-duty</option>
-                <option value="Other">Other Reason</option>
-              </select>
-              {deactivationForm.reason === "Other" && (
+            <div className="form-grid">
+              <div className="form-field">
+                <label htmlFor="deactivateReason">Deactivation Reason *</label>
                 <input
-                  type="text"
-                  placeholder="Specify custom reason..."
-                  className="input"
-                  style={{ width: "100%" }}
-                  onChange={(e) => setDeactivationForm({ ...deactivationForm, reason: e.target.value })}
+                  id="deactivateReason"
+                  name="reason"
+                  value={deactivationForm.reason}
+                  onChange={handleDeactivationDatesChange}
+                  placeholder="e.g. Annual Leave, Medical Leave"
                   required
                 />
-              )}
-            </div>
+              </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px", marginBottom: "16px" }}>
               <div className="form-field">
-                <label htmlFor="deactStartDate" style={{ fontWeight: 600 }}>Deactivation Start Date *</label>
+                <label htmlFor="deactivateStart">Start Date *</label>
                 <input
-                  id="deactStartDate"
+                  id="deactivateStart"
+                  name="startDate"
                   type="date"
                   value={deactivationForm.startDate}
-                  onChange={(e) => handleDeactivationDatesChange("startDate", e.target.value)}
-                  className="input"
-                  style={{ width: "100%" }}
+                  onChange={handleDeactivationDatesChange}
                   required
                 />
               </div>
 
               <div className="form-field">
-                <label htmlFor="deactEndDate" style={{ fontWeight: 600 }}>Deactivation End Date (Active after) *</label>
+                <label htmlFor="deactivateEnd">End Date (Auto-Reactivation) *</label>
                 <input
-                  id="deactEndDate"
+                  id="deactivateEnd"
+                  name="endDate"
                   type="date"
                   value={deactivationForm.endDate}
-                  onChange={(e) => handleDeactivationDatesChange("endDate", e.target.value)}
-                  className="input"
-                  style={{ width: "100%" }}
+                  onChange={handleDeactivationDatesChange}
                   required
                 />
               </div>
             </div>
 
-            {/* If Doctor: Conflict check for scheduled appointments */}
+            {/* Scheduled Appointments Preview during Leave Period */}
             {deactivatingMember.role === "DOCTOR" && (
-              <div style={{ marginBottom: "18px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "12px", background: "var(--surface)" }}>
-                <div style={{ fontWeight: 700, fontSize: "14px", marginBottom: "8px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                  <span>Scheduled Patients Conflict Check</span>
-                  {loadingAppointments && <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>Checking...</span>}
-                </div>
-
+              <div style={{ marginTop: "16px", marginBottom: "16px" }}>
+                <h4 style={{ fontSize: "13px", margin: "0 0 6px 0" }}>
+                  Scheduled Patient Appointments During Leave Period ({scheduledAppointments.length})
+                </h4>
                 {loadingAppointments ? (
-                  <div style={{ fontSize: "13px", color: "var(--text-muted)", padding: "8px 0" }}>
-                    Loading scheduled appointments...
-                  </div>
+                  <p style={{ fontSize: "12px", color: "var(--text-muted)" }}>Checking doctor's appointments...</p>
                 ) : scheduledAppointments.length === 0 ? (
-                  <div style={{ fontSize: "13px", color: "var(--success)", padding: "6px 0" }}>
-                    ✓ No scheduled patient appointments found for this doctor between {deactivationForm.startDate} and {deactivationForm.endDate}.
-                  </div>
+                  <p style={{ fontSize: "12px", color: "var(--success)" }}>
+                    ✓ No patient appointments booked for this doctor during the selected period.
+                  </p>
                 ) : (
-                  <div>
-                    <div style={{ background: "#fffbeb", border: "1px solid #f59e0b", color: "#92400e", padding: "8px 12px", borderRadius: "4px", fontSize: "12px", marginBottom: "10px" }}>
-                      ⚠️ <strong>Attention:</strong> Dr. {deactivatingMember.first_name} {deactivatingMember.last_name} has <strong>{scheduledAppointments.length}</strong> scheduled patient appointment(s) during this period. Please reschedule or reassign these patients:
-                    </div>
-
-                    <div style={{ maxHeight: "180px", overflowY: "auto", border: "1px solid var(--border)", borderRadius: "4px" }}>
-                      <table className="data-table" style={{ fontSize: "12px", margin: 0 }}>
-                        <thead>
-                          <tr>
-                            <th>Date & Time</th>
-                            <th>Patient Name</th>
-                            <th>Patient #</th>
-                            <th>Phone</th>
-                            <th>Status</th>
+                  <div className="table-wrapper" style={{ maxHeight: "160px", overflowY: "auto" }}>
+                    <table className="data-table" style={{ fontSize: "12px" }}>
+                      <thead>
+                        <tr>
+                          <th>Date</th>
+                          <th>Time</th>
+                          <th>Patient</th>
+                          <th>Phone</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {scheduledAppointments.map((apt) => (
+                          <tr key={apt.id}>
+                            <td>{new Date(apt.appointment_date).toLocaleDateString()}</td>
+                            <td>{apt.start_time} - {apt.end_time}</td>
+                            <td>{apt.patient_first_name} {apt.patient_last_name}</td>
+                            <td>{apt.patient_phone}</td>
                           </tr>
-                        </thead>
-                        <tbody>
-                          {scheduledAppointments.map((appt) => (
-                            <tr key={appt.id}>
-                              <td>
-                                <strong>{appt.appointment_date}</strong>
-                                <br />
-                                <small>{appt.start_time} - {appt.end_time}</small>
-                              </td>
-                              <td>{appt.patient_first_name} {appt.patient_last_name}</td>
-                              <td><code>{appt.patient_number}</code></td>
-                              <td>{appt.patient_phone}</td>
-                              <td><span className="badge badge-warning">{appt.status}</span></td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
                 )}
               </div>
             )}
 
-            <div style={{ marginTop: "20px", paddingTop: "14px", borderTop: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px" }}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginTop: "20px",
+                paddingTop: "16px",
+                borderTop: "1px solid var(--border)",
+                flexWrap: "wrap",
+                gap: "10px",
+              }}
+            >
               <button
                 type="button"
-                className="button"
-                style={{
-                  background: "rgba(239, 68, 68, 0.1)",
-                  color: "#dc2626",
-                  borderColor: "rgba(239, 68, 68, 0.4)",
-                  fontWeight: 600,
-                  fontSize: "13px",
-                  padding: "8px 14px",
-                }}
+                className="button button-danger"
+                style={{ background: "#dc2626", color: "#fff", borderColor: "#dc2626", fontSize: "12px", padding: "6px 12px" }}
                 onClick={() => {
-                  const targetMember = deactivatingMember;
+                  const member = deactivatingMember;
                   setDeactivatingMember(null);
-                  setDeleteError("");
-                  setDeletingMember(targetMember);
+                  setDeletingMember(member);
                 }}
-                title="Permanently remove staff account from system"
+                disabled={deactivationSubmitting}
+                title="Permanently remove staff record and credentials"
               >
                 🗑 Delete Permanently
               </button>
 
-              <div style={{ display: "flex", gap: "10px" }}>
+              <div style={{ display: "flex", gap: "8px" }}>
                 <button
                   type="button"
                   className="button button-secondary"
                   onClick={() => setDeactivatingMember(null)}
+                  disabled={deactivationSubmitting}
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="button button-primary"
-                  style={{ background: "var(--danger)", borderColor: "var(--danger)" }}
+                  className="button"
+                  style={{ background: "#f59e0b", color: "#fff", borderColor: "#f59e0b" }}
                   disabled={deactivationSubmitting}
                 >
-                  {deactivationSubmitting ? "Deactivating..." : "Confirm & Deactivate Staff"}
+                  {deactivationSubmitting ? "Deactivating..." : "Confirm Deactivation"}
                 </button>
               </div>
             </div>
+
           </form>
         </Modal>
       )}

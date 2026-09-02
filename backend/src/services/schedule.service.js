@@ -275,6 +275,48 @@ async function createSchedule(doctorId, data) {
   return createdSchedules.length === 1 ? createdSchedules[0] : createdSchedules;
 }
 
+async function updateSchedule(scheduleId, data) {
+  const existing = await pool.query(
+    `SELECT id, doctor_id, day_of_week, start_time, end_time, slot_duration_minutes, is_active
+     FROM doctor_schedules
+     WHERE id = $1`,
+    [scheduleId]
+  );
+
+  if (existing.rows.length === 0) {
+    throw new Error("SCHEDULE_NOT_FOUND");
+  }
+
+  const current = existing.rows[0];
+  const startTime = data.startTime || current.start_time;
+  const endTime = data.endTime || current.end_time;
+
+  if (startTime >= endTime) {
+    throw new Error("INVALID_TIME_RANGE: Start time must be before end time.");
+  }
+
+  const dayOfWeek = data.dayOfWeek !== undefined ? parseInt(data.dayOfWeek, 10) : current.day_of_week;
+  const slotDurationMinutes = data.slotDurationMinutes ? parseInt(data.slotDurationMinutes, 10) : current.slot_duration_minutes;
+  const isActive = data.isActive !== undefined ? data.isActive : current.is_active;
+
+  const result = await pool.query(
+    `
+      UPDATE doctor_schedules
+      SET day_of_week = $1,
+          start_time = $2,
+          end_time = $3,
+          slot_duration_minutes = $4,
+          is_active = $5,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = $6
+      RETURNING *
+    `,
+    [dayOfWeek, startTime, endTime, slotDurationMinutes, isActive, scheduleId]
+  );
+
+  return result.rows[0];
+}
+
 async function deleteSchedule(scheduleId) {
   const result = await pool.query(
     `
@@ -293,5 +335,7 @@ module.exports = {
   getDoctorSchedules,
   getDoctorUpcomingAvailability,
   createSchedule,
+  updateSchedule,
   deleteSchedule,
 };
+

@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import AppShell from "../components/layout/AppShell";
+import Modal from "../components/common/Modal";
 import { useAuth } from "../context/useAuth";
 import {
   getDoctors,
   getDoctorSchedules,
   createSchedule,
+  updateSchedule,
   deleteSchedule,
 } from "../services/scheduleService";
 
@@ -44,6 +46,12 @@ function DoctorSchedules({ isDoctorSelfView = false }) {
   const [doctorsLoading, setDoctorsLoading] = useState(!isDoctor);
   const [submitting, setSubmitting] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
+
+  // Edit Schedule Modal State
+  const [editingSchedule, setEditingSchedule] = useState(null);
+  const [editForm, setEditForm] = useState(null);
+  const [editSubmitting, setEditSubmitting] = useState(false);
+  const [editError, setEditError] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -178,6 +186,59 @@ function DoctorSchedules({ isDoctorSelfView = false }) {
       setError(err.message || "Unable to create schedule.");
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  function handleOpenEdit(schedule) {
+    setEditingSchedule(schedule);
+    setEditForm({
+      dayOfWeek: schedule.day_of_week,
+      startTime: schedule.start_time?.slice(0, 5) || "08:00",
+      endTime: schedule.end_time?.slice(0, 5) || "12:00",
+      slotDurationMinutes: schedule.slot_duration_minutes || 30,
+    });
+    setEditError("");
+  }
+
+  function handleEditChange(event) {
+    const { name, value } = event.target;
+    setEditForm((prev) => ({
+      ...prev,
+      [name]:
+        name === "dayOfWeek" || name === "slotDurationMinutes"
+          ? Number(value)
+          : value,
+    }));
+  }
+
+  async function handleEditSubmit(event) {
+    event.preventDefault();
+    if (!editingSchedule || !editForm) return;
+
+    if (editForm.startTime >= editForm.endTime) {
+      setEditError("Start time must be before end time.");
+      return;
+    }
+
+    try {
+      setEditSubmitting(true);
+      setEditError("");
+      await updateSchedule(editingSchedule.id, {
+        dayOfWeek: editForm.dayOfWeek,
+        startTime: editForm.startTime,
+        endTime: editForm.endTime,
+        slotDurationMinutes: Number(editForm.slotDurationMinutes),
+      });
+
+      const dayName = DAYS.find((d) => d.value === editForm.dayOfWeek)?.label;
+      setSuccess(`Schedule updated successfully for ${dayName} (${editForm.startTime} - ${editForm.endTime}).`);
+      setEditingSchedule(null);
+      setEditForm(null);
+      setReloadKey((prev) => prev + 1);
+    } catch (err) {
+      setEditError(err.message || "Unable to update schedule.");
+    } finally {
+      setEditSubmitting(false);
     }
   }
 
@@ -423,14 +484,24 @@ function DoctorSchedules({ isDoctorSelfView = false }) {
                     </td>
                     {!isDoctor && user?.role === "ADMIN" && (
                       <td>
-                        <button
-                          className="button button-danger"
-                          type="button"
-                          style={{ padding: "4px 8px", fontSize: "11px" }}
-                          onClick={() => handleDelete(schedule.id)}
-                        >
-                          Remove
-                        </button>
+                        <div style={{ display: "flex", gap: "6px" }}>
+                          <button
+                            className="button button-secondary"
+                            type="button"
+                            style={{ padding: "4px 8px", fontSize: "11px" }}
+                            onClick={() => handleOpenEdit(schedule)}
+                          >
+                            Edit
+                          </button>
+                          <button
+                            className="button button-danger"
+                            type="button"
+                            style={{ padding: "4px 8px", fontSize: "11px" }}
+                            onClick={() => handleDelete(schedule.id)}
+                          >
+                            Remove
+                          </button>
+                        </div>
                       </td>
                     )}
                   </tr>
@@ -440,6 +511,103 @@ function DoctorSchedules({ isDoctorSelfView = false }) {
           </div>
         )}
       </section>
+
+      {/* Edit Schedule Modal */}
+      {editingSchedule && editForm && (
+        <Modal
+          isOpen={true}
+          onClose={() => {
+            setEditingSchedule(null);
+            setEditForm(null);
+          }}
+          title={`Edit Schedule — ${DAYS.find((d) => d.value === editForm.dayOfWeek)?.label || "Shift"}`}
+        >
+          <form onSubmit={handleEditSubmit}>
+            {editError && (
+              <div className="alert alert-error" role="alert" style={{ marginBottom: "12px" }}>
+                {editError}
+              </div>
+            )}
+
+            <div className="form-grid">
+              <div className="form-field">
+                <label htmlFor="editDayOfWeek">Day of Week *</label>
+                <select
+                  id="editDayOfWeek"
+                  name="dayOfWeek"
+                  value={editForm.dayOfWeek}
+                  onChange={handleEditChange}
+                  required
+                >
+                  {DAYS.map((d) => (
+                    <option key={d.value} value={d.value}>
+                      {d.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="form-field">
+                <label htmlFor="editStartTime">Start Time *</label>
+                <input
+                  id="editStartTime"
+                  name="startTime"
+                  type="time"
+                  value={editForm.startTime}
+                  onChange={handleEditChange}
+                  required
+                />
+              </div>
+
+              <div className="form-field">
+                <label htmlFor="editEndTime">End Time *</label>
+                <input
+                  id="editEndTime"
+                  name="endTime"
+                  type="time"
+                  value={editForm.endTime}
+                  onChange={handleEditChange}
+                  required
+                />
+              </div>
+
+              <div className="form-field">
+                <label htmlFor="editSlotDuration">Slot Duration *</label>
+                <select
+                  id="editSlotDuration"
+                  name="slotDurationMinutes"
+                  value={editForm.slotDurationMinutes}
+                  onChange={handleEditChange}
+                  required
+                >
+                  <option value={15}>15 minutes</option>
+                  <option value={20}>20 minutes</option>
+                  <option value={30}>30 minutes</option>
+                  <option value={45}>45 minutes</option>
+                  <option value={60}>60 minutes</option>
+                </select>
+              </div>
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px", marginTop: "16px" }}>
+              <button
+                type="button"
+                className="button button-secondary"
+                onClick={() => {
+                  setEditingSchedule(null);
+                  setEditForm(null);
+                }}
+                disabled={editSubmitting}
+              >
+                Cancel
+              </button>
+              <button type="submit" className="button button-primary" disabled={editSubmitting}>
+                {editSubmitting ? "Saving..." : "Save Changes"}
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
     </AppShell>
   );
 }

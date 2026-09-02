@@ -281,11 +281,9 @@ async function getAppointments(query = {}) {
 
   if (doctorId) {
     params.push(doctorId);
-    conditions.push(`(
-      a.doctor_id = $${params.length}
-      OR a.patient_id IN (SELECT patient_id FROM referrals WHERE receiving_doctor_id = $${params.length} OR referring_doctor_id = $${params.length})
-    )`);
+    conditions.push(`a.doctor_id = $${params.length}`);
   }
+
 
   if (patientId) {
     params.push(patientId);

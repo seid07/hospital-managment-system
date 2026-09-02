@@ -31,7 +31,6 @@ import DoctorSchedules from "./pages/DoctorSchedules";
 import AdminAuditLogs from "./pages/AdminAuditLogs";
 import Reports from "./pages/Reports";
 import ReferralQueue from "./pages/ReferralQueue";
-import VerifyEmail from "./pages/VerifyEmail";
 
 function App() {
   return (
@@ -40,7 +39,7 @@ function App() {
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/reset-password" element={<ResetPassword />} />
-          <Route path="/verify-email" element={<VerifyEmail />} />
+
 
           <Route element={<ProtectedRoute />}>
 

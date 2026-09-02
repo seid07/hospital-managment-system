@@ -54,61 +54,6 @@ async function checkEmail(req, res) {
   }
 }
 
-async function sendEmailVerification(req, res) {
-  try {
-    const { email } = req.body;
-    const result = await staffService.sendStaffEmailVerification(
-      email,
-      req.user?.userId || req.user?.id
-    );
-    return res.status(200).json(result);
-  } catch (error) {
-    if (error.message?.startsWith("COOLDOWN_ACTIVE")) {
-      return res.status(429).json({
-        success: false,
-        message: error.message.replace(/^[^:]+:\s*/, ""),
-      });
-    }
-    if (
-      error.message?.startsWith("INVALID_EMAIL_FORMAT") ||
-      error.message?.startsWith("DUPLICATE_EMAIL")
-    ) {
-      return res.status(400).json({
-        success: false,
-        message: error.message.replace(/^[^:]+:\s*/, ""),
-      });
-    }
-    console.error("Send email verification error:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Unable to send email verification link.",
-    });
-  }
-}
-
-async function verifyEmail(req, res) {
-  try {
-    const token = req.query.token || req.body.token;
-    const result = await staffService.verifyStaffEmailToken(token);
-    return res.status(200).json(result);
-  } catch (error) {
-    if (
-      error.message?.startsWith("INVALID_TOKEN") ||
-      error.message?.startsWith("TOKEN_EXPIRED")
-    ) {
-      return res.status(400).json({
-        success: false,
-        message: error.message.replace(/^[^:]+:\s*/, ""),
-      });
-    }
-    console.error("Verify email token error:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Unable to verify email address.",
-    });
-  }
-}
-
 async function resendCredentials(req, res) {
   try {
     const { id } = req.params;
@@ -138,6 +83,12 @@ async function resendCredentials(req, res) {
         message: error.message.replace(/^[^:]+:\s*/, ""),
       });
     }
+    if (error.message?.startsWith("EMAIL_DELIVERY_FAILED")) {
+      return res.status(400).json({
+        success: false,
+        message: error.message.replace(/^[^:]+:\s*/, ""),
+      });
+    }
     console.error("Resend credentials error:", error);
     return res.status(500).json({
       success: false,
@@ -155,7 +106,6 @@ async function createStaff(req, res) {
       phone,
       role,
       username,
-      password,
     } = req.body;
 
     if (
@@ -164,13 +114,12 @@ async function createStaff(req, res) {
       !email ||
       !phone ||
       !role ||
-      !username ||
-      !password
+      !username
     ) {
       return res.status(400).json({
         success: false,
         message:
-          "First name, last name, email, phone, role, username and password are required.",
+          "First name, last name, email, phone, role, and username are required.",
       });
     }
 
@@ -178,18 +127,10 @@ async function createStaff(req, res) {
 
     return res.status(201).json({
       success: true,
-      message: "Staff member created successfully.",
+      message: "Staff member created successfully. Temporary credentials have been sent to their email.",
       data: staff,
     });
   } catch (error) {
-    if (error.message?.startsWith("EMAIL_NOT_VERIFIED")) {
-      return res.status(400).json({
-        success: false,
-        code: "EMAIL_NOT_VERIFIED",
-        message: "Email must be verified before creating the staff account.",
-      });
-    }
-
     if (error.message?.startsWith("FIELD_REQUIRED")) {
       return res.status(400).json({
         success: false,
@@ -232,6 +173,14 @@ async function createStaff(req, res) {
       });
     }
 
+    if (error.message?.startsWith("EMAIL_DELIVERY_FAILED")) {
+      return res.status(400).json({
+        success: false,
+        code: "EMAIL_DELIVERY_FAILED",
+        message: error.message.replace("EMAIL_DELIVERY_FAILED: ", ""),
+      });
+    }
+
     if (error.message === "DUPLICATE_EMAIL" || error.message?.startsWith("DUPLICATE_EMAIL")) {
       return res.status(409).json({
         success: false,
@@ -262,11 +211,9 @@ async function createStaff(req, res) {
   }
 }
 
-
 async function updateStaff(req, res) {
   try {
     const { id } = req.params;
-
 
     if (!isValidUUID(id)) {
       return res.status(400).json({
@@ -275,21 +222,62 @@ async function updateStaff(req, res) {
       });
     }
 
-    const staff = await staffService.updateStaff(id, req.body, req.user?.userId);
+    const {
+      firstName,
+      lastName,
+      email,
+      phone,
+      role,
+      department,
+      specialty,
+      username,
+    } = req.body;
 
-    if (!staff) {
+    if (
+      !firstName &&
+      !lastName &&
+      !email &&
+      !phone &&
+      !role &&
+      department === undefined &&
+      specialty === undefined &&
+      !username
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "At least one field is required for update.",
+      });
+    }
+
+    const updated = await staffService.updateStaff(id, req.body, req.user?.userId || req.user?.id);
+
+    return res.json({
+      success: true,
+      message: "Staff member updated successfully.",
+      data: updated,
+    });
+  } catch (error) {
+    if (error.message === "STAFF_NOT_FOUND") {
       return res.status(404).json({
         success: false,
         message: "Staff member not found.",
       });
     }
 
-    return res.json({
-      success: true,
-      message: "Staff member updated successfully.",
-      data: staff,
-    });
-  } catch (error) {
+    if (error.message?.startsWith("MULTIPLE_ROLES_NOT_ALLOWED")) {
+      return res.status(400).json({
+        success: false,
+        message: "Each staff member can have only ONE role.",
+      });
+    }
+
+    if (error.message === "INVALID_EMAIL_FORMAT") {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid email format.",
+      });
+    }
+
     if (error.message === "INVALID_PHONE_FORMAT") {
       return res.status(400).json({
         success: false,
@@ -304,17 +292,17 @@ async function updateStaff(req, res) {
       });
     }
 
-    if (error.message === "USERNAME_TAKEN") {
+    if (error.message === "DUPLICATE_EMAIL") {
       return res.status(409).json({
         success: false,
-        message: "This username is already taken by another staff member.",
+        message: "A staff member with this email already exists.",
       });
     }
 
-    if (error.message === "DUPLICATE_STAFF") {
+    if (error.message === "DUPLICATE_USERNAME") {
       return res.status(409).json({
         success: false,
-        message: "A staff account with this email or phone already exists.",
+        message: "A staff account with this username already exists.",
       });
     }
 
@@ -330,7 +318,6 @@ async function updateStaff(req, res) {
 async function deleteStaffPermanently(req, res) {
   try {
     const { id } = req.params;
-
     if (!isValidUUID(id)) {
       return res.status(400).json({
         success: false,
@@ -338,33 +325,19 @@ async function deleteStaffPermanently(req, res) {
       });
     }
 
-    const result = await staffService.deleteStaffPermanently(id, req.user?.userId);
-
-    if (!result) {
+    const result = await staffService.deleteStaffPermanently(id, req.user?.userId || req.user?.id);
+    return res.json(result);
+  } catch (error) {
+    if (error.message === "STAFF_NOT_FOUND") {
       return res.status(404).json({
         success: false,
         message: "Staff member not found.",
       });
     }
-
-    return res.json({
-      success: true,
-      message: `Staff member ${result.name} deleted permanently.`,
-      data: result,
-    });
-  } catch (error) {
-    if (error.message === "CANNOT_DELETE_LAST_ADMIN") {
-      return res.status(400).json({
-        success: false,
-        message: "Cannot permanently delete the only remaining System Administrator account.",
-      });
-    }
-
     console.error("Delete staff permanently error:", error);
-
     return res.status(500).json({
       success: false,
-      message: error.message || "Unable to permanently delete staff member.",
+      message: "Unable to delete staff member.",
     });
   }
 }
@@ -372,7 +345,6 @@ async function deleteStaffPermanently(req, res) {
 async function updateStatus(req, res) {
   try {
     const { id } = req.params;
-    const { isActive, reason, startDate, endDate } = req.body;
 
     if (!isValidUUID(id)) {
       return res.status(400).json({
@@ -381,33 +353,43 @@ async function updateStatus(req, res) {
       });
     }
 
+    let { isActive, deactivationReason, deactivationStartDate, deactivationEndDate } = req.body;
+    if (typeof isActive !== "boolean" && (isActive === "true" || isActive === "false")) {
+      isActive = isActive === "true";
+    }
+
     if (typeof isActive !== "boolean") {
       return res.status(400).json({
         success: false,
-        message: "isActive must be true or false.",
+        message: "isActive boolean is required.",
       });
     }
 
-    const staff = await staffService.updateStaffStatus(
+
+    const updated = await staffService.updateStaffStatus(
       id,
-      isActive,
-      { reason, startDate, endDate },
-      req.user?.userId
+      {
+        isActive,
+        deactivationReason,
+        deactivationStartDate,
+        deactivationEndDate,
+      },
+      req.user?.userId || req.user?.id
     );
 
-    if (!staff) {
+    return res.json({
+      success: true,
+      message: `Staff member ${isActive ? "activated" : "deactivated"} successfully.`,
+      data: updated,
+    });
+  } catch (error) {
+    if (error.message === "STAFF_NOT_FOUND") {
       return res.status(404).json({
         success: false,
         message: "Staff member not found.",
       });
     }
 
-    return res.json({
-      success: true,
-      message: `Staff member ${isActive ? "activated" : "deactivated"}.`,
-      data: staff,
-    });
-  } catch (error) {
     console.error("Update staff status error:", error);
 
     return res.status(500).json({
@@ -429,12 +411,7 @@ async function getDoctorScheduledAppointments(req, res) {
       });
     }
 
-    const appointments = await staffService.getDoctorScheduledAppointments(
-      id,
-      startDate,
-      endDate
-    );
-
+    const appointments = await staffService.getDoctorScheduledAppointments(id, startDate, endDate);
     return res.json({
       success: true,
       data: appointments,
@@ -452,8 +429,6 @@ module.exports = {
   getRoles,
   getStaff,
   checkEmail,
-  sendEmailVerification,
-  verifyEmail,
   resendCredentials,
   createStaff,
   updateStaff,
@@ -461,5 +436,3 @@ module.exports = {
   updateStatus,
   getDoctorScheduledAppointments,
 };
-
-

@@ -32,21 +32,19 @@ export async function deleteStaffPermanently(id) {
   return del(`/staff/${id}/permanent`);
 }
 
-export async function updateStaffStatus(id, isActive, options = {}) {
-  return patch(`/staff/${id}/status`, { isActive, ...options });
+export async function updateStaffStatus(id, isActiveOrPayload, options = {}) {
+  const payload =
+    typeof isActiveOrPayload === "object" && isActiveOrPayload !== null
+      ? isActiveOrPayload
+      : { isActive: Boolean(isActiveOrPayload), ...options };
+  return patch(`/staff/${id}/status`, payload);
 }
 
-export async function sendStaffEmailVerification(email) {
-  return post("/staff/send-email-verification", { email });
-}
-
-export async function verifyStaffEmail(token) {
-  return post("/auth/verify-email", { token });
-}
 
 export async function resendStaffCredentials(staffId) {
   return post(`/staff/${staffId}/resend-credentials`, {});
 }
+
 
 export async function getDoctorScheduledAppointments(id, startDate, endDate) {
   const params = new URLSearchParams();

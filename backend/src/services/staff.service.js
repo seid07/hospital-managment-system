@@ -16,15 +16,14 @@ async function getRoles() {
 }
 
 /**
- * Check email format, duplicate status, and real ownership verification status.
+ * Check email format and duplicate status in staff records.
  */
 async function checkEmailAvailability(email, excludeStaffId = null) {
   if (!email || typeof email !== "string") {
     return {
       available: false,
-      verified: false,
       reason: "INVALID_FORMAT",
-      message: "Please enter an email address.",
+      message: "Enter a valid email address",
     };
   }
 
@@ -32,9 +31,8 @@ async function checkEmailAvailability(email, excludeStaffId = null) {
   if (!validateEmail(cleanEmail)) {
     return {
       available: false,
-      verified: false,
       reason: "INVALID_FORMAT",
-      message: "Invalid email format. E.g. name@hospital.local",
+      message: "Enter a valid email address",
     };
   }
 
@@ -51,206 +49,16 @@ async function checkEmailAvailability(email, excludeStaffId = null) {
   if (result.rows.length > 0) {
     return {
       available: false,
-      verified: false,
       reason: "DUPLICATE",
-      message: "Email already registered in system.",
+      message: "Email already registered",
     };
   }
-
-  // Check verification status in staff_email_verifications
-  const verRes = await pool.query(
-    "SELECT verified, verified_at FROM staff_email_verifications WHERE LOWER(email) = $1 AND verified = TRUE",
-    [cleanEmail]
-  );
-
-  const isVerified = verRes.rows.length > 0;
 
   return {
     available: true,
-    verified: isVerified,
-    verifiedAt: isVerified ? verRes.rows[0].verified_at : null,
-    message: isVerified ? "Email verified and available ✓" : "Email available. Verification required.",
+    message: "Valid email format",
   };
 }
-
-/**
- * Send one-time secure email verification link to mailbox owner.
- */
-async function sendStaffEmailVerification(email, requestedByUserId) {
-  if (!email || typeof email !== "string") {
-    throw new Error("INVALID_EMAIL_FORMAT: Please provide a valid email address.");
-  }
-
-  const cleanEmail = email.trim().toLowerCase();
-  if (!validateEmail(cleanEmail)) {
-    throw new Error("INVALID_EMAIL_FORMAT: Invalid email format. E.g. name@hospital.local");
-  }
-
-  // Check if email already belongs to an existing staff member
-  const existingStaff = await pool.query(
-    "SELECT id FROM staff WHERE LOWER(email) = $1",
-    [cleanEmail]
-  );
-  if (existingStaff.rows.length > 0) {
-    throw new Error("DUPLICATE_EMAIL: This email address is already registered to a staff account.");
-  }
-
-  // Check 60-second rate-limiting cooldown
-  const now = new Date();
-  const existingVer = await pool.query(
-    "SELECT last_sent_at, verified FROM staff_email_verifications WHERE LOWER(email) = $1",
-    [cleanEmail]
-  );
-
-  if (existingVer.rows.length > 0 && existingVer.rows[0].last_sent_at) {
-    const lastSent = new Date(existingVer.rows[0].last_sent_at);
-    const diffSeconds = Math.floor((now.getTime() - lastSent.getTime()) / 1000);
-    if (diffSeconds < 60) {
-      const waitSeconds = 60 - diffSeconds;
-      throw new Error(`COOLDOWN_ACTIVE: Please wait ${waitSeconds} second${waitSeconds === 1 ? "" : "s"} before requesting a new verification link.`);
-    }
-  }
-
-  // Generate cryptographically secure random 32-byte hex token
-  const rawToken = crypto.randomBytes(32).toString("hex");
-  const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
-  const expiresAt = new Date(Date.now() + 30 * 60 * 1000); // 30 minutes
-
-  await pool.query(
-    `INSERT INTO staff_email_verifications (
-      email,
-      token_hash,
-      expires_at,
-      verified,
-      verified_at,
-      last_sent_at,
-      updated_at
-    )
-    VALUES ($1, $2, $3, FALSE, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-    ON CONFLICT (email) DO UPDATE
-    SET token_hash = EXCLUDED.token_hash,
-        expires_at = EXCLUDED.expires_at,
-        verified = FALSE,
-        verified_at = NULL,
-        last_sent_at = CURRENT_TIMESTAMP,
-        updated_at = CURRENT_TIMESTAMP`,
-    [cleanEmail, tokenHash, expiresAt]
-  );
-
-  // Send verification link via email service
-  const emailRes = await emailService.sendEmailVerificationEmail({
-    to: cleanEmail,
-    token: rawToken,
-    expiresInMinutes: 30,
-  });
-
-  if (requestedByUserId) {
-    await recordAuditLog(pool, {
-      userId: requestedByUserId,
-      action: "STAFF_EMAIL_VERIFICATION_SENT",
-      entity: "staff_email_verifications",
-      entityId: null,
-      details: { email: cleanEmail, delivered: emailRes.sent },
-    });
-  }
-
-  return {
-    success: true,
-    message: "A secure verification link has been sent to the email address. The recipient must click the link to verify ownership.",
-    email: cleanEmail,
-    expiresInMinutes: 30,
-    cooldownSeconds: 60,
-    delivered: emailRes.sent,
-  };
-}
-
-/**
- * Verify staff email ownership using one-time token from verification link.
- */
-async function verifyStaffEmailToken(rawToken) {
-  if (!rawToken || typeof rawToken !== "string" || !rawToken.trim()) {
-    throw new Error("INVALID_TOKEN: Invalid or missing verification link.");
-  }
-
-  const cleanToken = rawToken.trim();
-  const tokenHash = crypto.createHash("sha256").update(cleanToken).digest("hex");
-
-  const verRes = await pool.query(
-    `SELECT id, email, token_hash, expires_at, verified, verified_at
-     FROM staff_email_verifications
-     WHERE token_hash = $1`,
-    [tokenHash]
-  );
-
-  if (verRes.rows.length === 0) {
-    throw new Error("INVALID_TOKEN: This verification link is invalid or has already been used.");
-  }
-
-  const verRecord = verRes.rows[0];
-
-  // Check expiration
-  if (verRecord.expires_at && new Date(verRecord.expires_at) < new Date()) {
-    throw new Error("TOKEN_EXPIRED: This verification link has expired. Please request a new verification email.");
-  }
-
-  if (verRecord.verified) {
-    return {
-      success: true,
-      alreadyVerified: true,
-      email: verRecord.email,
-      message: "Email has already been verified.",
-    };
-  }
-
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-
-    // Mark verified and invalidate single-use token
-    await client.query(
-      `UPDATE staff_email_verifications
-       SET verified = TRUE,
-           verified_at = CURRENT_TIMESTAMP,
-           token_hash = NULL,
-           expires_at = NULL,
-           updated_at = CURRENT_TIMESTAMP
-       WHERE id = $1`,
-      [verRecord.id]
-    );
-
-    // If staff record already exists with this email, update staff table too
-    await client.query(
-      `UPDATE staff
-       SET email_verified = TRUE,
-           email_verified_at = CURRENT_TIMESTAMP
-       WHERE LOWER(email) = LOWER($1)`,
-      [verRecord.email]
-    );
-
-    await recordAuditLog(client, {
-      userId: null,
-      action: "STAFF_EMAIL_VERIFIED",
-      entity: "staff_email_verifications",
-      entityId: verRecord.id,
-      details: { email: verRecord.email },
-    });
-
-    await client.query("COMMIT");
-
-    return {
-      success: true,
-      email: verRecord.email,
-      verifiedAt: new Date().toISOString(),
-      message: "Email verified successfully. The administrator may now create the staff account.",
-    };
-  } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
-  } finally {
-    client.release();
-  }
-}
-
 
 async function getStaff(query = {}) {
   const role = query.role || null;
@@ -266,44 +74,43 @@ async function getStaff(query = {}) {
 
   if (search) {
     params.push(`%${search}%`);
-    conditions.push(`(
-      s.first_name ILIKE $${params.length}
-      OR s.last_name ILIKE $${params.length}
-      OR s.email ILIKE $${params.length}
-      OR u.username ILIKE $${params.length}
-    )`);
+    const idx = params.length;
+    conditions.push(
+      `(s.first_name ILIKE $${idx} OR s.last_name ILIKE $${idx} OR s.email ILIKE $${idx} OR s.phone ILIKE $${idx} OR s.department ILIKE $${idx} OR s.specialty ILIKE $${idx} OR u.username ILIKE $${idx})`
+    );
   }
 
   const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
   const result = await pool.query(
     `
-    SELECT
-      s.id,
-      s.first_name,
-      s.last_name,
-      s.email,
-      COALESCE(s.email_verified, FALSE) AS email_verified,
-      s.email_verified_at,
-      s.phone,
-      s.department,
-      s.specialty,
-      CASE
-        WHEN s.is_active = FALSE AND s.deactivation_end_date IS NOT NULL AND s.deactivation_end_date < CURRENT_DATE THEN TRUE
-        ELSE s.is_active
-      END AS is_active,
-      s.deactivation_reason,
-      s.deactivation_start_date,
-      s.deactivation_end_date,
-      s.created_at,
-      r.name AS role,
-      u.username,
-      u.must_change_password
-    FROM staff s
-    INNER JOIN roles r ON r.id = s.role_id
-    LEFT JOIN users u ON u.staff_id = s.id
-    ${whereClause}
-    ORDER BY s.created_at DESC
+      SELECT
+        s.id,
+        s.first_name,
+        s.last_name,
+        s.email,
+        s.phone,
+        s.department,
+        s.specialty,
+        s.is_active,
+        s.deactivation_reason,
+        s.deactivation_start_date,
+        s.deactivation_end_date,
+        s.email_verified,
+        s.email_verified_at,
+        r.name AS role,
+        r.description AS role_description,
+        u.username,
+        u.must_change_password,
+        u.password_changed_at,
+        u.last_login
+      FROM staff s
+      INNER JOIN roles r
+        ON r.id = s.role_id
+      LEFT JOIN users u
+        ON u.staff_id = s.id
+      ${whereClause}
+      ORDER BY s.created_at DESC
     `,
     params
   );
@@ -311,70 +118,71 @@ async function getStaff(query = {}) {
   return result.rows;
 }
 
-async function createStaff(data, createdByUserId) {
-  // Validate all required fields
-  const requiredFields = [
-    { field: "firstName", label: "First name" },
-    { field: "lastName", label: "Last name" },
-    { field: "username", label: "Username" },
-    { field: "email", label: "Email" },
-    { field: "phone", label: "Phone" },
-    { field: "department", label: "Department" },
-    { field: "role", label: "Role" },
-    { field: "password", label: "Password" },
+/**
+ * Generate cryptographically secure temporary password meeting complexity requirements.
+ */
+function generateSecureTemporaryPassword() {
+  const upper = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+  const lower = "abcdefghjkmnpqrstuvwxyz";
+  const digits = "23456789";
+  const special = "!@#$%^&*";
+  const allChars = upper + lower + digits + special;
+
+  // Ensure at least one character from each required category
+  let passwordChars = [
+    upper[crypto.randomInt(0, upper.length)],
+    lower[crypto.randomInt(0, lower.length)],
+    digits[crypto.randomInt(0, digits.length)],
+    special[crypto.randomInt(0, special.length)],
   ];
 
-  for (const req of requiredFields) {
-    if (!data[req.field] || (typeof data[req.field] === "string" && !data[req.field].trim())) {
-      throw new Error(`FIELD_REQUIRED: ${req.label} is required.`);
-    }
+  // Fill remaining characters up to 12 characters length
+  for (let i = passwordChars.length; i < 12; i++) {
+    passwordChars.push(allChars[crypto.randomInt(0, allChars.length)]);
   }
 
-  // Enforce single role — reject if multiple roles were passed
+
+  // Shuffle array using Fisher-Yates
+  for (let i = passwordChars.length - 1; i > 0; i--) {
+    const j = crypto.randomInt(0, i + 1);
+    [passwordChars[i], passwordChars[j]] = [passwordChars[j], passwordChars[i]];
+  }
+
+  return passwordChars.join("");
+}
+
+async function createStaff(data, createdByUserId) {
+  if (!data.firstName || !data.lastName || !data.email || !data.phone || !data.role || !data.username) {
+    throw new Error("FIELD_REQUIRED: First name, last name, email, phone, role, and username are required.");
+  }
+
   if (Array.isArray(data.role)) {
     throw new Error("MULTIPLE_ROLES_NOT_ALLOWED: Each staff member can have only ONE role.");
   }
-  if (typeof data.role !== "string") {
-    throw new Error("ROLE_REQUIRED: A valid role must be specified.");
-  }
 
-  // Validate Email
   const cleanEmail = data.email.trim().toLowerCase();
   if (!validateEmail(cleanEmail)) {
-    throw new Error("INVALID_EMAIL_FORMAT: Please enter a valid email address.");
+    throw new Error("INVALID_EMAIL_FORMAT: Enter a valid email address.");
   }
 
-  // Validate Password Strength
-  const passwordCheck = validatePasswordStrength(data.password);
-  if (!passwordCheck.isValid) {
-    throw new Error(`WEAK_PASSWORD: ${passwordCheck.message}`);
-  }
-
-  // Validate Phone
-  let phone = data.phone ? data.phone.trim() : "";
+  let phone = data.phone.trim();
   if (!validateEthiopianPhone(phone)) {
     throw new Error("INVALID_PHONE_FORMAT");
   }
   phone = normalizeEthiopianPhone(phone);
+
+  const passwordToUse = data.password ? data.password.trim() : generateSecureTemporaryPassword();
+  const passwordCheck = validatePasswordStrength(passwordToUse);
+  if (!passwordCheck.isValid) {
+    throw new Error(`WEAK_PASSWORD: ${passwordCheck.message}`);
+  }
 
   const client = await pool.connect();
 
   try {
     await client.query("BEGIN");
 
-    // REQUIREMENT: Strict email ownership verification check
-    const verificationRecord = await client.query(
-      "SELECT verified, verified_at FROM staff_email_verifications WHERE LOWER(email) = $1 AND verified = TRUE",
-      [cleanEmail]
-    );
-
-    if (verificationRecord.rows.length === 0) {
-      throw new Error("EMAIL_NOT_VERIFIED: Email must be verified before creating the staff account.");
-    }
-
-    const verifiedAt = verificationRecord.rows[0].verified_at || new Date();
-
-    // Check email uniqueness explicitly
+    // Check duplicate email
     const existingEmail = await client.query(
       "SELECT id FROM staff WHERE LOWER(email) = $1",
       [cleanEmail]
@@ -383,7 +191,7 @@ async function createStaff(data, createdByUserId) {
       throw new Error("DUPLICATE_EMAIL: A staff account with this email already exists.");
     }
 
-    // Check username uniqueness explicitly
+    // Check duplicate username
     const cleanUsername = data.username.trim().toLowerCase();
     const existingUser = await client.query(
       "SELECT id FROM users WHERE LOWER(username) = $1",
@@ -408,8 +216,8 @@ async function createStaff(data, createdByUserId) {
 
     const roleId = roleResult.rows[0].id;
 
-    // Hash password with bcrypt before storing
-    const passwordHash = await bcrypt.hash(data.password, 10);
+    // Hash temporary password with bcrypt before database storage
+    const passwordHash = await bcrypt.hash(passwordToUse, 10);
 
     const staffResult = await client.query(
       `
@@ -424,7 +232,7 @@ async function createStaff(data, createdByUserId) {
           email_verified,
           email_verified_at
         )
-        VALUES ($1,$2,$3,$4,$5,$6,$7, TRUE, $8)
+        VALUES ($1,$2,$3,$4,$5,$6,$7, TRUE, CURRENT_TIMESTAMP)
         RETURNING id
       `,
       [
@@ -435,7 +243,6 @@ async function createStaff(data, createdByUserId) {
         data.department ? data.department.trim() : null,
         data.specialty ? data.specialty.trim() : null,
         roleId,
-        verifiedAt,
       ]
     );
 
@@ -465,20 +272,34 @@ async function createStaff(data, createdByUserId) {
         role: data.role,
         name: `${data.firstName} ${data.lastName}`,
         email: cleanEmail,
-        emailVerified: true,
       },
     });
 
     await client.query("COMMIT");
 
-    // Deliver temporary credentials email
+    // Attempt credential email delivery
     const emailResult = await emailService.sendStaffWelcomeEmail({
       to: cleanEmail,
       firstName: data.firstName.trim(),
       lastName: data.lastName.trim(),
       username: cleanUsername,
-      temporaryPassword: data.password,
+      temporaryPassword: passwordToUse,
     });
+
+    if (
+      !emailResult.sent &&
+      emailResult.method === "SMTP" &&
+      process.env.NODE_ENV !== "test" &&
+      !cleanEmail.endsWith(".local") &&
+      !cleanEmail.endsWith(".test") &&
+      !cleanEmail.endsWith(".example.com")
+    ) {
+      // Rollback staff and user creation if live SMTP rejects delivery
+      await pool.query("DELETE FROM users WHERE staff_id = $1", [staffId]);
+      await pool.query("DELETE FROM staff WHERE id = $1", [staffId]);
+      throw new Error("EMAIL_DELIVERY_FAILED: Unable to deliver staff credentials to this email address. Please verify the email address and try again.");
+    }
+
 
     return {
       staffId,
@@ -487,7 +308,6 @@ async function createStaff(data, createdByUserId) {
       mustChangePassword: true,
       emailDelivered: emailResult.sent,
     };
-
   } catch (error) {
     await client.query("ROLLBACK");
     if (error.code === "23505") {
@@ -498,7 +318,6 @@ async function createStaff(data, createdByUserId) {
     client.release();
   }
 }
-
 
 async function updateStaff(id, data, updatedByUserId) {
   let phone = data.phone ? data.phone.trim() : "";
@@ -523,63 +342,89 @@ async function updateStaff(id, data, updatedByUserId) {
         `SELECT id FROM roles WHERE name = $1`,
         [data.role]
       );
-
       if (roleResult.rows.length === 0) {
         throw new Error("ROLE_NOT_FOUND");
       }
-
       roleId = roleResult.rows[0].id;
     }
+
+    // Check duplicate email
+    if (data.email) {
+      const cleanEmail = data.email.trim().toLowerCase();
+      if (!validateEmail(cleanEmail)) {
+        throw new Error("INVALID_EMAIL_FORMAT");
+      }
+      const existingEmail = await client.query(
+        "SELECT id FROM staff WHERE LOWER(email) = $1 AND id != $2",
+        [cleanEmail, id]
+      );
+      if (existingEmail.rows.length > 0) {
+        throw new Error("DUPLICATE_EMAIL");
+      }
+    }
+
+    // Check duplicate username
+    if (data.username) {
+      const cleanUsername = data.username.trim().toLowerCase();
+      const existingUser = await client.query(
+        "SELECT id FROM users WHERE LOWER(username) = $1 AND staff_id != $2",
+        [cleanUsername, id]
+      );
+      if (existingUser.rows.length > 0) {
+        throw new Error("DUPLICATE_USERNAME");
+      }
+    }
+
+    const currentStaff = await client.query(
+      `SELECT first_name, last_name, email, phone, department, specialty, role_id
+       FROM staff WHERE id = $1`,
+      [id]
+    );
+
+    if (currentStaff.rows.length === 0) {
+      throw new Error("STAFF_NOT_FOUND");
+    }
+
+    const current = currentStaff.rows[0];
 
     const result = await client.query(
       `
         UPDATE staff
         SET
-          first_name = COALESCE($1, first_name),
-          last_name = COALESCE($2, last_name),
-          email = COALESCE($3, email),
-          phone = COALESCE($4, phone),
-          department = COALESCE($5, department),
-          specialty = COALESCE($6, specialty),
-          role_id = COALESCE($7, role_id),
+          first_name = $1,
+          last_name = $2,
+          email = $3,
+          phone = $4,
+          department = $5,
+          specialty = $6,
+          role_id = $7,
           updated_at = CURRENT_TIMESTAMP
         WHERE id = $8
-        RETURNING id, first_name, last_name, email, phone, department, specialty, is_active
+        RETURNING *
       `,
       [
-        data.firstName ? data.firstName.trim() : null,
-        data.lastName ? data.lastName.trim() : null,
-        data.email ? data.email.trim().toLowerCase() : null,
-        phone || null,
-        data.department !== undefined ? (data.department ? data.department.trim() : "") : null,
-        data.specialty !== undefined ? (data.specialty ? data.specialty.trim() : "") : null,
-        roleId,
+        data.firstName ? data.firstName.trim() : current.first_name,
+        data.lastName ? data.lastName.trim() : current.last_name,
+        data.email ? data.email.trim().toLowerCase() : current.email,
+        phone || current.phone,
+        data.department !== undefined ? (data.department ? data.department.trim() : null) : current.department,
+        data.specialty !== undefined ? (data.specialty ? data.specialty.trim() : null) : current.specialty,
+        roleId || current.role_id,
         id,
       ]
     );
 
-    if (result.rows.length === 0) {
-      await client.query("ROLLBACK");
-      return null;
-    }
-
     // Update username if provided
-    if (data.username && data.username.trim()) {
-      const newUsername = data.username.trim().toLowerCase();
-      const uCheck = await client.query(
-        "SELECT id FROM users WHERE LOWER(username) = $1 AND staff_id != $2",
-        [newUsername, id]
-      );
-      if (uCheck.rows.length > 0) {
-        throw new Error("USERNAME_TAKEN");
-      }
+    if (data.username) {
+      const cleanUsername = data.username.trim().toLowerCase();
       await client.query(
-        "UPDATE users SET username = $1 WHERE staff_id = $2",
-        [newUsername, id]
+        `UPDATE users
+         SET username = $1
+         WHERE staff_id = $2`,
+        [cleanUsername, id]
       );
-    }
 
-    const staff = result.rows[0];
+    }
 
     await recordAuditLog(client, {
       userId: updatedByUserId,
@@ -592,84 +437,130 @@ async function updateStaff(id, data, updatedByUserId) {
     });
 
     await client.query("COMMIT");
-
-    return staff;
+    return result.rows[0];
   } catch (error) {
     await client.query("ROLLBACK");
-
-    if (error.code === "23505") {
-      throw new Error("DUPLICATE_STAFF");
-    }
-
     throw error;
   } finally {
     client.release();
   }
 }
 
-async function deleteStaffPermanently(id, deletedByUserId) {
+/**
+ * Permanently delete a staff member and clean up references.
+ */
+async function deleteStaffPermanently(staffId, requestedByUserId) {
   const client = await pool.connect();
-
   try {
     await client.query("BEGIN");
 
-    // Fetch staff info + check if they are an ADMIN
     const staffRes = await client.query(
-      `SELECT s.id, s.first_name, s.last_name, s.email, r.name as role
+      `SELECT s.id, s.first_name, s.last_name, s.email, r.name as role, u.id as user_id, u.username
        FROM staff s
        JOIN roles r ON s.role_id = r.id
+       LEFT JOIN users u ON u.staff_id = s.id
        WHERE s.id = $1`,
-      [id]
+      [staffId]
     );
 
     if (staffRes.rows.length === 0) {
-      await client.query("ROLLBACK");
-      return null;
+      throw new Error("STAFF_NOT_FOUND");
     }
 
     const staff = staffRes.rows[0];
+    const userId = staff.user_id;
 
-    // Prevent deleting the last remaining active ADMIN
-    if (staff.role === "ADMIN") {
-      const adminCountRes = await client.query(
-        `SELECT COUNT(*) as count
-         FROM staff s
-         JOIN roles r ON s.role_id = r.id
-         WHERE r.name = 'ADMIN' AND s.is_active = TRUE`
-      );
-      if (parseInt(adminCountRes.rows[0].count, 10) <= 1) {
-        throw new Error("CANNOT_DELETE_LAST_ADMIN");
-      }
+    if (userId) {
+      await client.query("UPDATE invoices SET created_by = NULL WHERE created_by = $1", [userId]);
+      await client.query("UPDATE payments SET received_by = NULL WHERE received_by = $1", [userId]);
+      await client.query("UPDATE prescriptions SET dispensed_by = NULL WHERE dispensed_by = $1", [userId]);
+      await client.query("UPDATE lab_orders SET specimen_collected_by = NULL WHERE specimen_collected_by = $1", [userId]);
+      await client.query("UPDATE lab_orders SET verified_by = NULL WHERE verified_by = $1", [userId]);
+      await client.query("UPDATE audit_logs SET user_id = NULL WHERE user_id = $1", [userId]);
+
+      await client.query("DELETE FROM password_resets WHERE user_id = $1", [userId]);
+      await client.query("DELETE FROM users WHERE id = $1", [userId]);
     }
 
-    // Set foreign keys in child records to NULL or delete dependent records before deleting staff
-    await client.query("UPDATE appointments SET doctor_id = NULL WHERE doctor_id = $1", [id]);
-    await client.query("DELETE FROM doctor_schedules WHERE doctor_id = $1", [id]);
-    await client.query("UPDATE encounters SET doctor_id = NULL WHERE doctor_id = $1", [id]);
-    await client.query("UPDATE prescriptions SET doctor_id = NULL WHERE doctor_id = $1", [id]);
-    await client.query("UPDATE lab_orders SET doctor_id = NULL WHERE doctor_id = $1", [id]);
-    await client.query("UPDATE referrals SET referring_doctor_id = NULL WHERE referring_doctor_id = $1", [id]);
-    await client.query("UPDATE referrals SET receiving_doctor_id = NULL WHERE receiving_doctor_id = $1", [id]);
-    await client.query("UPDATE referral_messages SET sender_id = NULL WHERE sender_id = $1", [id]);
+    await client.query("DELETE FROM doctor_schedules WHERE doctor_id = $1", [staffId]);
+    await client.query("UPDATE prescriptions SET doctor_id = NULL WHERE doctor_id = $1", [staffId]);
+    await client.query("UPDATE encounters SET doctor_id = NULL WHERE doctor_id = $1", [staffId]);
+    await client.query("UPDATE appointments SET doctor_id = NULL WHERE doctor_id = $1", [staffId]);
+    await client.query("DELETE FROM staff_email_verifications WHERE LOWER(email) = $1", [staff.email.toLowerCase()]);
+    await client.query("DELETE FROM staff WHERE id = $1", [staffId]);
 
-    // Delete user row (cascades or explicit)
-    await client.query("DELETE FROM users WHERE staff_id = $1", [id]);
-
-    // Delete the staff record
-    await client.query("DELETE FROM staff WHERE id = $1", [id]);
 
     await recordAuditLog(client, {
-      userId: deletedByUserId,
+      userId: requestedByUserId,
       action: "STAFF_DELETED_PERMANENTLY",
       entity: "staff",
-      entityId: id,
-      details: { name: `${staff.first_name} ${staff.last_name}`, email: staff.email, role: staff.role },
+      entityId: staffId,
+      details: {
+        firstName: staff.first_name,
+        lastName: staff.last_name,
+        role: staff.role,
+        email: staff.email,
+        username: staff.username,
+      },
     });
 
     await client.query("COMMIT");
 
-    return { id, name: `${staff.first_name} ${staff.last_name}`, success: true };
+    return {
+      success: true,
+      message: `Staff member ${staff.first_name} ${staff.last_name} has been permanently deleted.`,
+    };
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
 
+async function updateStaffStatus(id, { isActive, deactivationReason, deactivationStartDate, deactivationEndDate }, updatedByUserId) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const reason = !isActive ? (deactivationReason || "Administrative deactivation") : null;
+    const start = !isActive ? (deactivationStartDate || new Date().toISOString().split("T")[0]) : null;
+    const end = !isActive ? (deactivationEndDate || null) : null;
+
+    const result = await client.query(
+      `
+        UPDATE staff
+        SET
+          is_active = $1,
+          deactivation_reason = $2,
+          deactivation_start_date = $3,
+          deactivation_end_date = $4,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE id = $5
+        RETURNING *
+      `,
+      [isActive, reason, start, end, id]
+    );
+
+    if (result.rows.length === 0) {
+      throw new Error("STAFF_NOT_FOUND");
+    }
+
+    await recordAuditLog(client, {
+      userId: updatedByUserId,
+      action: isActive ? "STAFF_ACTIVATED" : "STAFF_DEACTIVATED",
+      entity: "staff",
+      entityId: id,
+      details: {
+        isActive,
+        deactivationReason: reason,
+        deactivationStartDate: start,
+        deactivationEndDate: end,
+      },
+    });
+
+    await client.query("COMMIT");
+    return result.rows[0];
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;
@@ -678,107 +569,54 @@ async function deleteStaffPermanently(id, deletedByUserId) {
   }
 }
 
-async function updateStaffStatus(id, isActive, options = {}, updatedByUserId) {
-  const { reason, startDate, endDate } = options;
-
-  let query = "";
-  let params = [];
-
-  if (!isActive) {
-    query = `
-      UPDATE staff
-      SET
-        is_active = FALSE,
-        deactivation_reason = $1,
-        deactivation_start_date = $2,
-        deactivation_end_date = $3,
-        updated_at = CURRENT_TIMESTAMP
-      WHERE id = $4
-      RETURNING id, is_active, first_name, last_name, deactivation_reason, deactivation_start_date, deactivation_end_date
-    `;
-    params = [reason || null, startDate || null, endDate || null, id];
-  } else {
-    query = `
-      UPDATE staff
-      SET
-        is_active = TRUE,
-        deactivation_reason = NULL,
-        deactivation_start_date = NULL,
-        deactivation_end_date = NULL,
-        updated_at = CURRENT_TIMESTAMP
-      WHERE id = $1
-      RETURNING id, is_active, first_name, last_name, deactivation_reason, deactivation_start_date, deactivation_end_date
-    `;
-    params = [id];
-  }
-
-  const result = await pool.query(query, params);
-
-  if (result.rows.length === 0) {
-    return null;
-  }
-
-  const staff = result.rows[0];
-
-  await recordAuditLog(pool, {
-    userId: updatedByUserId,
-    action: isActive ? "STAFF_ACTIVATED" : "STAFF_DEACTIVATED",
-    entity: "staff",
-    entityId: id,
-    details: {
-      name: `${staff.first_name} ${staff.last_name}`,
-      isActive,
-      deactivation_reason: staff.deactivation_reason,
-      deactivation_start_date: staff.deactivation_start_date,
-      deactivation_end_date: staff.deactivation_end_date,
-    },
-  });
-
-  return staff;
-}
-
 async function getDoctorScheduledAppointments(doctorId, startDate, endDate) {
-  const query = `
-    SELECT
-      a.id,
-      a.appointment_number,
-      a.appointment_date,
-      a.start_time,
-      a.end_time,
-      a.status,
-      a.reason,
-      p.id AS patient_id,
-      p.patient_number,
-      p.first_name AS patient_first_name,
-      p.last_name AS patient_last_name,
-      p.phone AS patient_phone
-    FROM appointments a
-    JOIN patients p ON a.patient_id = p.id
-    WHERE a.doctor_id = $1
-      AND a.status IN ('SCHEDULED', 'CONFIRMED', 'CHECKED_IN')
-      AND (
-        ($2::date IS NULL OR a.appointment_date >= $2::date)
-        AND ($3::date IS NULL OR a.appointment_date <= $3::date)
-      )
-    ORDER BY a.appointment_date ASC, a.start_time ASC
-  `;
+  const params = [doctorId];
+  let dateFilter = "";
 
-  const result = await pool.query(query, [
-    doctorId,
-    startDate || null,
-    endDate || null,
-  ]);
+  if (startDate && endDate) {
+    params.push(startDate, endDate);
+    dateFilter = "AND a.appointment_date >= $2 AND a.appointment_date <= $3";
+  } else if (startDate) {
+    params.push(startDate);
+    dateFilter = "AND a.appointment_date >= $2";
+  }
+
+  const result = await pool.query(
+    `
+      SELECT
+        a.id,
+        a.appointment_number,
+        a.appointment_date,
+        a.start_time,
+        a.end_time,
+        a.status,
+        p.first_name AS patient_first_name,
+        p.last_name AS patient_last_name,
+        p.phone AS patient_phone,
+        p.patient_number
+      FROM appointments a
+      INNER JOIN patients p ON p.id = a.patient_id
+      WHERE a.doctor_id = $1
+        AND a.status IN ('SCHEDULED', 'CONFIRMED')
+        ${dateFilter}
+      ORDER BY a.appointment_date ASC, a.start_time ASC
+    `,
+    params
+  );
 
   return result.rows;
 }
 
 /**
- * Resend temporary login credentials to verified staff email.
+ * Resend temporary login credentials to staff email.
+ * Generates a new secure temporary password, hashes it, sets must_change_password = TRUE,
+ * and emails it to the staff member.
  */
 async function resendStaffCredentials(staffId, requestedByUserId) {
   const staffRes = await pool.query(
-    `SELECT s.id, s.first_name, s.last_name, s.email, s.is_active, u.id as user_id, u.username
+    `SELECT s.id, s.first_name, s.last_name, s.email, s.is_active, r.name AS role, u.id AS user_id, u.username
      FROM staff s
+     JOIN roles r ON s.role_id = r.id
      JOIN users u ON u.staff_id = s.id
      WHERE s.id = $1`,
     [staffId]
@@ -790,75 +628,65 @@ async function resendStaffCredentials(staffId, requestedByUserId) {
 
   const staff = staffRes.rows[0];
   if (!staff.is_active) {
-    throw new Error("CANNOT_RESEND_INACTIVE_STAFF: Cannot send credentials to an inactive staff account.");
+    throw new Error("CANNOT_RESEND_INACTIVE: Cannot resend credentials to a deactivated staff member.");
   }
 
-  // Generate cryptographically secure temporary password (e.g. 12 chars)
-  const charset = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%&*";
-  let tempPassword = "";
-  const randomBytes = crypto.randomBytes(12);
-  for (let i = 0; i < 12; i++) {
-    tempPassword += charset[randomBytes[i] % charset.length];
-  }
-  tempPassword += "A1!a";
-
+  // Generate fresh temporary password
+  const tempPassword = generateSecureTemporaryPassword();
   const passwordHash = await bcrypt.hash(tempPassword, 10);
 
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
+  // Update user with new hashed temporary password and enforce must_change_password = TRUE
+  await pool.query(
+    `UPDATE users
+     SET password_hash = $1,
+         must_change_password = TRUE
+     WHERE id = $2`,
+    [passwordHash, staff.user_id]
+  );
 
-    await client.query(
-      `UPDATE users
-       SET password_hash = $1,
-           must_change_password = TRUE
-       WHERE id = $2`,
-      [passwordHash, staff.user_id]
-    );
 
-    // Send welcome email with new temporary password
-    const emailResult = await emailService.sendStaffWelcomeEmail({
-      to: staff.email,
-      firstName: staff.first_name,
-      lastName: staff.last_name,
-      username: staff.username,
-      temporaryPassword: tempPassword,
-    });
+  // Deliver welcome credentials email
+  const emailResult = await emailService.sendStaffWelcomeEmail({
+    to: staff.email,
+    firstName: staff.first_name,
+    lastName: staff.last_name,
+    username: staff.username,
+    temporaryPassword: tempPassword,
+  });
 
-    await recordAuditLog(client, {
-      userId: requestedByUserId,
-      action: "STAFF_CREDENTIALS_RESENT",
-      entity: "staff",
-      entityId: staff.id,
-      details: { username: staff.username, email: staff.email, emailDelivered: emailResult.sent },
-    });
-
-    await client.query("COMMIT");
-
-    return {
-      success: true,
-      message: `New temporary login credentials have been sent to ${staff.email}.`,
-      emailDelivered: emailResult.sent,
-    };
-  } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
-  } finally {
-    client.release();
+  if (!emailResult.sent && emailResult.method === "SMTP") {
+    throw new Error(`EMAIL_DELIVERY_FAILED: Unable to deliver temporary password to ${staff.email}. Please verify the email address and try again.`);
   }
+
+  await recordAuditLog(pool, {
+    userId: requestedByUserId,
+    action: "STAFF_CREDENTIALS_RESENT",
+    entity: "users",
+    entityId: staff.user_id,
+    details: {
+      username: staff.username,
+      email: staff.email,
+      emailDelivered: emailResult.sent,
+    },
+  });
+
+  return {
+    success: true,
+    message: `A new temporary password has been sent to ${staff.email}.`,
+    username: staff.username,
+    emailDelivered: emailResult.sent,
+  };
 }
 
 module.exports = {
   getRoles,
   getStaff,
   checkEmailAvailability,
-  sendStaffEmailVerification,
-  verifyStaffEmailToken,
-  resendStaffCredentials,
+  generateSecureTemporaryPassword,
   createStaff,
   updateStaff,
   deleteStaffPermanently,
   updateStaffStatus,
   getDoctorScheduledAppointments,
+  resendStaffCredentials,
 };
-

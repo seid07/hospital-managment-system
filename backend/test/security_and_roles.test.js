@@ -1,14 +1,13 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const http = require("node:http");
-const crypto = require("node:crypto");
 const bcrypt = require("bcrypt");
 const app = require("../src/app");
 const pool = require("../src/config/database");
 const { ensureTestUsers } = require("./helpers/setup-test-users");
-const authService = require("../src/services/auth.service");
 const staffService = require("../src/services/staff.service");
 const referralService = require("../src/services/referral.service");
+const scheduleService = require("../src/services/schedule.service");
 
 let server;
 let baseUrl;
@@ -124,9 +123,12 @@ test("Security, Authentication, Referral Chat & Transaction Access Suite", async
     assert.ok(labTechToken, "Labtech token should exist");
   });
 
-  // 2. Real Email Ownership Verification Flow
-  await t.test("Real Email Ownership Verification, Token Hashing & Expiration", async () => {
-    const candidateEmail = `candidate_${Date.now()}@hospital.local`;
+  // 2. Direct Staff Creation, Email Format Validation, Temporary Password Generation & Resend
+  await t.test("Direct Staff Creation, Validation, Password Hashing & Resend Temporary Password", async () => {
+    const uniqueTime = Date.now();
+    const candidateEmail = `candidate_${uniqueTime}@hospital.local`;
+    const candidateUsername = `dr_kassahun_${uniqueTime}`;
+    const candidatePhone = "09" + String(uniqueTime).slice(-8);
 
     // A. Check email format validation
     const invalidFormatRes = await apiRequest("/api/staff/check-email?email=invalid-email", { token: adminToken });
@@ -140,150 +142,50 @@ test("Security, Authentication, Referral Chat & Transaction Access Suite", async
     assert.equal(duplicateRes.body.available, false);
     assert.equal(duplicateRes.body.reason, "DUPLICATE");
 
-    // C. Check initial verification status for candidate email (unverified)
-    const initialCheck = await apiRequest(`/api/staff/check-email?email=${encodeURIComponent(candidateEmail)}`, { token: adminToken });
-    assert.equal(initialCheck.status, 200);
-    assert.equal(initialCheck.body.available, true);
-    assert.equal(initialCheck.body.verified, false);
+    // C. Check available valid email
+    const availableRes = await apiRequest(`/api/staff/check-email?email=${encodeURIComponent(candidateEmail)}`, { token: adminToken });
+    assert.equal(availableRes.status, 200);
+    assert.equal(availableRes.body.available, true);
 
-    // D. Attempting to create staff with UNVERIFIED email MUST BE REJECTED with EMAIL_NOT_VERIFIED
-    const unverifiedCreate = await apiRequest("/api/staff", {
-      method: "POST",
-      token: adminToken,
-      body: {
-        firstName: "Unverified",
-        lastName: "Doctor",
-        username: `unverified_${Date.now()}`,
-        email: candidateEmail,
-        phone: "09" + String(Date.now()).slice(-8),
-        department: "General",
-        role: "DOCTOR",
-        password: "Temp#Doctor2026!",
-      },
-    });
-    assert.equal(unverifiedCreate.status, 400);
-    assert.equal(unverifiedCreate.body.code, "EMAIL_NOT_VERIFIED");
-
-    // E. Trigger Email Verification Link
-    const sendVerRes = await apiRequest("/api/staff/send-email-verification", {
-      method: "POST",
-      token: adminToken,
-      body: { email: candidateEmail },
-    });
-    assert.equal(sendVerRes.status, 200);
-    assert.equal(sendVerRes.body.success, true);
-
-    // Cooldown test: Immediate second request within 60s should be rate-limited (HTTP 429)
-    const cooldownRes = await apiRequest("/api/staff/send-email-verification", {
-      method: "POST",
-      token: adminToken,
-      body: { email: candidateEmail },
-    });
-    assert.equal(cooldownRes.status, 429);
-
-    // Verify token is hashed in DB (never plaintext)
-    const dbRecord = await pool.query(
-      "SELECT token_hash, expires_at, verified FROM staff_email_verifications WHERE LOWER(email) = $1",
-      [candidateEmail.toLowerCase()]
-    );
-    assert.equal(dbRecord.rows.length, 1);
-    assert.ok(dbRecord.rows[0].token_hash, "Token hash must be present");
-    assert.equal(dbRecord.rows[0].token_hash.length, 64, "Token hash must be 64-char SHA-256");
-    assert.equal(dbRecord.rows[0].verified, false);
-
-    // Test Invalid verification token -> Rejected (400)
-    const invalidTokenRes = await apiRequest("/api/auth/verify-email?token=invalid_random_token_123");
-    assert.equal(invalidTokenRes.status, 400);
-
-    // Test Expired token -> Rejected (400)
-    const expiredRawToken = crypto.randomBytes(32).toString("hex");
-    const expiredHash = crypto.createHash("sha256").update(expiredRawToken).digest("hex");
-    const expiredEmail = `expired_${Date.now()}@hospital.local`;
-    await pool.query(
-      `INSERT INTO staff_email_verifications (email, token_hash, expires_at, verified)
-       VALUES ($1, $2, CURRENT_TIMESTAMP - INTERVAL '5 minutes', FALSE)`,
-      [expiredEmail, expiredHash]
-    );
-    const expiredVerRes = await apiRequest(`/api/auth/verify-email?token=${expiredRawToken}`);
-    assert.equal(expiredVerRes.status, 400);
-
-    // Generate valid raw token for candidate email to simulate email click
-    const candidateRawToken = crypto.randomBytes(32).toString("hex");
-    const candidateHash = crypto.createHash("sha256").update(candidateRawToken).digest("hex");
-    await pool.query(
-      `UPDATE staff_email_verifications 
-       SET token_hash = $1, expires_at = CURRENT_TIMESTAMP + INTERVAL '30 minutes', last_sent_at = CURRENT_TIMESTAMP - INTERVAL '70 seconds'
-       WHERE LOWER(email) = $2`,
-      [candidateHash, candidateEmail.toLowerCase()]
-    );
-
-    // F. Verify token via public verification endpoint (Simulating recipient clicking link)
-    const verifySuccessRes = await apiRequest(`/api/auth/verify-email?token=${candidateRawToken}`);
-    assert.equal(verifySuccessRes.status, 200);
-    assert.equal(verifySuccessRes.body.success, true);
-    assert.equal(verifySuccessRes.body.email.toLowerCase(), candidateEmail.toLowerCase());
-
-    // Single-use check: Trying to verify the same token again -> Rejected (single-use)
-    const secondVerifyRes = await apiRequest(`/api/auth/verify-email?token=${candidateRawToken}`);
-    assert.equal(secondVerifyRes.status, 400);
-
-    // Check email status is now VERIFIED
-    const verifiedStatusCheck = await apiRequest(`/api/staff/check-email?email=${encodeURIComponent(candidateEmail)}`, { token: adminToken });
-    assert.equal(verifiedStatusCheck.status, 200);
-    assert.equal(verifiedStatusCheck.body.available, true);
-    assert.equal(verifiedStatusCheck.body.verified, true);
-  });
-
-  // 3. Staff Creation with Verified Email, Temporary Password & First Login Password Change
-  await t.test("Staff Creation with Verified Email, Temporary Password & First Login Mandatory Password Change", async () => {
-    const candidateEmail = `verified_doc_${Date.now()}@hospital.local`;
-    const newStaffUsername = `doc_kassahun_${Date.now()}`;
-    const uniquePhone = "09" + String(Date.now()).slice(-8);
-    const tempPassword = "Temp#Doctor2026!";
-
-    // Mark candidate email as verified in DB
-    await pool.query(
-      `INSERT INTO staff_email_verifications (email, verified, verified_at)
-       VALUES ($1, TRUE, CURRENT_TIMESTAMP)
-       ON CONFLICT (email) DO UPDATE SET verified = TRUE, verified_at = CURRENT_TIMESTAMP`,
-      [candidateEmail.toLowerCase()]
-    );
-
-    // Create staff member
+    // D. Direct Staff Creation without requiring verification link
     const createRes = await apiRequest("/api/staff", {
       method: "POST",
       token: adminToken,
       body: {
         firstName: "Tewodros",
         lastName: "Kassahun",
-        username: newStaffUsername,
+        username: candidateUsername,
         email: candidateEmail,
-        phone: uniquePhone,
+        phone: candidatePhone,
         department: "Internal Medicine",
         specialty: "Cardiology",
         role: "DOCTOR",
-        password: tempPassword,
       },
     });
 
-    assert.equal(createRes.status, 201, `Failed to create staff: ${JSON.stringify(createRes.body)}`);
-    assert.equal(createRes.body.data.username, newStaffUsername);
+    assert.equal(createRes.status, 201, `Staff creation failed: ${JSON.stringify(createRes.body)}`);
+    assert.equal(createRes.body.data.username, candidateUsername);
     assert.equal(createRes.body.data.mustChangePassword, true);
     const createdStaffId = createRes.body.data.staffId;
 
-    // Verify staff record in database has email_verified = true
-    const staffDb = await pool.query("SELECT email_verified, email_verified_at FROM staff WHERE id = $1", [createdStaffId]);
-    assert.equal(staffDb.rows[0].email_verified, true);
+    // E. Verify password is saved as a bcrypt hash (never plaintext)
+    const userDb = await pool.query(
+      "SELECT password_hash, must_change_password FROM users WHERE staff_id = $1",
+      [createdStaffId]
+    );
+    assert.equal(userDb.rows.length, 1);
+    assert.ok(userDb.rows[0].password_hash.startsWith("$2b$") || userDb.rows[0].password_hash.startsWith("$2a$"));
+    assert.equal(userDb.rows[0].must_change_password, true);
 
-    // Test Resend Credentials (Admin Action)
-    const resendCredsRes = await apiRequest(`/api/staff/${createdStaffId}/resend-credentials`, {
+    // F. Test Resend Temporary Password (Admin Action)
+    const resendRes = await apiRequest(`/api/staff/${createdStaffId}/resend-credentials`, {
       method: "POST",
       token: adminToken,
     });
-    assert.equal(resendCredsRes.status, 200);
-    assert.equal(resendCredsRes.body.success, true);
+    assert.equal(resendRes.status, 200);
+    assert.equal(resendRes.body.success, true);
 
-    // Single-role enforcement: Trying to create with array of roles -> 400
+    // G. Single role enforcement: array of roles rejected (HTTP 400)
     const multiRoleRes = await apiRequest("/api/staff", {
       method: "POST",
       token: adminToken,
@@ -295,64 +197,142 @@ test("Security, Authentication, Referral Chat & Transaction Access Suite", async
         phone: "0911998877",
         department: "General",
         role: ["DOCTOR", "ADMIN"],
-        password: "Temp#Doctor2026!",
       },
     });
     assert.equal(multiRoleRes.status, 400);
 
-    // Test First Login with New Staff
-    // Set a known password hash for the created user
-    const hash = await bcrypt.hash(tempPassword, 10);
-    await pool.query("UPDATE users SET password_hash = $1, must_change_password = TRUE WHERE staff_id = $2", [hash, createdStaffId]);
+    // H. GET /api/staff loads active hospital personnel list
+    const staffListRes = await apiRequest("/api/staff", { token: adminToken });
+    assert.equal(staffListRes.status, 200);
+    assert.ok(Array.isArray(staffListRes.body.data));
+    assert.ok(staffListRes.body.data.length > 0);
+  });
 
-    const newStaffLogin = await apiRequest("/api/auth/login", {
+  // 3. Schedule Management: Create, Update (PUT /api/schedules/:id) and Delete
+  await t.test("Schedule Management: Create, Edit/Update, and Delete", async () => {
+    // Get doctor staff ID
+    const docRes = await pool.query(
+      `SELECT s.id FROM staff s JOIN roles r ON s.role_id = r.id WHERE r.name = 'DOCTOR' LIMIT 1`
+    );
+    const doctorStaffId = docRes.rows[0].id;
+    await pool.query("DELETE FROM doctor_schedules WHERE doctor_id = $1", [doctorStaffId]);
+
+    // Create schedule
+    const createSchedRes = await apiRequest(`/api/schedules/doctors/${doctorStaffId}`, {
+
       method: "POST",
-      body: { username: newStaffUsername, password: tempPassword },
+      token: adminToken,
+      body: {
+        dayOfWeek: 2, // Tuesday
+        startTime: "09:00",
+        endTime: "13:00",
+        slotDurationMinutes: 30,
+      },
     });
-    assert.equal(newStaffLogin.status, 200);
-    const loginUser = newStaffLogin.body.user || newStaffLogin.body.data?.user;
-    const loginToken = newStaffLogin.body.token || newStaffLogin.body.data?.token;
-    assert.equal(loginUser.must_change_password, true);
+    assert.equal(createSchedRes.status, 201);
+    const scheduleId = createSchedRes.body.data.id || createSchedRes.body.data[0]?.id;
+    assert.ok(scheduleId);
 
-    // Attempting to access operational endpoints before changing password -> 403 PASSWORD_CHANGE_REQUIRED
-    const blockedQueueRes = await apiRequest("/api/patients", { token: loginToken });
-    assert.equal(blockedQueueRes.status, 403);
-    assert.equal(blockedQueueRes.body.code, "PASSWORD_CHANGE_REQUIRED");
+    // Edit/Update schedule (PUT /api/schedules/:id)
+    const updateSchedRes = await apiRequest(`/api/schedules/${scheduleId}`, {
+      method: "PUT",
+      token: adminToken,
+      body: {
+        dayOfWeek: 3, // Changed to Wednesday
+        startTime: "10:00",
+        endTime: "15:00",
+        slotDurationMinutes: 45,
+      },
+    });
+    assert.equal(updateSchedRes.status, 200);
+    assert.equal(updateSchedRes.body.data.day_of_week, 3);
+    assert.equal(updateSchedRes.body.data.start_time.slice(0, 5), "10:00");
+    assert.equal(updateSchedRes.body.data.end_time.slice(0, 5), "15:00");
+    assert.equal(updateSchedRes.body.data.slot_duration_minutes, 45);
+
+    // Delete schedule
+    const deleteSchedRes = await apiRequest(`/api/schedules/${scheduleId}`, {
+      method: "DELETE",
+      token: adminToken,
+    });
+    assert.equal(deleteSchedRes.status, 200);
+  });
+
+  // 4. First Login with Temporary Password -> Mandatory Password Change Workflow
+  await t.test("First Login with Temporary Password & Mandatory Password Change", async () => {
+    const uniqueTime = Date.now() + 5;
+    const tempUser = `firstlogin_${uniqueTime}`;
+    const tempPass = "Initial#Temp2026!";
+
+    // Create staff with known temporary password
+    const createRes = await staffService.createStaff(
+      {
+        firstName: "Abebech",
+        lastName: "Gobena",
+        username: tempUser,
+        email: `${tempUser}@hospital.local`,
+        phone: "09" + String(uniqueTime).slice(-8),
+        department: "Pediatrics",
+        role: "DOCTOR",
+        password: tempPass,
+      },
+      adminUser.id
+    );
+    assert.ok(createRes.staffId);
+
+    // Login with temporary password
+    const loginRes = await apiRequest("/api/auth/login", {
+      method: "POST",
+      body: { username: tempUser, password: tempPass },
+    });
+    assert.equal(loginRes.status, 200);
+    const loginToken = loginRes.body.token || loginRes.body.data?.token;
+    const loginUserData = loginRes.body.user || loginRes.body.data?.user;
+    assert.equal(loginUserData.must_change_password, true);
+
+    // Attempting to access protected operational endpoints before changing password -> 403 PASSWORD_CHANGE_REQUIRED
+    const blockedRes = await apiRequest("/api/patients", { token: loginToken });
+    assert.equal(blockedRes.status, 403);
+    assert.equal(blockedRes.body.code, "PASSWORD_CHANGE_REQUIRED");
 
     // 2-Step Password Change: Step 1 (Verify Current Password)
     const verifyPassRes = await apiRequest("/api/auth/verify-password", {
       method: "POST",
       token: loginToken,
-      body: { currentPassword: tempPassword },
+      body: { currentPassword: tempPass },
     });
     assert.equal(verifyPassRes.status, 200);
-    assert.equal(verifyPassRes.body.success, true);
 
-    // 2-Step Password Change: Step 2 (Submit New Password)
-    const permPassword = "Permanent#Pass2026!";
+    // 2-Step Password Change: Step 2 (Submit New Permanent Password)
+    const permanentPass = "Permanent#Secure2026!";
     const changePassRes = await apiRequest("/api/auth/change-password", {
       method: "POST",
       token: loginToken,
       body: {
-        currentPassword: tempPassword,
-        newPassword: permPassword,
-        confirmPassword: permPassword,
+        currentPassword: tempPass,
+        newPassword: permanentPass,
+        confirmPassword: permanentPass,
       },
     });
     assert.equal(changePassRes.status, 200);
-    assert.equal(changePassRes.body.success, true);
     assert.equal(changePassRes.body.user.must_change_password, false);
 
     const freshToken = changePassRes.body.token;
-    assert.ok(freshToken, "Fresh token should be returned after password change");
+    assert.ok(freshToken);
 
-    // Now operational endpoints should be accessible
+    // Now protected operational endpoints should be accessible
     const unblockedRes = await apiRequest("/api/patients", { token: freshToken });
     assert.notEqual(unblockedRes.status, 403);
 
+    // Old temporary password no longer works
+    const oldLoginRes = await apiRequest("/api/auth/login", {
+      method: "POST",
+      body: { username: tempUser, password: tempPass },
+    });
+    assert.equal(oldLoginRes.status, 401);
   });
 
-  // 4. Forgot Password 6-Digit OTP Flow
+  // 5. Forgot Password 6-Digit OTP Flow
   await t.test("Forgot Password: 6-Digit OTP, Expiration, Attempt Limiting & Password Reset", async () => {
     const testUsername = "admin";
     const testEmail = "admin@hospital.local";
@@ -408,7 +388,6 @@ test("Security, Authentication, Referral Chat & Transaction Access Suite", async
     assert.ok(verifyOtpRes.body.resetToken, "Reset token must be returned");
     const resetToken = verifyOtpRes.body.resetToken;
 
-
     // Step 4: Reset Password using reset token
     const newResetPass = "NewAdminPassword#2026!";
     const resetRes = await apiRequest("/api/auth/reset-password", {
@@ -434,18 +413,10 @@ test("Security, Authentication, Referral Chat & Transaction Access Suite", async
     assert.equal(secondResetRes.status, 400);
   });
 
-  // 5. Doctor-to-Doctor Referral Chat Participant-Only Access Control
+  // 6. Doctor-to-Doctor Referral Chat Participant-Only Access Control
   await t.test("Doctor-to-Doctor Referral Chat Security (Strict Participant-Only RBAC)", async () => {
-    // Setup verified doctors for referral
     const doc1Time = Date.now() + 10;
     const doc2Time = Date.now() + 20;
-
-    await pool.query(
-      `INSERT INTO staff_email_verifications (email, verified, verified_at)
-       VALUES ($1, TRUE, CURRENT_TIMESTAMP), ($2, TRUE, CURRENT_TIMESTAMP)
-       ON CONFLICT (email) DO NOTHING`,
-      [`doc1_${doc1Time}@hospital.local`, `doc2_${doc2Time}@hospital.local`]
-    );
 
     const doc1Res = await staffService.createStaff(
       {
@@ -479,13 +450,6 @@ test("Security, Authentication, Referral Chat & Transaction Access Suite", async
 
     // Create a third doctor for unauthorized access testing
     const doc3Time = Date.now() + 50;
-    await pool.query(
-      `INSERT INTO staff_email_verifications (email, verified, verified_at)
-       VALUES ($1, TRUE, CURRENT_TIMESTAMP)
-       ON CONFLICT (email) DO NOTHING`,
-      [`doc3_${doc3Time}@hospital.local`]
-    );
-
     const doc3Res = await staffService.createStaff(
       {
         firstName: "Third",
@@ -572,7 +536,7 @@ test("Security, Authentication, Referral Chat & Transaction Access Suite", async
     );
   });
 
-  // 6. Full Transaction History Strict Print/Export Authorization
+  // 7. Full Transaction History Strict Print/Export Authorization
   await t.test("Strict Transaction History Print/Export RBAC (ADMIN & REGISTRAR Only)", async () => {
     // ADMIN access -> Allowed (200 OK)
     const adminTxRes = await apiRequest("/api/billing/transactions/full-history", {

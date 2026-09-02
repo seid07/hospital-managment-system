@@ -18,6 +18,7 @@ function AppointmentsList() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { user } = useAuth();
+  const isDoctor = user?.role === "DOCTOR";
 
   const todayStr = new Date().toISOString().split("T")[0];
   const initialDate = searchParams.get("date") === "today"
@@ -38,7 +39,7 @@ function AppointmentsList() {
   const [totalPages, setTotalPages] = useState(1);
   const [total, setTotal] = useState(0);
   const [statusFilter, setStatusFilter] = useState(initialStatus);
-  const [doctorFilter, setDoctorFilter] = useState("");
+  const [doctorFilter, setDoctorFilter] = useState(isDoctor ? (user?.staff_id || "") : "");
   const [dateFilter, setDateFilter] = useState(initialDate);
   const [searchInput, setSearchInput] = useState("");
   const debouncedSearch = useDebounce(searchInput, 300);
@@ -57,11 +58,12 @@ function AppointmentsList() {
     async function loadAppointments() {
       try {
         setError("");
+        const currentDoctorId = isDoctor ? (user?.staff_id || "") : doctorFilter;
         const res = await getAppointments({
           page,
           limit: 15,
           status: statusFilter,
-          doctorId: doctorFilter,
+          doctorId: currentDoctorId,
           date: dateFilter,
           search: debouncedSearch.trim(),
         });
@@ -82,9 +84,10 @@ function AppointmentsList() {
     return () => {
       cancelled = true;
     };
-  }, [page, statusFilter, doctorFilter, dateFilter, debouncedSearch, reloadKey]);
+  }, [page, statusFilter, doctorFilter, isDoctor, user?.staff_id, dateFilter, debouncedSearch, reloadKey]);
 
   useEffect(() => {
+    if (isDoctor) return;
     let cancelled = false;
     async function loadDocs() {
       try {
@@ -98,7 +101,7 @@ function AppointmentsList() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [isDoctor]);
 
   async function handleStatusUpdate(id, newStatus, notes = "") {
     if (statusUpdatingId) return; // guard against a double-click firing two status updates
@@ -175,18 +178,23 @@ function AppointmentsList() {
     <AppShell>
       <div className="page-header">
         <div>
-          <p className="page-eyebrow">Scheduling & Queue</p>
-          <h1>Appointments Directory</h1>
+          <p className="page-eyebrow">{isDoctor ? "Doctor Clinical Workspace" : "Scheduling & Queue"}</p>
+          <h1>{isDoctor ? "My Appointed Consultations" : "Appointments Directory"}</h1>
           <p className="page-description">
-            Manage hospital consultations, patient check-ins, and doctor appointments.
+            {isDoctor
+              ? "View your assigned scheduled patient consultations with designated appointment times."
+              : "Manage hospital consultations, patient check-ins, and doctor appointments."}
           </p>
         </div>
 
-        <div className="page-actions">
-          <Link to="/appointments/availability" className="button button-primary button-large">
-            + Book Appointment
-          </Link>
-        </div>
+        {/* Doctor cannot appoint patients - "+ Book Appointment" is hidden for doctors */}
+        {!isDoctor && ["REGISTRAR", "ADMIN"].includes(user?.role) && (
+          <div className="page-actions">
+            <Link to="/appointments/availability" className="button button-primary button-large">
+              + Book Appointment
+            </Link>
+          </div>
+        )}
       </div>
 
       {error && <div className="alert alert-error">{error}</div>}
@@ -194,7 +202,16 @@ function AppointmentsList() {
 
       {/* Filter Bar */}
       <section className="card" style={{ marginBottom: "20px" }}>
-        <form onSubmit={handleSearchSubmit} className="form-grid" style={{ gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: "12px" }}>
+        <form
+          onSubmit={handleSearchSubmit}
+          className="form-grid"
+          style={{
+            gridTemplateColumns: isDoctor
+              ? "repeat(auto-fit, minmax(200px, 1fr))"
+              : "repeat(4, minmax(0, 1fr))",
+            gap: "12px",
+          }}
+        >
           <div className="form-field">
             <label>Search Patient / Appt #</label>
             <input
@@ -205,23 +222,25 @@ function AppointmentsList() {
             />
           </div>
 
-          <div className="form-field">
-            <label>Doctor</label>
-            <select
-              value={doctorFilter}
-              onChange={(e) => {
-                setDoctorFilter(e.target.value);
-                setPage(1);
-              }}
-            >
-              <option value="">All Doctors</option>
-              {doctors.map((d) => (
-                <option key={d.id} value={d.id}>
-                  Dr. {d.first_name} {d.last_name} ({d.specialty || "General"})
-                </option>
-              ))}
-            </select>
-          </div>
+          {!isDoctor && (
+            <div className="form-field">
+              <label>Doctor</label>
+              <select
+                value={doctorFilter}
+                onChange={(e) => {
+                  setDoctorFilter(e.target.value);
+                  setPage(1);
+                }}
+              >
+                <option value="">All Doctors</option>
+                {doctors.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    Dr. {d.first_name} {d.last_name} ({d.specialty || "General"})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           <div className="form-field">
             <label>Status</label>
@@ -261,7 +280,7 @@ function AppointmentsList() {
             className="button button-secondary"
             onClick={() => {
               setSearchInput("");
-              setDoctorFilter("");
+              if (!isDoctor) setDoctorFilter("");
               setStatusFilter("");
               setDateFilter("");
               setPage(1);
@@ -283,7 +302,11 @@ function AppointmentsList() {
           <div className="empty-state">
             <div className="empty-state-icon">□</div>
             <h3>No appointments found</h3>
-            <p>No appointments match the selected filters or search terms.</p>
+            <p>
+              {isDoctor
+                ? "You do not have any appointed patient consultations matching these filters."
+                : "No appointments match the selected filters or search terms."}
+            </p>
           </div>
         ) : (
           <div className="table-wrapper">
@@ -292,7 +315,7 @@ function AppointmentsList() {
                 <tr>
                   <th>Appt #</th>
                   <th>Patient</th>
-                  <th>Doctor</th>
+                  {!isDoctor && <th>Doctor</th>}
                   <th>Date & Time</th>
                   <th>Reason</th>
                   <th>Status</th>
@@ -317,17 +340,21 @@ function AppointmentsList() {
                         {a.patient_number} | {a.patient_phone}
                       </small>
                     </td>
-                    <td>
-                      Dr. {a.doctor_first_name} {a.doctor_last_name}
-                      <br />
-                      <small style={{ color: "var(--text-muted)" }}>
-                        {a.doctor_specialty || a.doctor_department || "Clinical"}
-                      </small>
-                    </td>
+                    {!isDoctor && (
+                      <td>
+                        Dr. {a.doctor_first_name} {a.doctor_last_name}
+                        <br />
+                        <small style={{ color: "var(--text-muted)" }}>
+                          {a.doctor_specialty || a.doctor_department || "Clinical"}
+                        </small>
+                      </td>
+                    )}
                     <td>
                       <strong>{a.appointment_date}</strong>
                       <br />
-                      <span>{a.start_time} – {a.end_time}</span>
+                      <span style={{ fontWeight: 600, color: "var(--primary)", fontSize: "12px" }}>
+                        🕒 {a.start_time?.slice(0, 5)} – {a.end_time?.slice(0, 5)}
+                      </span>
                     </td>
                     <td>
                       <span style={{ fontSize: "12px" }}>{a.reason || "General Consultation"}</span>
@@ -449,69 +476,89 @@ function AppointmentsList() {
         onClose={() => setRescheduleTarget(null)}
         title="Reschedule Appointment"
       >
-        {rescheduleError && <div className="alert alert-error">{rescheduleError}</div>}
         {rescheduleTarget && (
           <form onSubmit={handleRescheduleSubmit}>
-            <p style={{ fontSize: "13px", color: "var(--text-secondary)" }}>
-              Rescheduling appointment <strong>{rescheduleTarget.appointment_number}</strong> for{" "}
-              <strong>{rescheduleTarget.patient_first_name} {rescheduleTarget.patient_last_name}</strong> with{" "}
-              <strong>Dr. {rescheduleTarget.doctor_first_name} {rescheduleTarget.doctor_last_name}</strong>.
-            </p>
+            {rescheduleError && <div className="alert alert-error">{rescheduleError}</div>}
 
-            <div className="form-field" style={{ margin: "14px 0" }}>
-              <label>New Appointment Date</label>
+            <div style={{ background: "var(--surface-muted)", padding: "12px", borderRadius: "var(--radius-sm)", marginBottom: "16px", fontSize: "13px" }}>
+              <strong>Patient:</strong> {rescheduleTarget.patient_first_name} {rescheduleTarget.patient_last_name} ({rescheduleTarget.patient_number})<br />
+              <strong>Doctor:</strong> Dr. {rescheduleTarget.doctor_first_name} {rescheduleTarget.doctor_last_name}<br />
+              <strong>Current Slot:</strong> {rescheduleTarget.appointment_date} at {rescheduleTarget.start_time} - {rescheduleTarget.end_time}
+            </div>
+
+            <div className="form-field">
+              <label>Select New Date *</label>
               <input
                 type="date"
-                min={new Date().toISOString().split("T")[0]}
+                min={todayStr}
                 value={rescheduleDate}
-                onChange={(e) => setRescheduleDate(e.target.value)}
+                onChange={(e) => {
+                  setRescheduleDate(e.target.value);
+                  setSelectedSlotKey("");
+                }}
                 required
               />
             </div>
 
-            <div className="form-field" style={{ margin: "14px 0" }}>
-              <label>Available Slots for Selected Date</label>
-              {availableSlots.length === 0 ? (
-                <div style={{ padding: "12px", border: "1px dashed var(--border)", borderRadius: "var(--radius-sm)", color: "var(--text-muted)", fontSize: "13px" }}>
-                  No slots available on this date or doctor is not scheduled.
-                </div>
-              ) : (
-                <div className="slot-grid" style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))" }}>
-                  {availableSlots.map((slot) => {
-                    const key = `${slot.startTime}-${slot.endTime}`;
-                    const isSelected = selectedSlotKey === key;
-                    return (
-                      <button
-                        key={key}
-                        type="button"
-                        disabled={!slot.available}
-                        className={`slot-button ${isSelected ? "slot-button-selected" : ""} ${!slot.available ? "slot-button-booked" : ""}`}
-                        onClick={() => slot.available && setSelectedSlotKey(key)}
-                        style={{ minHeight: "54px" }}
-                      >
-                        <strong>{slot.startTime}</strong>
-                        <span>{slot.endTime}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
+            {rescheduleDate && (
+              <div className="form-field">
+                <label>Available Consultation Slots *</label>
+                {availableSlots.length === 0 ? (
+                  <p style={{ fontSize: "13px", color: "var(--text-muted)" }}>
+                    No available time slots found for Dr. {rescheduleTarget.doctor_first_name} on this date.
+                  </p>
+                ) : (
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(110px, 1fr))", gap: "8px", marginTop: "6px" }}>
+                    {availableSlots.map((slot) => {
+                      const key = `${slot.startTime}-${slot.endTime}`;
+                      const isSelected = selectedSlotKey === key;
+                      return (
+                        <button
+                          key={key}
+                          type="button"
+                          disabled={!slot.isAvailable}
+                          onClick={() => setSelectedSlotKey(key)}
+                          style={{
+                            padding: "8px 6px",
+                            borderRadius: "6px",
+                            border: isSelected ? "2px solid var(--primary)" : "1px solid var(--border)",
+                            background: isSelected
+                              ? "rgba(2, 132, 199, 0.12)"
+                              : slot.isAvailable
+                              ? "var(--surface)"
+                              : "var(--surface-muted)",
+                            color: slot.isAvailable ? "var(--text-primary)" : "var(--text-muted)",
+                            cursor: slot.isAvailable ? "pointer" : "not-allowed",
+                            fontWeight: isSelected ? 700 : 500,
+                            fontSize: "12px",
+                            textAlign: "center",
+                          }}
+                        >
+                          {slot.startTime} – {slot.endTime}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="form-field">
               <label>Reason for Rescheduling</label>
-              <input
+              <textarea
+                rows={2}
+                placeholder="e.g. Patient requested time shift..."
                 value={rescheduleReason}
                 onChange={(e) => setRescheduleReason(e.target.value)}
-                placeholder="e.g. Patient requested new date"
               />
             </div>
 
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px", marginTop: "18px" }}>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px", marginTop: "16px" }}>
               <button
                 type="button"
                 className="button button-secondary"
                 onClick={() => setRescheduleTarget(null)}
+                disabled={rescheduleSubmitting}
               >
                 Cancel
               </button>
@@ -520,7 +567,7 @@ function AppointmentsList() {
                 className="button button-primary"
                 disabled={rescheduleSubmitting || !selectedSlotKey}
               >
-                {rescheduleSubmitting ? "Rescheduling..." : "Confirm Reschedule"}
+                {rescheduleSubmitting ? "Saving..." : "Confirm Reschedule"}
               </button>
             </div>
           </form>

@@ -9,6 +9,10 @@ const nodemailer = require("nodemailer");
  */
 
 function getTransporter() {
+  if (process.env.NODE_ENV === "test") {
+    return null;
+  }
+
   const host = process.env.SMTP_HOST;
   const port = parseInt(process.env.SMTP_PORT, 10) || 587;
   const user = process.env.SMTP_USER;
@@ -30,6 +34,7 @@ function getTransporter() {
   // If live SMTP credentials are not configured, return null to use fallback mode
   return null;
 }
+
 
 /**
  * Send one-time secure email ownership verification link to staff candidate.

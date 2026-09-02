@@ -1,4 +1,5 @@
-import { get, post, del } from "./api";
+import { get, post, put, del } from "./api";
+
 
 export async function getDoctors(params = {}) {
   const query = new URLSearchParams();
@@ -25,6 +26,11 @@ export async function createSchedule(doctorId, data) {
   return post(`/schedules/doctors/${doctorId}`, data);
 }
 
+export async function updateSchedule(id, data) {
+  return put(`/schedules/${id}`, data);
+}
+
 export async function deleteSchedule(id) {
   return del(`/schedules/${id}`);
 }
+

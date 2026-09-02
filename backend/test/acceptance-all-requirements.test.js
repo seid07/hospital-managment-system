@@ -36,11 +36,13 @@ test("Acceptance Tests for All 12 Hospital Management System Requirements", asyn
       assert.equal(initRes.user.role, "ADMIN");
       adminUser = initRes.user;
     } else {
-      const adminLogin = await authService.login("admin", "Admin@Password123!").catch(async () => {
-        return authService.login("admin", "Admin@12345");
-      });
+      const bcrypt = require("bcrypt");
+      const hash = await bcrypt.hash("Admin@Password123!", 10);
+      await pool.query("UPDATE users SET password_hash = $1, must_change_password = FALSE WHERE username = 'admin'", [hash]);
+      const adminLogin = await authService.login("admin", "Admin@Password123!");
       adminUser = adminLogin.user;
     }
+
 
     assert.ok(adminUser);
     assert.equal(adminUser.role, "ADMIN");

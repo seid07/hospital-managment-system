@@ -7,10 +7,13 @@ async function getDashboardKPIs(role, staffId) {
   if (role === "ADMIN") {
     const [staffRes, docRes, patRes, aptTodayRes, aptSchedRes, revRes, unpRes, labRes, rxRes, pendingOrdersRes, auditRes] =
       await Promise.all([
-        pool.query("SELECT COUNT(*) AS count FROM staff WHERE is_active = TRUE"),
+        pool.query(
+          "SELECT COUNT(*) AS count FROM staff s JOIN roles r ON s.role_id = r.id WHERE r.name != 'ADMIN' AND s.is_active = TRUE"
+        ),
         pool.query(
           "SELECT COUNT(*) AS count FROM staff s JOIN roles r ON s.role_id = r.id WHERE r.name = 'DOCTOR' AND s.is_active = TRUE"
         ),
+
         pool.query("SELECT COUNT(*) AS count FROM patients WHERE is_active = TRUE"),
         pool.query(
           `SELECT COUNT(*) AS count

@@ -28,17 +28,16 @@ router.get(
 );
 
 router.post(
-  "/send-email-verification",
-  authorizeRoles("ADMIN"),
-  staffController.sendEmailVerification
-);
-
-router.post(
   "/:id/resend-credentials",
   authorizeRoles("ADMIN"),
   staffController.resendCredentials
 );
 
+router.get(
+  "/",
+  authorizeRoles("ADMIN"),
+  staffController.getStaff
+);
 
 router.post(
   "/",
@@ -60,12 +59,6 @@ router.patch(
 
 router.delete(
   "/:id/permanent",
-  authorizeRoles("ADMIN"),
-  staffController.deleteStaffPermanently
-);
-
-router.delete(
-  "/:id",
   authorizeRoles("ADMIN"),
   staffController.deleteStaffPermanently
 );
