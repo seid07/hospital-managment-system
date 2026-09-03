@@ -3,7 +3,21 @@ const { isValidUUID } = require("../validators");
 
 async function createEncounter(req, res) {
   try {
-    const { patientId, doctorId, appointmentId, chiefComplaint, clinicalNotes, treatmentPlan, followUpDate, diagnoses } = req.body;
+    const {
+      patientId,
+      doctorId,
+      appointmentId,
+      visitId,
+      chiefComplaint,
+      historySymptoms,
+      examinationFindings,
+      clinicalNotes,
+      treatmentPlan,
+      followUpDate,
+      followUpInstructions,
+      priority,
+      diagnoses,
+    } = req.body;
 
     if (!patientId || !doctorId) {
       return res.status(400).json({
@@ -19,16 +33,23 @@ async function createEncounter(req, res) {
       });
     }
 
+    const userId = req.user?.id || req.user?.userId;
+
     const encounter = await encounterService.createEncounter({
       patientId,
       doctorId,
       appointmentId: appointmentId && isValidUUID(appointmentId) ? appointmentId : null,
+      visitId: visitId && isValidUUID(visitId) ? visitId : null,
       chiefComplaint,
+      historySymptoms,
+      examinationFindings,
       clinicalNotes,
       treatmentPlan,
       followUpDate,
+      followUpInstructions,
+      priority,
       diagnoses,
-      createdBy: req.user?.userId,
+      createdBy: userId,
     });
 
     return res.status(201).json({
@@ -61,7 +82,8 @@ async function updateEncounter(req, res) {
       });
     }
 
-    const encounter = await encounterService.updateEncounter(id, req.body, req.user?.userId);
+    const userId = req.user?.id || req.user?.userId;
+    const encounter = await encounterService.updateEncounter(id, req.body, userId);
 
     return res.status(200).json({
       success: true,
@@ -99,7 +121,8 @@ async function completeEncounter(req, res) {
       });
     }
 
-    const completed = await encounterService.completeEncounter(id, req.user?.userId);
+    const userId = req.user?.id || req.user?.userId;
+    const completed = await encounterService.completeEncounter(id, userId);
 
     return res.status(200).json({
       success: true,

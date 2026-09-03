@@ -28,22 +28,43 @@ async function generateQueueNumber(client, deptCode) {
 
 async function createServiceOrders(data, userId) {
   const {
-    visitId,
-    patientId,
     doctorId = null,
-    items = [], // [{ serviceId, notes, price }]
     emergencyOverride = false,
     overrideReason = null,
     generateInvoice = true,
+    medications = [],
+    encounterId = null,
   } = data;
+  let { visitId, patientId } = data;
+  const items = data.items || data.services || [];
 
-  if (!items || items.length === 0) {
-    throw new Error("At least one service item must be specified.");
+  if ((!items || items.length === 0) && (!medications || medications.length === 0)) {
+    throw new Error("At least one service or medication item must be specified.");
   }
 
   const client = await db.connect();
   try {
     await client.query("BEGIN");
+
+    // Auto-resolve visitId if missing
+    if (!visitId && patientId) {
+      const vRes = await client.query(
+        `SELECT id FROM visits WHERE patient_id = $1 AND status = 'OPEN' ORDER BY created_at DESC LIMIT 1`,
+        [patientId]
+      );
+      if (vRes.rows.length > 0) {
+        visitId = vRes.rows[0].id;
+      } else {
+        const { generateVisitNumber } = require("../utils/number-generators");
+        const vNum = await generateVisitNumber(client);
+        const newV = await client.query(
+          `INSERT INTO visits (visit_number, patient_id, status, visit_type)
+           VALUES ($1, $2, 'OPEN', 'OUTPATIENT') RETURNING id`,
+          [vNum, patientId]
+        );
+        visitId = newV.rows[0].id;
+      }
+    }
 
     // Verify patient and visit
     const visitRes = await client.query(
@@ -54,9 +75,37 @@ async function createServiceOrders(data, userId) {
       throw new Error("Visit not found.");
     }
     const visit = visitRes.rows[0];
+    patientId = patientId || visit.patient_id;
 
     const isEmergency = emergencyOverride || Boolean(visit.emergency_override);
     const reason = overrideReason || visit.override_reason || (isEmergency ? "Emergency Immediate Stabilization" : null);
+
+    // Process medications if any
+    const createdPrescriptions = [];
+    if (medications && medications.length > 0) {
+      for (const med of medications) {
+        const rxRes = await client.query(
+          `INSERT INTO prescriptions (
+            patient_id, encounter_id, doctor_id, medication_name,
+            dosage, frequency, route, duration, quantity, instructions, status
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'ACTIVE')
+          RETURNING *`,
+          [
+            patientId,
+            encounterId || null,
+            doctorId || null,
+            med.medicationName,
+            med.dosage,
+            med.frequency || "Once daily",
+            med.route || "Oral",
+            med.duration || "7 days",
+            parseInt(med.quantity, 10) || 1,
+            med.instructions || null,
+          ]
+        );
+        createdPrescriptions.push(rxRes.rows[0]);
+      }
+    }
 
     const createdOrders = [];
     let invoiceSubtotal = 0;
@@ -103,17 +152,18 @@ async function createServiceOrders(data, userId) {
       const orderRes = await client.query(
         `
         INSERT INTO service_orders (
-          order_number, visit_id, patient_id, service_id, department_id,
+          order_number, visit_id, encounter_id, patient_id, service_id, department_id,
           doctor_id, price, status, emergency_override, override_reason,
           authorized_at, authorized_by, authorization_source, clinical_notes,
           created_by
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
         RETURNING *;
         `,
         [
           orderNumber,
           visitId,
+          encounterId || null,
           patientId,
           service.id,
           service.department_id,
@@ -134,10 +184,69 @@ async function createServiceOrders(data, userId) {
       order.service_code = service.code;
       order.department_code = service.department_code;
 
+      // Link / create specialized modality records
+      if (service.department_code === "RADIOLOGY") {
+        const modality = (service.code.includes("ULTRASOUND") || service.name.toLowerCase().includes("ultrasound") || (item.notes && item.notes.toLowerCase().includes("ultrasound"))) ? "ULTRASOUND" : "X_RAY";
+        await client.query(
+          `INSERT INTO radiology_orders (
+            service_order_id, patient_id, doctor_id, modality,
+            clinical_indication, status
+          ) VALUES ($1, $2, $3, $4, $5, 'ORDERED')
+          ON CONFLICT DO NOTHING`,
+          [order.id, patientId, doctorId, modality, item.notes || service.name]
+        );
+      } else if (service.department_code === "PROCEDURE") {
+        const procType = service.code.includes("DRESSING") || service.name.toLowerCase().includes("dressing") ? "DRESSING" :
+                         service.code.includes("INJECTION") || service.name.toLowerCase().includes("injection") ? "INJECTION" : "GENERAL";
+        await client.query(
+          `INSERT INTO procedure_orders (
+            service_order_id, patient_id, doctor_id, procedure_type,
+            procedure_name, clinical_instructions, status
+          ) VALUES ($1, $2, $3, $4, $5, $6, 'ORDERED')
+          ON CONFLICT DO NOTHING`,
+          [order.id, patientId, doctorId, procType, service.name, item.notes || null]
+        );
+      } else if (service.department_code === "SURGERY") {
+        await client.query(
+          `INSERT INTO surgery_orders (
+            service_order_id, patient_id, surgeon_id, surgery_name,
+            pre_op_diagnosis, status
+          ) VALUES ($1, $2, $3, $4, $5, 'SCHEDULED')
+          ON CONFLICT DO NOTHING`,
+          [order.id, patientId, doctorId, service.name, item.notes || "Surgical Procedure"]
+        );
+      } else if (service.department_code === "LABORATORY") {
+        const catalogCheck = await client.query(
+          `SELECT id FROM lab_test_catalog WHERE service_id = $1 LIMIT 1`,
+          [service.id]
+        );
+        if (catalogCheck.rows.length > 0) {
+          const { generateLabOrderNumber } = require("../utils/number-generators");
+          const labOrderNumber = await generateLabOrderNumber(client);
+          await client.query(
+            `INSERT INTO lab_orders (
+              order_number, encounter_id, patient_id, doctor_id, test_id,
+              service_order_id, clinical_indication, priority, status
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'ORDERED')
+            ON CONFLICT DO NOTHING`,
+            [
+              labOrderNumber,
+              encounterId || null,
+              patientId,
+              doctorId,
+              catalogCheck.rows[0].id,
+              order.id,
+              item.notes || null,
+              isEmergency ? "STAT" : (item.priority || "ROUTINE"),
+            ]
+          );
+        }
+      }
+
       // If authorized immediately (emergency or zero fee), enqueue to department queue
       if (status === "AUTHORIZED" && service.queue_enabled) {
         const queueNumber = await generateQueueNumber(client, service.department_code);
-        const priority = isEmergency ? "EMERGENCY" : "NORMAL";
+        const priority = isEmergency ? "EMERGENCY" : (item.priority || "NORMAL");
 
         const qRes = await client.query(
           `
@@ -229,6 +338,7 @@ async function createServiceOrders(data, userId) {
     await client.query("COMMIT");
     return {
       serviceOrders: createdOrders,
+      prescriptions: createdPrescriptions,
       invoice: createdInvoice,
     };
   } catch (error) {
@@ -434,6 +544,109 @@ async function cancelServiceOrder(orderId, { userId, reason }) {
   }
 }
 
+async function getPatientClinicalResults(patientId) {
+  const [labsRes, radRes, procRes, surgRes, notesRes, vitalsRes] = await Promise.all([
+    // Lab Orders & Results
+    db.query(`
+      SELECT 
+        lo.id AS lab_order_id,
+        lo.order_number,
+        lo.status AS lab_status,
+        lo.created_at AS ordered_at,
+        lt.name AS test_name,
+        lt.category AS test_category,
+        lr.result_value,
+        lr.reference_range,
+        lr.unit,
+        lr.comments AS result_notes,
+        lr.is_abnormal,
+        lr.entered_at AS recorded_at,
+        doc.first_name AS doctor_first_name,
+        doc.last_name AS doctor_last_name
+      FROM lab_orders lo
+      JOIN lab_test_catalog lt ON lo.test_id = lt.id
+      LEFT JOIN lab_results lr ON lr.lab_order_id = lo.id
+      LEFT JOIN staff doc ON lo.doctor_id = doc.id
+      WHERE lo.patient_id = $1
+      ORDER BY lo.created_at DESC LIMIT 30
+    `, [patientId]),
+
+    // Radiology Orders & Reports
+    db.query(`
+      SELECT 
+        ro.*,
+        s.name AS service_name,
+        doc.first_name AS doctor_first_name,
+        doc.last_name AS doctor_last_name,
+        u_rep.username AS reported_by_username
+      FROM radiology_orders ro
+      JOIN service_orders so ON ro.service_order_id = so.id
+      JOIN services s ON so.service_id = s.id
+      LEFT JOIN staff doc ON ro.doctor_id = doc.id
+      LEFT JOIN users u_rep ON ro.reported_by = u_rep.id
+      WHERE ro.patient_id = $1
+      ORDER BY ro.created_at DESC LIMIT 30
+    `, [patientId]),
+
+    // Procedures
+    db.query(`
+      SELECT 
+        po.*,
+        doc.first_name AS doctor_first_name,
+        doc.last_name AS doctor_last_name,
+        u.username AS performed_by_username
+      FROM procedure_orders po
+      LEFT JOIN staff doc ON po.doctor_id = doc.id
+      LEFT JOIN users u ON po.performed_by = u.id
+      WHERE po.patient_id = $1
+      ORDER BY po.created_at DESC LIMIT 30
+    `, [patientId]),
+
+    // Surgeries
+    db.query(`
+      SELECT 
+        surg.*,
+        doc.first_name AS surgeon_first_name,
+        doc.last_name AS surgeon_last_name,
+        u.username AS performed_by_username
+      FROM surgery_orders surg
+      LEFT JOIN staff doc ON surg.surgeon_id = doc.id
+      LEFT JOIN users u ON surg.performed_by = u.id
+      WHERE surg.patient_id = $1
+      ORDER BY surg.created_at DESC LIMIT 20
+    `, [patientId]),
+
+    // Nursing Notes
+    db.query(`
+      SELECT 
+        nn.*,
+        s.first_name AS nurse_first_name,
+        s.last_name AS nurse_last_name
+      FROM nursing_notes nn
+      LEFT JOIN staff s ON nn.nurse_id = s.id
+      WHERE nn.patient_id = $1
+      ORDER BY nn.created_at DESC LIMIT 20
+    `, [patientId]),
+
+    // Longitudinal Vitals
+    db.query(`
+      SELECT *
+      FROM vitals
+      WHERE patient_id = $1
+      ORDER BY recorded_at DESC LIMIT 15
+    `, [patientId]),
+  ]);
+
+  return {
+    labs: labsRes.rows,
+    radiology: radRes.rows,
+    procedures: procRes.rows,
+    surgeries: surgRes.rows,
+    nursingNotes: notesRes.rows,
+    vitals: vitalsRes.rows,
+  };
+}
+
 module.exports = {
   createServiceOrders,
   getServiceOrdersByVisit,
@@ -441,4 +654,5 @@ module.exports = {
   authorizeServiceOrder,
   cancelServiceOrder,
   generateQueueNumber,
+  getPatientClinicalResults,
 };

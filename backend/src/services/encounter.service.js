@@ -5,10 +5,15 @@ async function createEncounter({
   patientId,
   doctorId,
   appointmentId,
+  visitId,
   chiefComplaint,
+  historySymptoms,
+  examinationFindings,
   clinicalNotes,
   treatmentPlan,
   followUpDate,
+  followUpInstructions,
+  priority = "ROUTINE",
   diagnoses = [],
   createdBy,
 }) {
@@ -38,6 +43,18 @@ async function createEncounter({
       throw new Error("DOCTOR_NOT_FOUND");
     }
 
+    // Resolve or verify visitId
+    let resolvedVisitId = visitId || null;
+    if (!resolvedVisitId) {
+      const vRes = await client.query(
+        `SELECT id FROM visits WHERE patient_id = $1 AND status = 'OPEN' ORDER BY created_at DESC LIMIT 1`,
+        [patientId]
+      );
+      if (vRes.rows.length > 0) {
+        resolvedVisitId = vRes.rows[0].id;
+      }
+    }
+
     // 2. Insert encounter
     const encounterRes = await client.query(
       `
@@ -45,24 +62,34 @@ async function createEncounter({
         patient_id,
         doctor_id,
         appointment_id,
+        visit_id,
         status,
         chief_complaint,
+        history_symptoms,
+        examination_findings,
         clinical_notes,
         treatment_plan,
         follow_up_date,
+        follow_up_instructions,
+        priority,
         created_by
       )
-      VALUES ($1, $2, $3, 'DRAFT', $4, $5, $6, $7, $8)
+      VALUES ($1, $2, $3, $4, 'DRAFT', $5, $6, $7, $8, $9, $10, $11, $12, $13)
       RETURNING *
       `,
       [
         patientId,
         doctorId,
         appointmentId || null,
+        resolvedVisitId,
         chiefComplaint || null,
+        historySymptoms || null,
+        examinationFindings || null,
         clinicalNotes || null,
         treatmentPlan || null,
         followUpDate || null,
+        followUpInstructions || null,
+        priority || "ROUTINE",
         createdBy || null,
       ]
     );
@@ -127,6 +154,8 @@ async function createEncounter({
         patientId,
         doctorId,
         appointmentId,
+        visitId: resolvedVisitId,
+        priority,
         diagnosesCount: savedDiagnoses.length,
       },
     });
@@ -168,25 +197,33 @@ async function updateEncounter(id, data, userId) {
       UPDATE encounters
       SET
         chief_complaint = COALESCE($1, chief_complaint),
-        clinical_notes = COALESCE($2, clinical_notes),
-        treatment_plan = COALESCE($3, treatment_plan),
-        follow_up_date = COALESCE($4, follow_up_date),
+        history_symptoms = COALESCE($2, history_symptoms),
+        examination_findings = COALESCE($3, examination_findings),
+        clinical_notes = COALESCE($4, clinical_notes),
+        treatment_plan = COALESCE($5, treatment_plan),
+        follow_up_date = COALESCE($6, follow_up_date),
+        follow_up_instructions = COALESCE($7, follow_up_instructions),
+        priority = COALESCE($8, priority),
         updated_at = CURRENT_TIMESTAMP
-      WHERE id = $5
+      WHERE id = $9
       RETURNING *
       `,
       [
         data.chiefComplaint !== undefined ? data.chiefComplaint : current.chief_complaint,
+        data.historySymptoms !== undefined ? data.historySymptoms : current.history_symptoms,
+        data.examinationFindings !== undefined ? data.examinationFindings : current.examination_findings,
         data.clinicalNotes !== undefined ? data.clinicalNotes : current.clinical_notes,
         data.treatmentPlan !== undefined ? data.treatmentPlan : current.treatment_plan,
         data.followUpDate !== undefined ? data.followUpDate : current.follow_up_date,
+        data.followUpInstructions !== undefined ? data.followUpInstructions : current.follow_up_instructions,
+        data.priority !== undefined ? data.priority : current.priority,
         id,
       ]
     );
 
     const encounter = updateRes.rows[0];
 
-    // If diagnoses were provided, replace or append
+    // If diagnoses were provided, replace
     if (Array.isArray(data.diagnoses)) {
       await client.query("DELETE FROM diagnoses WHERE encounter_id = $1", [id]);
       for (const d of data.diagnoses) {
@@ -308,14 +345,17 @@ async function getEncounterById(id) {
       p.date_of_birth AS patient_dob,
       p.gender AS patient_gender,
       p.phone AS patient_phone,
+      EXTRACT(YEAR FROM AGE(p.date_of_birth))::int AS patient_age,
       s.first_name AS doctor_first_name,
       s.last_name AS doctor_last_name,
       s.specialty AS doctor_specialty,
-      a.appointment_number
+      a.appointment_number,
+      v.visit_number
     FROM encounters e
     JOIN patients p ON e.patient_id = p.id
     JOIN staff s ON e.doctor_id = s.id
     LEFT JOIN appointments a ON e.appointment_id = a.id
+    LEFT JOIN visits v ON e.visit_id = v.id
     WHERE e.id = $1
     `,
     [id]
@@ -327,47 +367,279 @@ async function getEncounterById(id) {
 
   const encounter = encRes.rows[0];
 
-  const diagRes = await pool.query(
-    `SELECT * FROM diagnoses WHERE encounter_id = $1 ORDER BY is_primary DESC, created_at ASC`,
-    [id]
-  );
+  const [
+    diagRes,
+    rxRes,
+    soRes,
+    labRes,
+    radRes,
+    procRes,
+    surgRes,
+    admRes,
+    vitalsRes,
+    histRes,
+  ] = await Promise.all([
+    // 1. Diagnoses
+    pool.query(
+      `SELECT * FROM diagnoses WHERE encounter_id = $1 ORDER BY is_primary DESC, created_at ASC`,
+      [id]
+    ),
 
-  const rxRes = await pool.query(
-    `SELECT * FROM prescriptions WHERE encounter_id = $1 ORDER BY created_at ASC`,
-    [id]
-  );
+    // 2. Prescriptions (Medications)
+    pool.query(
+      `
+      SELECT
+        pr.*,
+        m.unit_price,
+        m.stock_quantity AS current_stock,
+        u_disp.username AS dispensed_by_username
+      FROM prescriptions pr
+      LEFT JOIN medications m ON pr.medication_id = m.id
+      LEFT JOIN users u_disp ON pr.dispensed_by = u_disp.id
+      WHERE pr.encounter_id = $1 OR (pr.patient_id = $2 AND DATE(pr.created_at) = $3)
+      ORDER BY pr.created_at DESC
+      `,
+      [id, encounter.patient_id, encounter.visit_date]
+    ),
 
-  const labRes = await pool.query(
-    `
-    SELECT
-      o.*,
-      t.name AS test_name,
-      t.code AS test_code,
-      t.category AS test_category,
-      r.result_value,
-      r.unit AS result_unit,
-      r.is_abnormal,
-      r.comments AS result_comments
-    FROM lab_orders o
-    JOIN lab_test_catalog t ON o.test_id = t.id
-    LEFT JOIN lab_results r ON r.lab_order_id = o.id
-    WHERE o.encounter_id = $1
-    ORDER BY o.created_at ASC
-    `,
-    [id]
-  );
+    // 3. Central Service Orders with 3-pillar statuses
+    pool.query(
+      `
+      SELECT
+        so.*,
+        s.code AS service_code,
+        s.name AS service_name,
+        s.category AS service_category,
+        s.payment_location,
+        s.queue_enabled,
+        d.code AS department_code,
+        d.name AS department_name,
+        doc.first_name AS doctor_first_name,
+        doc.last_name AS doctor_last_name,
+        qe.queue_number,
+        qe.status AS queue_status,
+        qe.priority AS queue_priority,
+        qe.authorized_at AS queue_authorized_at,
+        qe.started_at AS queue_started_at,
+        qe.completed_at AS queue_completed_at
+      FROM service_orders so
+      JOIN services s ON so.service_id = s.id
+      JOIN departments d ON so.department_id = d.id
+      LEFT JOIN staff doc ON so.doctor_id = doc.id
+      LEFT JOIN queue_entries qe ON qe.service_order_id = so.id
+      WHERE so.encounter_id = $1 OR (so.visit_id IS NOT NULL AND so.visit_id = $2) OR (so.patient_id = $3 AND DATE(so.created_at) = $4)
+      ORDER BY so.created_at DESC
+      `,
+      [id, encounter.visit_id, encounter.patient_id, encounter.visit_date]
+    ),
 
-  const vitalsRes = await pool.query(
-    `SELECT * FROM vitals WHERE encounter_id = $1 OR (patient_id = $2 AND appointment_id = $3) ORDER BY recorded_at DESC`,
-    [id, encounter.patient_id, encounter.appointment_id]
-  );
+    // 4. Lab Orders & Results
+    pool.query(
+      `
+      SELECT
+        lo.*,
+        lt.name AS test_name,
+        lt.code AS test_code,
+        lt.category AS test_category,
+        lt.reference_range AS standard_reference_range,
+        lt.unit AS standard_unit,
+        lt.turnaround_time_hours,
+        lr.result_value,
+        lr.unit AS result_unit,
+        lr.reference_range AS result_reference_range,
+        lr.is_abnormal,
+        lr.comments AS result_comments,
+        lr.entered_at AS result_entered_at,
+        u_ent.username AS entered_by_username,
+        u_ver.username AS verified_by_username,
+        so.status AS service_order_status,
+        so.price AS service_order_price,
+        so.authorized_at AS service_order_authorized_at
+      FROM lab_orders lo
+      JOIN lab_test_catalog lt ON lo.test_id = lt.id
+      LEFT JOIN service_orders so ON lo.service_order_id = so.id
+      LEFT JOIN lab_results lr ON lr.lab_order_id = lo.id
+      LEFT JOIN users u_ent ON lr.entered_by = u_ent.id
+      LEFT JOIN users u_ver ON lo.verified_by = u_ver.id
+      WHERE lo.encounter_id = $1 OR lo.patient_id = $2
+      ORDER BY lo.created_at DESC LIMIT 30
+      `,
+      [id, encounter.patient_id]
+    ),
+
+    // 5. Radiology Orders & Reports
+    pool.query(
+      `
+      SELECT
+        ro.*,
+        s.code AS service_code,
+        s.name AS service_name,
+        so.status AS service_order_status,
+        so.price AS service_order_price,
+        so.authorized_at AS service_order_authorized_at,
+        u_perf.username AS performed_by_username,
+        u_rep.username AS reported_by_username
+      FROM radiology_orders ro
+      JOIN service_orders so ON ro.service_order_id = so.id
+      JOIN services s ON so.service_id = s.id
+      LEFT JOIN users u_perf ON ro.performed_by = u_perf.id
+      LEFT JOIN users u_rep ON ro.reported_by = u_rep.id
+      WHERE ro.patient_id = $1 OR so.encounter_id = $2
+      ORDER BY ro.created_at DESC LIMIT 30
+      `,
+      [encounter.patient_id, id]
+    ),
+
+    // 6. Procedures
+    pool.query(
+      `
+      SELECT
+        po.*,
+        s.code AS service_code,
+        s.name AS service_name,
+        so.status AS service_order_status,
+        so.price AS service_order_price,
+        so.authorized_at AS service_order_authorized_at,
+        u.username AS performed_by_username
+      FROM procedure_orders po
+      JOIN service_orders so ON po.service_order_id = so.id
+      JOIN services s ON so.service_id = s.id
+      LEFT JOIN users u ON po.performed_by = u.id
+      WHERE po.patient_id = $1 OR so.encounter_id = $2
+      ORDER BY po.created_at DESC LIMIT 30
+      `,
+      [encounter.patient_id, id]
+    ),
+
+    // 7. Surgeries
+    pool.query(
+      `
+      SELECT
+        surg.*,
+        s.code AS service_code,
+        s.name AS service_name,
+        so.status AS service_order_status,
+        so.price AS service_order_price,
+        so.authorized_at AS service_order_authorized_at,
+        u.username AS performed_by_username
+      FROM surgery_orders surg
+      JOIN service_orders so ON surg.service_order_id = so.id
+      JOIN services s ON so.service_id = s.id
+      LEFT JOIN users u ON surg.performed_by = u.id
+      WHERE surg.patient_id = $1 OR so.encounter_id = $2
+      ORDER BY surg.created_at DESC LIMIT 20
+      `,
+      [encounter.patient_id, id]
+    ),
+
+    // 8. Inpatient Admissions & Bed Assignments
+    pool.query(
+      `
+      SELECT
+        adm.*,
+        b.bed_number,
+        b.ward_name,
+        b.bed_type,
+        b.room_number,
+        b.daily_rate,
+        b.status AS bed_status,
+        doc.first_name AS attending_doctor_first_name,
+        doc.last_name AS attending_doctor_last_name
+      FROM admissions adm
+      LEFT JOIN beds b ON adm.bed_id = b.id
+      LEFT JOIN staff doc ON adm.doctor_id = doc.id
+      WHERE adm.patient_id = $1 OR adm.visit_id = $2
+      ORDER BY adm.admission_date DESC LIMIT 10
+      `,
+      [encounter.patient_id, encounter.visit_id]
+    ),
+
+    // 9. Vitals
+    pool.query(
+      `
+      SELECT *
+      FROM vitals
+      WHERE encounter_id = $1 OR patient_id = $2
+      ORDER BY recorded_at DESC LIMIT 15
+      `,
+      [id, encounter.patient_id]
+    ),
+
+    // 10. Patient Past Clinical History
+    pool.query(
+      `
+      SELECT
+        e.id,
+        e.visit_date,
+        e.status,
+        e.chief_complaint,
+        e.history_symptoms,
+        e.examination_findings,
+        e.treatment_plan,
+        e.priority,
+        s.first_name AS doctor_first_name,
+        s.last_name AS doctor_last_name,
+        (
+          SELECT json_agg(d)
+          FROM (
+            SELECT code, description, is_primary, severity
+            FROM diagnoses
+            WHERE encounter_id = e.id
+            ORDER BY is_primary DESC
+          ) d
+        ) AS diagnoses
+      FROM encounters e
+      JOIN staff s ON e.doctor_id = s.id
+      WHERE e.patient_id = $1 AND e.id != $2
+      ORDER BY e.visit_date DESC, e.created_at DESC LIMIT 10
+      `,
+      [encounter.patient_id, id]
+    ),
+  ]);
+
+  // Compute 3-pillar statuses on service orders
+  const formattedServiceOrders = soRes.rows.map((so) => {
+    let financialStatus = "UNPAID";
+    if (so.status === "PAID" || so.status === "COMPLETED" || parseFloat(so.price) === 0 || so.emergency_override) {
+      financialStatus = "PAID";
+    } else if (so.status === "PARTIALLY_PAID") {
+      financialStatus = "PARTIALLY_PAID";
+    } else if (so.status === "CANCELLED" || so.status === "REFUNDED") {
+      financialStatus = so.status;
+    }
+
+    let authStatus = "NOT_AUTHORIZED";
+    if (so.authorized_at || ["AUTHORIZED", "PAID", "QUEUED", "IN_PROGRESS", "COMPLETED"].includes(so.status) || so.emergency_override) {
+      authStatus = "AUTHORIZED";
+    }
+
+    let execStatus = so.status;
+    if (so.status === "WAITING_PAYMENT") {
+      execStatus = "WAITING_PAYMENT";
+    } else if (so.queue_status) {
+      execStatus = so.queue_status === "WAITING" ? "QUEUED" : so.queue_status;
+    }
+
+    return {
+      ...so,
+      financial_status: financialStatus,
+      authorization_status: authStatus,
+      execution_status: execStatus,
+    };
+  });
 
   return {
     ...encounter,
     diagnoses: diagRes.rows,
     prescriptions: rxRes.rows,
+    serviceOrders: formattedServiceOrders,
     labOrders: labRes.rows,
+    radiologyOrders: radRes.rows,
+    procedureOrders: procRes.rows,
+    surgeryOrders: surgRes.rows,
+    admissions: admRes.rows,
     vitals: vitalsRes.rows,
+    history: histRes.rows,
   };
 }
 

@@ -7,7 +7,12 @@ const router = express.Router();
 
 router.use(authenticateToken);
 
-router.get("/queue", authorizeRoles("ADMIN", "SURGEON", "DOCTOR", "NURSE"), controller.getSurgeryQueue);
-router.post("/orders/:serviceOrderId/status", authorizeRoles("ADMIN", "SURGEON", "DOCTOR"), controller.updateSurgeryStatus);
+const SURGERY_ROLES = ["ADMIN", "SURGEON", "DOCTOR", "NURSE"];
+
+router.get("/metrics", authorizeRoles(...SURGERY_ROLES), controller.getMetrics);
+router.get("/queue", authorizeRoles(...SURGERY_ROLES), controller.getSurgeryQueue);
+router.post("/orders/:serviceOrderId/checklist", authorizeRoles("ADMIN", "SURGEON", "DOCTOR", "NURSE"), controller.updateChecklist);
+router.post("/orders/:serviceOrderId/start", authorizeRoles("ADMIN", "SURGEON", "DOCTOR"), controller.startSurgery);
+router.post("/orders/:serviceOrderId/complete", authorizeRoles("ADMIN", "SURGEON", "DOCTOR"), controller.completeSurgery);
 
 module.exports = router;

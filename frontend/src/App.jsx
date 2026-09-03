@@ -31,14 +31,16 @@ import DoctorSchedules from "./pages/DoctorSchedules";
 import AdminAuditLogs from "./pages/AdminAuditLogs";
 import Reports from "./pages/Reports";
 import ReferralQueue from "./pages/ReferralQueue";
+import { ToastProvider } from "./context/ToastContext";
 
 function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route path="/reset-password" element={<ResetPassword />} />
+        <ToastProvider>
+          <Routes>
+            <Route path="/login" element={<Login />} />
+            <Route path="/reset-password" element={<ResetPassword />} />
 
 
           <Route element={<ProtectedRoute />}>
@@ -103,6 +105,7 @@ function App() {
 
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
+        </ToastProvider>
       </AuthProvider>
     </BrowserRouter>
   );

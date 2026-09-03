@@ -15,6 +15,7 @@ router.post("/", authorizeRoles("ADMIN", "REGISTRAR", "DOCTOR", "NURSE"), contro
 // respective queue endpoints and should not be able to browse arbitrary
 // service orders belonging to other departments.
 router.get("/visit/:visitId", authorizeRoles("ADMIN", "REGISTRAR", "FINANCE", "DOCTOR", "NURSE"), controller.getServiceOrdersByVisit);
+router.get("/patient/:patientId/results", authorizeRoles("ADMIN", "DOCTOR", "NURSE", "SURGEON"), controller.getPatientClinicalResults);
 router.get("/:id", authorizeRoles("ADMIN", "REGISTRAR", "FINANCE", "DOCTOR", "NURSE"), controller.getServiceOrderById);
 router.post("/:id/authorize", authorizeRoles("ADMIN", "FINANCE", "REGISTRAR"), controller.authorizeServiceOrder);
 router.post("/:id/cancel", authorizeRoles("ADMIN", "REGISTRAR", "DOCTOR"), controller.cancelServiceOrder);

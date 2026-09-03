@@ -27,6 +27,7 @@ const procedureRoutes = require("./routes/procedure.routes");
 const wardRoutes = require("./routes/ward.routes");
 const surgeryRoutes = require("./routes/surgery.routes");
 const referralRoutes = require("./routes/referral.routes");
+const nursingRoutes = require("./routes/nursing.routes");
 
 const { errorHandler } = require("./middleware/error.middleware");
 
@@ -77,6 +78,7 @@ app.use("/api/procedures", procedureRoutes);
 app.use("/api/ward", wardRoutes);
 app.use("/api/surgery", surgeryRoutes);
 app.use("/api/referrals", referralRoutes);
+app.use("/api/nursing", nursingRoutes);
 
 app.use(errorHandler);
 

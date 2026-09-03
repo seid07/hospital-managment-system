@@ -93,7 +93,18 @@ async function linkCatalogTestService(req, res) {
 
 async function createLabOrder(req, res) {
   try {
-    const { patientId, doctorId, testId } = req.body;
+    let { patientId, doctorId, testId, encounterId } = req.body;
+
+    doctorId = doctorId || req.user?.staffId || req.user?.staff_id;
+
+    if (!patientId && encounterId && isValidUUID(encounterId)) {
+      const pool = require("../config/database");
+      const enc = await pool.query("SELECT patient_id, doctor_id FROM encounters WHERE id = $1", [encounterId]);
+      if (enc.rows.length > 0) {
+        patientId = enc.rows[0].patient_id;
+        if (!doctorId) doctorId = enc.rows[0].doctor_id;
+      }
+    }
 
     if (!patientId || !doctorId || !testId) {
       return res.status(400).json({
@@ -111,6 +122,8 @@ async function createLabOrder(req, res) {
 
     const order = await labService.createLabOrder({
       ...req.body,
+      patientId,
+      doctorId,
       createdBy: req.user?.id || req.user?.userId,
     });
 

@@ -3,7 +3,18 @@ const { isValidUUID } = require("../validators");
 
 async function createPrescription(req, res) {
   try {
-    const { patientId, doctorId, medicationName, dosage, frequency, quantity } = req.body;
+    let { patientId, doctorId, medicationName, dosage, frequency, quantity, encounterId } = req.body;
+
+    doctorId = doctorId || req.user?.staffId || req.user?.staff_id;
+
+    if (!patientId && encounterId && isValidUUID(encounterId)) {
+      const pool = require("../config/database");
+      const enc = await pool.query("SELECT patient_id, doctor_id FROM encounters WHERE id = $1", [encounterId]);
+      if (enc.rows.length > 0) {
+        patientId = enc.rows[0].patient_id;
+        if (!doctorId) doctorId = enc.rows[0].doctor_id;
+      }
+    }
 
     if (!patientId || !doctorId || !medicationName || !dosage || !frequency) {
       return res.status(400).json({
@@ -21,6 +32,8 @@ async function createPrescription(req, res) {
 
     const rx = await pharmacyService.createPrescription({
       ...req.body,
+      patientId,
+      doctorId,
       createdBy: req.user?.id || req.user?.userId,
     });
 

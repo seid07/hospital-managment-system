@@ -1,28 +1,46 @@
 import { useState, useEffect } from "react";
 import AppShell from "../components/layout/AppShell";
 import Modal from "../components/common/Modal";
-import { procedureService } from "../services/clinicalDepartmentServices";
+import StatusBadge from "../components/common/StatusBadge";
+import { procedureService } from "../services/procedureService";
 import { queueService } from "../services/queueService";
+import { useAuth } from "../context/useAuth";
+import {
+  Clock,
+  Activity,
+  CheckCircle2,
+  Layers,
+  Search,
+  FileText,
+  Play,
+  Volume2,
+  Stethoscope,
+} from "lucide-react";
 
 export default function ProcedureQueue() {
+  const { user } = useAuth();
+  const [metrics, setMetrics] = useState(null);
   const [queue, setQueue] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
-  const [statusFilter, setStatusFilter] = useState("WAITING");
+  const [statusFilter, setStatusFilter] = useState("ALL");
   const [refreshKey, setRefreshKey] = useState(0);
   const [searchInput, setSearchInput] = useState("");
-
-  // Procedure completion modal
-  const [showModal, setShowModal] = useState(false);
-  const [selectedOrder, setSelectedOrder] = useState(null);
-  const [procNotes, setProcNotes] = useState("");
-  const [procType, setProcType] = useState("GENERAL");
-  const [submitting, setSubmitting] = useState(false);
-
-  // Tracks the queue_entry_id currently mid-request for Call, so a
-  // double-click can't fire the same status transition twice.
   const [actionInFlight, setActionInFlight] = useState(null);
+
+  // Procedure Execution Modal
+  const [selectedOrder, setSelectedOrder] = useState(null);
+  const [execForm, setExecForm] = useState({
+    procedureName: "",
+    procedureType: "GENERAL",
+    findings: "",
+    materialsUsed: "",
+    complications: "",
+    procedureNotes: "",
+    staff: "",
+  });
+  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -30,11 +48,15 @@ export default function ProcedureQueue() {
       try {
         setLoading(true);
         setError("");
-        const data = await procedureService.getProcedureQueue({
-          status: statusFilter === "ALL" ? undefined : statusFilter,
-        });
+        const [qData, mData] = await Promise.all([
+          procedureService.getProcedureQueue({
+            status: statusFilter === "ALL" ? undefined : statusFilter,
+          }),
+          procedureService.getMetrics().catch(() => null),
+        ]);
         if (!cancelled) {
-          setQueue(data || []);
+          setQueue(qData || []);
+          if (mData) setMetrics(mData);
           setLoading(false);
         }
       } catch (err) {
@@ -46,19 +68,24 @@ export default function ProcedureQueue() {
     }
 
     loadData();
+    const interval = setInterval(loadData, 20000);
     return () => {
       cancelled = true;
+      clearInterval(interval);
     };
   }, [statusFilter, refreshKey]);
 
-  function handleOpenModal(item) {
+  function handleOpenExecutionModal(item) {
     setSelectedOrder(item);
-    setProcType(
-      item.service_code === "PROC-DRESSING" ? "DRESSING" :
-      item.service_code === "PROC-INJECTION" ? "INJECTION" : "GENERAL"
-    );
-    setProcNotes("");
-    setShowModal(true);
+    setExecForm({
+      procedureName: item.procedure_name || item.service_name,
+      procedureType: item.procedure_type || (item.service_code === "PROC-DRESSING" ? "DRESSING" : item.service_code === "PROC-INJECTION" ? "INJECTION" : "GENERAL"),
+      findings: item.findings || "",
+      materialsUsed: item.materials_used || "",
+      complications: item.complications || "None",
+      procedureNotes: item.procedure_notes || item.clinical_notes || "",
+      staff: user?.username || "",
+    });
   }
 
   async function handleCallPatient(item) {
@@ -66,9 +93,8 @@ export default function ProcedureQueue() {
     try {
       setActionInFlight(item.queue_entry_id);
       setError("");
-      setSuccess("");
       await queueService.updateQueueStatus(item.queue_entry_id, { status: "CALLED" });
-      setSuccess(`${item.patient_first_name} ${item.patient_last_name} called.`);
+      setSuccess(`${item.patient_first_name} ${item.patient_last_name} called to procedure room.`);
       setRefreshKey((k) => k + 1);
     } catch (err) {
       setError(err.message || "Failed to call patient.");
@@ -77,19 +103,37 @@ export default function ProcedureQueue() {
     }
   }
 
-  async function handleCompleteSubmit(e) {
+  async function handleStartProcedure(item) {
+    if (actionInFlight) return;
+    try {
+      setActionInFlight(item.service_order_id);
+      setError("");
+      await procedureService.startProcedure(item.service_order_id);
+      setSuccess(`Procedure started for ${item.patient_first_name} ${item.patient_last_name}.`);
+      setRefreshKey((k) => k + 1);
+    } catch (err) {
+      setError(err.message || "Failed to start procedure.");
+    } finally {
+      setActionInFlight(null);
+    }
+  }
+
+  async function handleCompleteProcedure(e) {
     e.preventDefault();
     if (!selectedOrder || submitting) return;
     try {
       setSubmitting(true);
       setError("");
       await procedureService.completeProcedure(selectedOrder.service_order_id, {
-        procedureType: procType,
-        procedureName: selectedOrder.service_name,
-        procedureNotes: procNotes,
+        procedureType: execForm.procedureType,
+        procedureName: execForm.procedureName,
+        findings: execForm.findings,
+        materialsUsed: execForm.materialsUsed,
+        complications: execForm.complications,
+        procedureNotes: execForm.procedureNotes,
       });
-      setSuccess("Procedure marked complete.");
-      setShowModal(false);
+      setSuccess(`Procedure completed and documented for ${selectedOrder.patient_first_name} ${selectedOrder.patient_last_name}.`);
+      setSelectedOrder(null);
       setRefreshKey((k) => k + 1);
     } catch (err) {
       setError(err.message || "Failed to complete procedure.");
@@ -106,206 +150,433 @@ export default function ProcedureQueue() {
           item.patient_last_name?.toLowerCase().includes(q) ||
           item.patient_number?.toLowerCase().includes(q) ||
           item.service_name?.toLowerCase().includes(q) ||
-          item.queue_number?.toLowerCase?.().includes(q)
+          item.queue_number?.toLowerCase().includes(q) ||
+          item.doctor_last_name?.toLowerCase().includes(q)
         );
       })
     : queue;
 
   return (
     <AppShell>
-      <div className="page-header">
+      {/* Page Header */}
+      <div className="page-header" style={{ marginBottom: "20px" }}>
         <div>
-          <p className="page-eyebrow">Nursing & Minor Clinical Procedures</p>
-          <h1>Clinical Procedures Station</h1>
+          <p className="page-eyebrow">Clinical Treatment & Interventions</p>
+          <h1 style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            Nursing & Clinical Procedures
+          </h1>
           <p className="page-description">
-            Authorized dressings, injections, and minor bedside surgical procedures.
+            Executes doctor-ordered minor surgeries, wound care dressings, injections, and therapeutic procedures.
           </p>
-        </div>
-
-        <div className="page-actions" style={{ display: "flex", gap: "6px" }}>
-          {["WAITING", "CALLED", "IN_PROGRESS", "ALL"].map((st) => (
-            <button
-              key={st}
-              type="button"
-              onClick={() => setStatusFilter(st)}
-              className={`button ${statusFilter === st ? "button-primary" : "button-secondary"}`}
-              style={{ fontSize: "11px", padding: "6px 12px" }}
-            >
-              {st}
-            </button>
-          ))}
         </div>
       </div>
 
-      {error && (
-        <div className="alert alert-error" role="alert">
-          {error}
-        </div>
-      )}
+      {error && <div className="alert alert-error" style={{ marginBottom: "16px" }}>{error}</div>}
+      {success && <div className="alert alert-success" style={{ marginBottom: "16px" }}>{success}</div>}
 
-      {success && (
-        <div className="alert alert-success" role="status">
-          {success}
-        </div>
-      )}
+      {/* Interactive Dashboard Box Buttons (Filter Cards) */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+          gap: "16px",
+          marginBottom: "24px",
+        }}
+      >
+        {/* Box 1: Waiting */}
+        <button
+          type="button"
+          className={`dashboard-stat-btn ${statusFilter === "WAITING" ? "active" : ""}`}
+          onClick={() => setStatusFilter(statusFilter === "WAITING" ? "ALL" : "WAITING")}
+          style={{
+            borderLeft: "5px solid #f59e0b",
+            background: statusFilter === "WAITING" ? "#fffbeb" : "#ffffff",
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", width: "100%" }}>
+            <div>
+              <span style={{ fontSize: "11px", fontWeight: 700, color: "#92400e", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                Waiting in Queue
+              </span>
+              <div style={{ fontSize: "28px", fontWeight: 800, color: "#1e293b", margin: "4px 0" }}>
+                {metrics ? metrics.waitingCount : "—"}
+              </div>
+            </div>
+            <span style={{ display: "flex", alignItems: "center", justifyContent: "center", width: "40px", height: "40px", background: "#fef3c7", borderRadius: "10px", color: "#d97706" }}>
+              <Clock size={20} />
+            </span>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", fontSize: "12px", color: "#64748b" }}>
+            <span>Ready for treatment</span>
+            {statusFilter === "WAITING" && <span style={{ color: "#d97706", fontWeight: 700 }}>• Active Filter</span>}
+          </div>
+        </button>
 
-      <section className="card" style={{ marginBottom: "16px" }}>
-        <input
-          type="search"
-          placeholder="Live search by patient name, PAT #, or procedure..."
-          value={searchInput}
-          onChange={(e) => setSearchInput(e.target.value)}
-          style={{ width: "100%", padding: "10px 14px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)" }}
-        />
-      </section>
+        {/* Box 2: In Progress */}
+        <button
+          type="button"
+          className={`dashboard-stat-btn ${statusFilter === "IN_PROGRESS" ? "active" : ""}`}
+          onClick={() => setStatusFilter(statusFilter === "IN_PROGRESS" ? "ALL" : "IN_PROGRESS")}
+          style={{
+            borderLeft: "5px solid #d97706",
+            background: statusFilter === "IN_PROGRESS" ? "#fffbeb" : "#ffffff",
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", width: "100%" }}>
+            <div>
+              <span style={{ fontSize: "11px", fontWeight: 700, color: "#b45309", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                In Procedure Room
+              </span>
+              <div style={{ fontSize: "28px", fontWeight: 800, color: "#1e293b", margin: "4px 0" }}>
+                {metrics ? metrics.inProgressCount : "—"}
+              </div>
+            </div>
+            <span style={{ display: "flex", alignItems: "center", justifyContent: "center", width: "40px", height: "40px", background: "#fef3c7", borderRadius: "10px", color: "#b45309" }}>
+              <Activity size={20} />
+            </span>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", fontSize: "12px", color: "#64748b" }}>
+            <span>Currently performing</span>
+            {statusFilter === "IN_PROGRESS" && <span style={{ color: "#d97706", fontWeight: 700 }}>• Active Filter</span>}
+          </div>
+        </button>
 
-      <section className="card">
-        <div className="card-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        {/* Box 3: Completed Today */}
+        <button
+          type="button"
+          className={`dashboard-stat-btn ${statusFilter === "COMPLETED" ? "active" : ""}`}
+          onClick={() => setStatusFilter(statusFilter === "COMPLETED" ? "ALL" : "COMPLETED")}
+          style={{
+            borderLeft: "5px solid #059669",
+            background: statusFilter === "COMPLETED" ? "#ecfdf5" : "#ffffff",
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", width: "100%" }}>
+            <div>
+              <span style={{ fontSize: "11px", fontWeight: 700, color: "#047857", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                Completed Today
+              </span>
+              <div style={{ fontSize: "28px", fontWeight: 800, color: "#1e293b", margin: "4px 0" }}>
+                {metrics ? metrics.completedToday : "—"}
+              </div>
+            </div>
+            <span style={{ display: "flex", alignItems: "center", justifyContent: "center", width: "40px", height: "40px", background: "#d1fae5", borderRadius: "10px", color: "#059669" }}>
+              <CheckCircle2 size={20} />
+            </span>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", fontSize: "12px", color: "#64748b" }}>
+            <span>Documented & discharged</span>
+            {statusFilter === "COMPLETED" && <span style={{ color: "#059669", fontWeight: 700 }}>• Active Filter</span>}
+          </div>
+        </button>
+
+        {/* Box 4: Total Procedures */}
+        <button
+          type="button"
+          className={`dashboard-stat-btn ${statusFilter === "ALL" ? "active" : ""}`}
+          onClick={() => setStatusFilter("ALL")}
+          style={{
+            borderLeft: "5px solid #7c3aed",
+            background: statusFilter === "ALL" ? "#f5f3ff" : "#ffffff",
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", width: "100%" }}>
+            <div>
+              <span style={{ fontSize: "11px", fontWeight: 700, color: "#6d28d9", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                Total Procedures
+              </span>
+              <div style={{ fontSize: "28px", fontWeight: 800, color: "#1e293b", margin: "4px 0" }}>
+                {metrics ? metrics.totalOrders : "—"}
+              </div>
+            </div>
+            <span style={{ display: "flex", alignItems: "center", justifyContent: "center", width: "40px", height: "40px", background: "#ede9fe", borderRadius: "10px", color: "#7c3aed" }}>
+              <Layers size={20} />
+            </span>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", fontSize: "12px", color: "#64748b" }}>
+            <span>All procedural orders</span>
+            {statusFilter === "ALL" && <span style={{ color: "#7c3aed", fontWeight: 700 }}>• Showing All</span>}
+          </div>
+        </button>
+      </div>
+
+      {/* Main Procedures Worklist Card with Spaced Patient Row Cards */}
+      <div className="card" style={{ padding: "20px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px", marginBottom: "16px", paddingBottom: "14px", borderBottom: "1px solid #e2e8f0" }}>
           <div>
-            <h2>Authorized Procedure Queue ({filteredQueue.length})</h2>
-            <p>Patients waiting for nursing and clinical procedures.</p>
+            <h2 style={{ margin: 0, fontSize: "16px", fontWeight: 700, color: "#0f172a" }}>
+              Procedure Room Queue ({filteredQueue.length})
+            </h2>
+            <p style={{ margin: "2px 0 0", fontSize: "12px", color: "#64748b" }}>
+              Authorized clinical procedures queued by payment confirmation with dedicated row spacing.
+            </p>
           </div>
-          <button
-            type="button"
-            className="button button-secondary"
-            onClick={() => setRefreshKey((k) => k + 1)}
-          >
-             Refresh
-          </button>
+
+          <div style={{ display: "flex", gap: "10px", alignItems: "center", position: "relative" }}>
+            <Search size={16} style={{ position: "absolute", left: "10px", color: "#94a3b8" }} />
+            <input
+              type="text"
+              placeholder="Search patient, MRN, doctor, procedure..."
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              className="input text-sm"
+              style={{ width: "300px", padding: "8px 12px 8px 34px", borderRadius: "8px" }}
+            />
+          </div>
         </div>
 
-        {loading ? (
-          <div className="loading-state">Loading procedure queue...</div>
-        ) : filteredQueue.length === 0 ? (
-          <div className="empty-state">
-            <div className="empty-state-icon"></div>
-            <h3>{searchInput ? "No matching procedures found" : "No pending procedure orders"}</h3>
-            <p>{searchInput ? "Try a different search term." : "New orders will appear here automatically after cashier authorization."}</p>
+        {loading && <div className="p-8 text-center text-sm text-gray-500">Loading procedures...</div>}
+
+        {!loading && filteredQueue.length === 0 && (
+          <div className="empty-state p-10 text-center text-gray-400">
+            <Stethoscope size={36} style={{ margin: "0 auto 8px", color: "#94a3b8" }} />
+            <p>No procedure orders found matching the current filter.</p>
           </div>
-        ) : (
-          <div className="table-wrapper">
-            <table className="data-table">
+        )}
+
+        {!loading && filteredQueue.length > 0 && (
+          <div className="table-responsive">
+            <table
+              className="table"
+              style={{
+                borderCollapse: "separate",
+                borderSpacing: "0 8px",
+                width: "100%",
+              }}
+            >
               <thead>
-                <tr>
-                  <th>Queue Token</th>
-                  <th>Patient Details</th>
-                  <th>Procedure Type</th>
-                  <th>Prescribing Clinician</th>
-                  <th>Payment State</th>
-                  <th>Authorized At</th>
-                  <th>Action</th>
+                <tr style={{ background: "transparent" }}>
+                  <th style={{ padding: "8px 14px", color: "#64748b", fontSize: "11px", fontWeight: 700, border: "none" }}>Queue #</th>
+                  <th style={{ padding: "8px 14px", color: "#64748b", fontSize: "11px", fontWeight: 700, border: "none" }}>Patient Name</th>
+                  <th style={{ padding: "8px 14px", color: "#64748b", fontSize: "11px", fontWeight: 700, border: "none" }}>MRN</th>
+                  <th style={{ padding: "8px 14px", color: "#64748b", fontSize: "11px", fontWeight: 700, border: "none" }}>Age / Sex</th>
+                  <th style={{ padding: "8px 14px", color: "#64748b", fontSize: "11px", fontWeight: 700, border: "none" }}>Procedure Name</th>
+                  <th style={{ padding: "8px 14px", color: "#64748b", fontSize: "11px", fontWeight: 700, border: "none" }}>Ordering Doctor</th>
+                  <th style={{ padding: "8px 14px", color: "#64748b", fontSize: "11px", fontWeight: 700, border: "none" }}>Priority</th>
+                  <th style={{ padding: "8px 14px", color: "#64748b", fontSize: "11px", fontWeight: 700, border: "none" }}>Status</th>
+                  <th style={{ padding: "8px 14px", color: "#64748b", fontSize: "11px", fontWeight: 700, border: "none", textAlign: "right" }}>Action</th>
                 </tr>
               </thead>
               <tbody>
-                {filteredQueue.map((item) => (
-                  <tr key={item.queue_entry_id}>
-                    <td>
-                      <span
-                        style={{
-                          fontFamily: "monospace",
-                          fontWeight: 800,
-                          fontSize: "13px",
-                          padding: "4px 8px",
-                          borderRadius: "6px",
-                          background: "rgba(13, 148, 136, 0.15)",
-                          color: "#0d9488",
-                        }}
-                      >
-                        {item.queue_number}
-                      </span>
-                    </td>
-                    <td>
-                      <strong>{item.patient_first_name} {item.patient_last_name}</strong>
-                      <br />
-                      <small style={{ color: "var(--text-muted)", fontFamily: "monospace" }}>
-                        {item.patient_number} • {item.patient_gender}
-                      </small>
-                    </td>
-                    <td>
-                      <strong>{item.service_name}</strong>
-                      <br />
-                      <small style={{ color: "var(--text-muted)" }}>{item.clinical_notes || "Clinical order"}</small>
-                    </td>
-                    <td>
-                      {item.doctor_first_name ? `Dr. ${item.doctor_first_name} ${item.doctor_last_name}` : "General OPD"}
-                    </td>
-                    <td>
-                      <span className="badge badge-success">{item.payment_status || "AUTHORIZED"}</span>
-                    </td>
-                    <td style={{ fontFamily: "monospace", fontSize: "12px" }}>
-                      {new Date(item.authorized_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                    </td>
-                    <td>
-                      <div style={{ display: "flex", gap: "6px" }}>
-                        {item.queue_status === "WAITING" && (
+                {filteredQueue.map((item) => {
+                  const isCompleted = item.queue_status === "COMPLETED" || item.procedure_status === "COMPLETED";
+
+                  return (
+                    <tr
+                      key={item.queue_entry_id}
+                      style={{
+                        background: "#ffffff",
+                        boxShadow: "0 1px 3px rgba(15, 23, 42, 0.05)",
+                        transition: "all 120ms ease",
+                      }}
+                    >
+                      <td style={{ padding: "12px 14px", borderTop: "1px solid #e2e8f0", borderBottom: "1px solid #e2e8f0", borderLeft: "4px solid #d97706", borderTopLeftRadius: "8px", borderBottomLeftRadius: "8px" }}>
+                        <span className="font-mono font-bold text-primary">{item.queue_number}</span>
+                      </td>
+                      <td style={{ padding: "12px 14px", borderTop: "1px solid #e2e8f0", borderBottom: "1px solid #e2e8f0" }}>
+                        <strong style={{ color: "#0f172a", fontSize: "13px" }}>{item.patient_first_name} {item.patient_last_name}</strong>
+                      </td>
+                      <td style={{ padding: "12px 14px", borderTop: "1px solid #e2e8f0", borderBottom: "1px solid #e2e8f0" }}>
+                        <span className="font-mono text-xs text-gray-500">{item.patient_number}</span>
+                      </td>
+                      <td style={{ padding: "12px 14px", borderTop: "1px solid #e2e8f0", borderBottom: "1px solid #e2e8f0", fontSize: "12px" }}>
+                        {item.patient_age != null ? `${item.patient_age} yrs` : "—"} / {item.patient_gender || "—"}
+                      </td>
+                      <td style={{ padding: "12px 14px", borderTop: "1px solid #e2e8f0", borderBottom: "1px solid #e2e8f0" }}>
+                        <strong className="text-xs text-amber-900">{item.service_name}</strong>
+                        {item.clinical_notes && (
+                          <span className="block text-[11px] text-gray-500">{item.clinical_notes}</span>
+                        )}
+                      </td>
+                      <td style={{ padding: "12px 14px", borderTop: "1px solid #e2e8f0", borderBottom: "1px solid #e2e8f0", fontSize: "12px" }}>
+                        Dr. {item.doctor_first_name} {item.doctor_last_name}
+                      </td>
+                      <td style={{ padding: "12px 14px", borderTop: "1px solid #e2e8f0", borderBottom: "1px solid #e2e8f0" }}>
+                        <span
+                          className={`badge ${
+                            item.priority === "EMERGENCY"
+                              ? "badge-danger font-bold"
+                              : item.priority === "URGENT"
+                              ? "badge-warning font-bold"
+                              : "badge-secondary"
+                          }`}
+                        >
+                          {item.priority || "ROUTINE"}
+                        </span>
+                      </td>
+                      <td style={{ padding: "12px 14px", borderTop: "1px solid #e2e8f0", borderBottom: "1px solid #e2e8f0" }}>
+                        <StatusBadge status={item.procedure_status || item.queue_status} />
+                      </td>
+                      <td style={{ padding: "12px 14px", borderTop: "1px solid #e2e8f0", borderBottom: "1px solid #e2e8f0", borderRight: "1px solid #e2e8f0", borderTopRightRadius: "8px", borderBottomRightRadius: "8px", textAlign: "right" }}>
+                        <div style={{ display: "inline-flex", gap: "6px", alignItems: "center" }}>
+                          {item.queue_status === "WAITING" && (
+                            <button
+                              type="button"
+                              className="button button-secondary button-sm"
+                              onClick={() => handleCallPatient(item)}
+                              disabled={actionInFlight === item.queue_entry_id}
+                              style={{ padding: "5px 10px", fontSize: "12px", display: "inline-flex", alignItems: "center", gap: "4px" }}
+                            >
+                              <Volume2 size={13} />
+                              Call
+                            </button>
+                          )}
+
+                          {!isCompleted && item.procedure_status !== "IN_PROGRESS" && (
+                            <button
+                              type="button"
+                              className="button button-secondary button-sm"
+                              onClick={() => handleStartProcedure(item)}
+                              disabled={actionInFlight === item.service_order_id}
+                              style={{ padding: "5px 10px", fontSize: "12px", background: "#fef3c7", color: "#b45309", border: "1px solid #fde68a", display: "inline-flex", alignItems: "center", gap: "4px" }}
+                            >
+                              <Play size={13} />
+                              Start
+                            </button>
+                          )}
+
                           <button
                             type="button"
-                            className="button button-secondary"
-                            onClick={() => handleCallPatient(item)}
+                            className="button button-primary button-sm font-bold"
+                            onClick={() => handleOpenExecutionModal(item)}
+                            style={{
+                              padding: "5px 12px",
+                              fontSize: "12px",
+                              background: isCompleted ? "#4f46e5" : "#d97706",
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: "4px",
+                            }}
                           >
-                            Call
+                            <FileText size={13} />
+                            {isCompleted ? "View Notes" : "Document & Complete"}
                           </button>
-                        )}
-                        <button
-                          type="button"
-                          className="button button-primary"
-                          onClick={() => handleOpenModal(item)}
-                        >
-                          Complete →
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
         )}
-      </section>
+      </div>
 
-      {/* Completion Modal */}
-      <Modal
-        isOpen={showModal}
-        onClose={() => setShowModal(false)}
-        title={selectedOrder ? `Complete Procedure: ${selectedOrder.service_name}` : "Procedure Notes"}
-      >
-        {selectedOrder && (
-          <form onSubmit={handleCompleteSubmit}>
-            <div style={{ background: "var(--primary-light)", padding: "12px", borderRadius: "var(--radius-sm)", marginBottom: "14px", fontSize: "13px" }}>
-              <div><strong>Patient:</strong> {selectedOrder.patient_first_name} {selectedOrder.patient_last_name} ({selectedOrder.patient_number})</div>
-              <div><strong>Procedure:</strong> {selectedOrder.service_name}</div>
+      {/* Procedure Documentation Modal */}
+      {selectedOrder && (
+        <Modal
+          isOpen={true}
+          onClose={() => setSelectedOrder(null)}
+          title={`Document Procedure: ${selectedOrder.patient_first_name} ${selectedOrder.patient_last_name}`}
+          subtitle={`Procedure: ${selectedOrder.service_name} • MRN: ${selectedOrder.patient_number}`}
+          maxWidth="700px"
+        >
+          <form onSubmit={handleCompleteProcedure} style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", background: "#f8fafc", padding: "12px", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
+              <div>
+                <label style={{ fontSize: "11px", fontWeight: 700, color: "#475569" }}>Procedure Name</label>
+                <input
+                  type="text"
+                  className="input"
+                  value={execForm.procedureName}
+                  onChange={(e) => setExecForm({ ...execForm, procedureName: e.target.value })}
+                  style={{ width: "100%", marginTop: "4px", padding: "6px 10px", fontSize: "12px" }}
+                  required
+                />
+              </div>
+
+              <div>
+                <label style={{ fontSize: "11px", fontWeight: 700, color: "#475569" }}>Procedure Classification</label>
+                <select
+                  className="select"
+                  value={execForm.procedureType}
+                  onChange={(e) => setExecForm({ ...execForm, procedureType: e.target.value })}
+                  style={{ width: "100%", marginTop: "4px", padding: "6px 10px", fontSize: "12px" }}
+                >
+                  <option value="DRESSING">Wound Dressing / Bandaging</option>
+                  <option value="INJECTION">Therapeutic Injection / IV Line</option>
+                  <option value="SUTURE">Suturing / Suture Removal</option>
+                  <option value="CATHETER">Catheterization / Tube Insertion</option>
+                  <option value="GENERAL">General Minor Procedure</option>
+                </select>
+              </div>
             </div>
 
-            <div className="form-field" style={{ marginBottom: "14px" }}>
-              <label>Clinical Notes / Observation *</label>
+            <div>
+              <label style={{ display: "block", fontSize: "12px", fontWeight: 700, color: "#334155", marginBottom: "4px" }}>
+                Clinical Findings & Observations <span style={{ color: "#ef4444" }}>*</span>
+              </label>
               <textarea
-                rows="4"
+                rows={3}
+                className="textarea"
+                style={{ width: "100%", padding: "8px 10px", borderRadius: "6px", fontSize: "12px" }}
+                placeholder="Wound condition, drainage color/odor, skin integrity, patient tolerance..."
+                value={execForm.findings}
+                onChange={(e) => setExecForm({ ...execForm, findings: e.target.value })}
                 required
-                placeholder="Sterile site prep, medication/dressing details, patient vitals & response..."
-                value={procNotes}
-                onChange={(e) => setProcNotes(e.target.value)}
               />
             </div>
 
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px" }}>
-              <button
-                type="button"
-                className="button button-secondary"
-                onClick={() => setShowModal(false)}
-              >
-                Cancel
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+              <div>
+                <label style={{ display: "block", fontSize: "12px", fontWeight: 700, color: "#334155", marginBottom: "4px" }}>
+                  Materials & Supplies Used
+                </label>
+                <input
+                  type="text"
+                  className="input"
+                  style={{ width: "100%", padding: "8px 10px", borderRadius: "6px", fontSize: "12px" }}
+                  placeholder="e.g. Sterile gauze, 2x Betadine, 5ml syringe..."
+                  value={execForm.materialsUsed}
+                  onChange={(e) => setExecForm({ ...execForm, materialsUsed: e.target.value })}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: "12px", fontWeight: 700, color: "#334155", marginBottom: "4px" }}>
+                  Complications / Adverse Events
+                </label>
+                <input
+                  type="text"
+                  className="input"
+                  style={{ width: "100%", padding: "8px 10px", borderRadius: "6px", fontSize: "12px" }}
+                  placeholder="e.g. None, mild bleeding, vasovagal reaction..."
+                  value={execForm.complications}
+                  onChange={(e) => setExecForm({ ...execForm, complications: e.target.value })}
+                />
+              </div>
+            </div>
+
+            <div>
+              <label style={{ display: "block", fontSize: "12px", fontWeight: 700, color: "#334155", marginBottom: "4px" }}>
+                Detailed Procedure & Care Notes
+              </label>
+              <textarea
+                rows={2}
+                className="textarea"
+                style={{ width: "100%", padding: "8px 10px", borderRadius: "6px", fontSize: "12px" }}
+                placeholder="Discharge instructions, follow-up dressing date, home care advice..."
+                value={execForm.procedureNotes}
+                onChange={(e) => setExecForm({ ...execForm, procedureNotes: e.target.value })}
+              />
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px", paddingTop: "12px", borderTop: "1px solid #e2e8f0" }}>
+              <button type="button" onClick={() => setSelectedOrder(null)} className="button button-secondary">
+                Close
               </button>
               <button
                 type="submit"
-                className="button button-primary"
                 disabled={submitting}
+                className="button button-primary font-bold"
+                style={{ background: "#d97706" }}
               >
-                {submitting ? "Saving..." : "✓ Confirm Completed"}
+                {submitting ? "Submitting..." : "Complete & Document Procedure"}
               </button>
             </div>
           </form>
-        )}
-      </Modal>
+        </Modal>
+      )}
     </AppShell>
   );
 }

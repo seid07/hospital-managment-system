@@ -1,6 +1,7 @@
 import { useEffect } from "react";
+import { CheckCircle2, AlertCircle, X } from "lucide-react";
 
-function ToastPrompt({ message, type = "success", onClose, duration = 4000 }) {
+function ToastPrompt({ message, type = "success", onClose, duration = 5000 }) {
   useEffect(() => {
     if (!message) return;
     const timer = setTimeout(() => {
@@ -21,18 +22,19 @@ function ToastPrompt({ message, type = "success", onClose, duration = 4000 }) {
         position: "fixed",
         top: "24px",
         right: "24px",
-        zIndex: 9999,
+        zIndex: 99999,
         minWidth: "320px",
         maxWidth: "460px",
-        background: isSuccess ? "#064e3b" : "#7f1d1d",
-        color: "#ffffff",
-        borderRadius: "8px",
-        boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.3), 0 8px 10px -6px rgba(0, 0, 0, 0.2)",
+        background: "#ffffff",
+        color: "#0f172a",
+        borderRadius: "10px",
+        boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.15), 0 8px 10px -6px rgba(0, 0, 0, 0.1)",
         overflow: "hidden",
-        animation: "toastSlideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1)",
+        animation: "toastSlideIn 0.25s cubic-bezier(0.16, 1, 0.3, 1)",
         display: "flex",
         flexDirection: "column",
-        border: isSuccess ? "1px solid #059669" : "1px solid #dc2626",
+        border: "1px solid #e2e8f0",
+        borderLeft: isSuccess ? "5px solid #059669" : "5px solid #dc2626",
       }}
     >
       <div
@@ -43,14 +45,18 @@ function ToastPrompt({ message, type = "success", onClose, duration = 4000 }) {
           padding: "14px 16px",
         }}
       >
-        <span style={{ fontSize: "20px", lineHeight: 1 }}>
-          {isSuccess ? "✓" : "⚠️"}
+        <span style={{ marginTop: "2px", flexShrink: 0 }}>
+          {isSuccess ? (
+            <CheckCircle2 size={20} color="#059669" />
+          ) : (
+            <AlertCircle size={20} color="#dc2626" />
+          )}
         </span>
         <div style={{ flex: 1 }}>
-          <div style={{ fontWeight: 700, fontSize: "14px", marginBottom: "2px", letterSpacing: "0.2px" }}>
-            {isSuccess ? "Success Notification" : "Error Alert"}
+          <div style={{ fontWeight: 700, fontSize: "14px", color: isSuccess ? "#065f46" : "#991b1b", marginBottom: "2px" }}>
+            {isSuccess ? "Success" : "Error Alert"}
           </div>
-          <div style={{ fontSize: "13px", opacity: 0.95, lineHeight: 1.4 }}>
+          <div style={{ fontSize: "13px", color: "#334155", lineHeight: 1.4 }}>
             {message}
           </div>
         </div>
@@ -60,47 +66,27 @@ function ToastPrompt({ message, type = "success", onClose, duration = 4000 }) {
           style={{
             background: "transparent",
             border: "none",
-            color: "rgba(255, 255, 255, 0.8)",
-            fontSize: "18px",
+            color: "#94a3b8",
             cursor: "pointer",
-            padding: "0 4px",
-            lineHeight: 1,
+            padding: "2px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
           }}
-          title="Dismiss"
+          aria-label="Dismiss notification"
         >
-          ✕
+          <X size={16} />
         </button>
       </div>
 
-      {/* 4-second Countdown Progress Bar */}
+      {/* 5-second Countdown Progress Bar */}
       <div
         style={{
           height: "3px",
-          background: isSuccess ? "#34d399" : "#f87171",
+          background: isSuccess ? "#10b981" : "#ef4444",
           animation: `toastProgress ${duration}ms linear forwards`,
         }}
       />
-
-      <style>{`
-        @keyframes toastSlideIn {
-          from {
-            transform: translateY(-20px);
-            opacity: 0;
-          }
-          to {
-            transform: translateY(0);
-            opacity: 1;
-          }
-        }
-        @keyframes toastProgress {
-          from {
-            width: 100%;
-          }
-          to {
-            width: 0%;
-          }
-        }
-      `}</style>
     </div>
   );
 }

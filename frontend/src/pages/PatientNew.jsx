@@ -9,6 +9,7 @@ import { getDoctors } from "../services/scheduleService";
 import { getAvailability, createAppointment } from "../services/appointmentService";
 import { formatCurrency } from "../utils/currency";
 import { validateEthiopianPhone } from "../utils/phone";
+import { useToast } from "../context/useToast";
 
 const INITIAL_FORM = {
   firstName: "",
@@ -23,6 +24,7 @@ const INITIAL_FORM = {
 };
 
 function PatientNew() {
+  const toast = useToast();
   const navigate = useNavigate();
   const [form, setForm] = useState(INITIAL_FORM);
   const [loading, setLoading] = useState(false);
@@ -110,6 +112,7 @@ function PatientNew() {
       });
       const newPatient = res.data;
       setCreatedPatient(newPatient);
+      toast.success(`Patient ${newPatient.first_name} ${newPatient.last_name} registered successfully.`, 5000);
 
       // If a registration card order was created, popup card payment first
       if (newPatient.registrationOrderId) {
@@ -130,7 +133,9 @@ function PatientNew() {
 
       await openAppointmentOffer();
     } catch (err) {
-      setError(err.message || "Failed to register patient.");
+      const errMsg = err.message || "Failed to register patient.";
+      setError(errMsg);
+      toast.error(errMsg, 5000);
     } finally {
       setLoading(false);
     }
@@ -148,7 +153,9 @@ function PatientNew() {
     setShowCardPayModal(false);
     setCreatedPatient(null);
     setCardPayInfo(null);
-    setError("Patient registration cancelled. Registration card fee payment is required before registering a patient.");
+    const cancelMsg = "Patient registration cancelled. Registration card fee payment is required before registering a patient.";
+    setError(cancelMsg);
+    toast.warning(cancelMsg, 5000);
   }
 
   // Pay registration card fee
@@ -184,10 +191,13 @@ function PatientNew() {
       };
 
       setPaidCardReceiptData(receipt);
+      toast.success(`Registration card payment of ${formatCurrency(cardPayInfo.price)} recorded successfully.`, 5000);
       setShowCardPayModal(false);
       setShowCardReceiptPrompt(true);
     } catch (err) {
-      setCardPayError(err.message || "Payment failed. Please try again.");
+      const errMsg = err.message || "Payment failed. Please try again.";
+      setCardPayError(errMsg);
+      toast.error(errMsg, 5000);
     } finally {
       setCardPayProcessing(false);
     }
@@ -241,8 +251,11 @@ function PatientNew() {
         reason: "General Consultation Intake",
       });
       setAppointmentSuccess(res.data);
+      toast.success(`Appointment booked successfully with Dr. ${activeDoctor?.first_name || ""} for ${selectedSlot.startTime}.`, 5000);
     } catch (err) {
-      setError(err.message || "Failed to book consultation appointment.");
+      const errMsg = err.message || "Failed to book consultation appointment.";
+      setError(errMsg);
+      toast.error(errMsg, 5000);
     } finally {
       setBookingAppointment(false);
     }

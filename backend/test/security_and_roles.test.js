@@ -465,7 +465,7 @@ test("Security, Authentication, Referral Chat & Transaction Access Suite", async
     );
     const doc3StaffId = doc3Res.staffId;
 
-    const patientRes = await pool.query("SELECT id FROM patients LIMIT 1");
+    const patientRes = await pool.query("SELECT id FROM patients WHERE is_active = TRUE LIMIT 1");
     let patientId = patientRes.rows[0]?.id;
     if (!patientId) {
       const pat = await pool.query(
