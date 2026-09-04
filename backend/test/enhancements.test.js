@@ -10,6 +10,8 @@ const authService = require("../src/services/auth.service.js");
 const patientService = require("../src/services/patient.service.js");
 const scheduleService = require("../src/services/schedule.service.js");
 const billingService = require("../src/services/billing.service.js");
+const staffService = require("../src/services/staff.service.js");
+const pool = require("../src/config/database");
 const { ensureTestUsers } = require("./helpers/setup-test-users");
 
 test("Ethiopian Hospital Enhancements & Security Test Suite", async (t) => {
@@ -213,6 +215,54 @@ test("Ethiopian Hospital Enhancements & Security Test Suite", async (t) => {
 
     const userCheck = await pool.query("SELECT id FROM users WHERE id = $1", [userId]);
     assert.equal(userCheck.rows.length, 0);
+  });
+
+  await t.test("9. Validator: Email Domain & Address Deliverability Verification", async () => {
+    const { verifyEmailDomainDeliverability } = require("../src/validators/index.js");
+
+    // Local / Test domains are valid in environment
+    const testDomainRes = await verifyEmailDomainDeliverability("staff@hospital.local");
+    assert.equal(testDomainRes.valid, true);
+
+    // Common valid public domain
+    const gmailRes = await verifyEmailDomainDeliverability("doctor@gmail.com");
+    assert.equal(gmailRes.valid, true);
+
+    // Non-existent invalid domain must fail address verification
+    const invalidRes = await verifyEmailDomainDeliverability("doctor@nonexistentdomain99887766554433.invalid");
+    assert.equal(invalidRes.valid, false);
+    assert.equal(invalidRes.reason, "ADDRESS_NOT_FOUND");
+  });
+
+  await t.test("10. Staff Service: Restrict Staff Creation if Email Address is Not Found or Undeliverable", async () => {
+    const uniqueSuffix = Date.now() + Math.floor(Math.random() * 1000);
+
+    // Attempt creation with non-existent domain / address not found
+    await assert.rejects(
+      async () => {
+        await staffService.createStaff({
+          firstName: "Undeliverable",
+          lastName: "Staff",
+          email: `undeliverable_${uniqueSuffix}@nonexistentdomain99887766554433.invalid`,
+          phone: "09" + String(uniqueSuffix).slice(-8),
+          department: "General Medicine",
+          role: "DOCTOR",
+          username: `undeliv_${uniqueSuffix}`,
+          password: "Hospital@12345",
+        });
+      },
+      (err) => {
+        assert.ok(err.message.includes("EMAIL_ADDRESS_NOT_FOUND"), `Expected EMAIL_ADDRESS_NOT_FOUND but got ${err.message}`);
+        return true;
+      }
+    );
+
+    // Verify no orphaned records were persisted in DB
+    const orphanedStaff = await pool.query("SELECT id FROM staff WHERE email LIKE $1", [`undeliverable_${uniqueSuffix}%`]);
+    assert.equal(orphanedStaff.rows.length, 0);
+
+    const orphanedUser = await pool.query("SELECT id FROM users WHERE username = $1", [`undeliv_${uniqueSuffix}`]);
+    assert.equal(orphanedUser.rows.length, 0);
   });
 });
 

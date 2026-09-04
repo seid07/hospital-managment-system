@@ -5,10 +5,12 @@ import StatusBadge from "../components/common/StatusBadge";
 import { getDoctorQueue } from "../services/encounterService";
 import { queueService } from "../services/queueService";
 import { useAuth } from "../context/useAuth";
+import { useCalendar } from "../context/useCalendar";
 
 function DoctorQueue() {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { formatDate } = useCalendar();
   const doctorId = user?.staff_id;
 
   const [clinicalQueue, setClinicalQueue] = useState([]);
@@ -166,7 +168,7 @@ function DoctorQueue() {
                       </Link>
                       <br />
                       <small style={{ color: "var(--text-muted)", fontFamily: "monospace" }}>
-                        {item.patient_number} | {item.patient_gender}, DOB: {item.patient_dob ? new Date(item.patient_dob).toLocaleDateString() : ""}
+                        {item.patient_number} | {item.patient_gender}, DOB: {item.patient_dob ? formatDate(item.patient_dob) : ""}
                       </small>
                     </td>
                     <td>
@@ -227,7 +229,7 @@ function DoctorQueue() {
       <section className="card">
         <div className="card-header">
           <h2>Scheduled Appointments Today ({appointmentQueue.length})</h2>
-          <p>Booked doctor schedule slots for {today}.</p>
+          <p>Booked doctor schedule slots for {formatDate(today)}.</p>
         </div>
 
         {appointmentQueue.length === 0 ? (

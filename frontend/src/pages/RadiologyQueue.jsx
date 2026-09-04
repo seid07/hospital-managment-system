@@ -5,6 +5,7 @@ import StatusBadge from "../components/common/StatusBadge";
 import { radiologyService } from "../services/radiologyService";
 import { queueService } from "../services/queueService";
 import { useAuth } from "../context/useAuth";
+import { useCalendar } from "../context/useCalendar";
 import {
   Clock,
   Activity,
@@ -20,6 +21,7 @@ import {
 
 export default function RadiologyQueue() {
   const { user } = useAuth();
+  const { formatDate } = useCalendar();
   const [metrics, setMetrics] = useState(null);
   const [queue, setQueue] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -633,7 +635,7 @@ export default function RadiologyQueue() {
                 <div key={hist.id} style={{ padding: "10px", border: "1px solid #e2e8f0", borderRadius: "8px", background: "#f8fafc", fontSize: "12px" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 700 }}>
                     <span>{hist.service_name || hist.modality}</span>
-                    <span style={{ color: "#64748b" }}>{new Date(hist.reported_at || hist.created_at).toLocaleDateString()}</span>
+                    <span style={{ color: "#64748b" }}>{formatDate(hist.reported_at || hist.created_at)}</span>
                   </div>
                   {hist.impression && (
                     <div style={{ marginTop: "4px", color: "#1e293b" }}>

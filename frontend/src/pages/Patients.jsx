@@ -4,11 +4,13 @@ import AppShell from "../components/layout/AppShell";
 import Pagination from "../components/common/Pagination";
 import Modal from "../components/common/Modal";
 import { useAuth } from "../context/useAuth";
+import { useCalendar } from "../context/useCalendar";
 import { useDebounce } from "../hooks/useDebounce";
 import { getPatients, deletePatient } from "../services/patientService";
 
 function Patients() {
   const navigate = useNavigate();
+  const { formatDate } = useCalendar();
   const [searchParams, setSearchParams] = useSearchParams();
   const registeredFilter = searchParams.get("registered") || searchParams.get("date") || "";
 
@@ -215,7 +217,7 @@ function Patients() {
                         {displayAge} • {p.gender}
                       </td>
                       <td style={{ fontFamily: "monospace" }}>{p.phone}</td>
-                      <td>{new Date(p.created_at).toLocaleDateString()}</td>
+                      <td>{formatDate(p.created_at)}</td>
                       <td>
                         <div style={{ display: "flex", gap: "6px" }}>
                           <button

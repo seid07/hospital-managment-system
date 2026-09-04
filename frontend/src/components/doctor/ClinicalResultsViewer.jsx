@@ -1,8 +1,10 @@
 import { useState, useEffect } from "react";
 import serviceOrderService from "../../services/serviceOrderService";
 import StatusBadge from "../common/StatusBadge";
+import { useCalendar } from "../../context/useCalendar";
 
 export default function ClinicalResultsViewer({ patientId }) {
+  const { formatDateTime } = useCalendar();
   const [activeTab, setActiveTab] = useState("ALL");
   const [results, setResults] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -264,7 +266,7 @@ export default function ClinicalResultsViewer({ patientId }) {
                   )}
                   <div className="text-[10px] text-gray-400">
                     Performed by: {proc.performed_by_username || "Clinical Staff"} •{" "}
-                    {proc.performed_at ? new Date(proc.performed_at).toLocaleString() : ""}
+                    {proc.performed_at ? formatDateTime(proc.performed_at) : ""}
                   </div>
                 </div>
               ))}
@@ -325,7 +327,7 @@ export default function ClinicalResultsViewer({ patientId }) {
                   <div className="text-[10px] text-gray-400 pt-1 border-t">
                     Surgeon / Performed by: {surg.performed_by_username || "Surgical Team"} •{" "}
                     Destination: {surg.recovery_destination || "Ward"} •{" "}
-                    {surg.completed_at ? new Date(surg.completed_at).toLocaleString() : ""}
+                    {surg.completed_at ? formatDateTime(surg.completed_at) : ""}
                   </div>
                 </div>
               ))}
@@ -349,7 +351,7 @@ export default function ClinicalResultsViewer({ patientId }) {
                     <span className="font-semibold text-indigo-700 uppercase">
                       [{note.category}]
                     </span>
-                    <span>{new Date(note.created_at).toLocaleString()}</span>
+                    <span>{formatDateTime(note.created_at)}</span>
                   </div>
                   <p className="text-gray-800">{note.note}</p>
                   <div className="text-[10px] text-gray-400">

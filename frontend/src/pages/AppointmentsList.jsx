@@ -13,8 +13,10 @@ import {
 import { getDoctors } from "../services/scheduleService";
 import { useAuth } from "../context/useAuth";
 import { useDebounce } from "../hooks/useDebounce";
+import { useCalendar } from "../context/useCalendar";
 
 function AppointmentsList() {
+  const { formatDate } = useCalendar();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { user } = useAuth();
@@ -350,7 +352,7 @@ function AppointmentsList() {
                       </td>
                     )}
                     <td>
-                      <strong>{a.appointment_date}</strong>
+                      <strong>{formatDate(a.appointment_date)}</strong>
                       <br />
                       <span style={{ fontWeight: 600, color: "var(--primary)", fontSize: "12px" }}>
                         🕒 {a.start_time?.slice(0, 5)} – {a.end_time?.slice(0, 5)}
@@ -483,7 +485,7 @@ function AppointmentsList() {
             <div style={{ background: "var(--surface-muted)", padding: "12px", borderRadius: "var(--radius-sm)", marginBottom: "16px", fontSize: "13px" }}>
               <strong>Patient:</strong> {rescheduleTarget.patient_first_name} {rescheduleTarget.patient_last_name} ({rescheduleTarget.patient_number})<br />
               <strong>Doctor:</strong> Dr. {rescheduleTarget.doctor_first_name} {rescheduleTarget.doctor_last_name}<br />
-              <strong>Current Slot:</strong> {rescheduleTarget.appointment_date} at {rescheduleTarget.start_time} - {rescheduleTarget.end_time}
+              <strong>Current Slot:</strong> {formatDate(rescheduleTarget.appointment_date)} at {rescheduleTarget.start_time} - {rescheduleTarget.end_time}
             </div>
 
             <div className="form-field">

@@ -15,6 +15,7 @@ import {
   resendStaffCredentials,
 } from "../services/staffService";
 import { createSchedule } from "../services/scheduleService";
+import { useCalendar } from "../context/useCalendar";
 
 function useDebounce(value, delay) {
   const [debouncedValue, setDebouncedValue] = useState(value);
@@ -120,6 +121,7 @@ const INITIAL_FORM = {
 
 function AdminStaff() {
   const navigate = useNavigate();
+  const { formatDate } = useCalendar();
   const [staff, setStaff] = useState([]);
   const [roles, setRoles] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -280,14 +282,20 @@ function AdminStaff() {
               checking: false,
               available: true,
               reason: null,
-              message: "✓ Valid email format",
+              message: "✓ Valid & deliverable email address",
             });
           } else {
+            let msg = "✕ Enter a valid email address";
+            if (res.reason === "DUPLICATE") {
+              msg = "✕ Email already registered";
+            } else if (res.reason === "ADDRESS_NOT_FOUND") {
+              msg = res.message ? `✕ ${res.message}` : "✕ Email domain/address not found";
+            }
             setEmailValidation({
               checking: false,
               available: false,
               reason: res.reason,
-              message: res.reason === "DUPLICATE" ? "✕ Email already registered" : "✕ Enter a valid email address",
+              message: msg,
             });
           }
         }
@@ -406,8 +414,13 @@ function AdminStaff() {
       return;
     }
 
+    if (emailValidation.checking) {
+      setError("Please wait while email deliverability is being verified...");
+      return;
+    }
+
     if (emailValidation.available === false) {
-      setError(emailValidation.message || "Please provide a valid and available email address.");
+      setError(emailValidation.message || "Please provide a valid, deliverable email address.");
       return;
     }
 
@@ -1144,7 +1157,7 @@ function AdminStaff() {
                             {member.deactivation_reason || "On Leave"}
                             <br />
                             <small style={{ color: "var(--text-muted)" }}>
-                              Until {new Date(member.deactivation_end_date).toLocaleDateString()}
+                              Until {formatDate(member.deactivation_end_date)}
                             </small>
                           </div>
                         )}
@@ -1476,7 +1489,7 @@ function AdminStaff() {
                       <tbody>
                         {scheduledAppointments.map((apt) => (
                           <tr key={apt.id}>
-                            <td>{new Date(apt.appointment_date).toLocaleDateString()}</td>
+                            <td>{formatDate(apt.appointment_date)}</td>
                             <td>{apt.start_time} - {apt.end_time}</td>
                             <td>{apt.patient_first_name} {apt.patient_last_name}</td>
                             <td>{apt.patient_phone}</td>

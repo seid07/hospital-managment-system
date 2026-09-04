@@ -14,6 +14,7 @@ import { getDoctors } from "../services/scheduleService";
 import { createReferral } from "../services/referralService";
 import { useAuth } from "../context/useAuth";
 import { useToast } from "../context/useToast";
+import { useCalendar } from "../context/useCalendar";
 import { formatCurrency } from "../utils/currency";
 import {
   LaboratoryOrderModal,
@@ -26,6 +27,7 @@ import {
 
 export default function ClinicalEncounter() {
   const toast = useToast();
+  const { formatDate, formatDateTime } = useCalendar();
   const { id } = useParams();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -1082,7 +1084,7 @@ export default function ClinicalEncounter() {
 
                     <div className="text-[11px] text-gray-400 pt-1 border-t flex justify-between">
                       <span>Performed by: {proc.performed_by_username || "Procedure Nurse/Clinician"}</span>
-                      <span>{proc.performed_at ? new Date(proc.performed_at).toLocaleString() : "Execution Pending"}</span>
+                      <span>{proc.performed_at ? formatDateTime(proc.performed_at) : "Execution Pending"}</span>
                     </div>
                   </div>
                 ))}
@@ -1137,7 +1139,7 @@ export default function ClinicalEncounter() {
 
                     <div className="text-[11px] text-gray-400 pt-1.5 border-t flex justify-between">
                       <span>Surgeon / Team: {surg.performed_by_username || "Surgical Specialist"} • Dest: {surg.recovery_destination || "Ward"}</span>
-                      <span>{surg.completed_at ? new Date(surg.completed_at).toLocaleString() : "Scheduled / In Theatre"}</span>
+                      <span>{surg.completed_at ? formatDateTime(surg.completed_at) : "Scheduled / In Theatre"}</span>
                     </div>
                   </div>
                 ))}
@@ -1172,7 +1174,7 @@ export default function ClinicalEncounter() {
                       <span className="font-semibold">Admission Reason:</span> {adm.admission_reason || "Inpatient Care"}
                       {adm.admission_date && (
                         <div className="text-gray-500 mt-1">
-                          Admitted on: <strong>{new Date(adm.admission_date).toLocaleString()}</strong>
+                          Admitted on: <strong>{formatDateTime(adm.admission_date)}</strong>
                         </div>
                       )}
                     </div>
@@ -1215,7 +1217,7 @@ export default function ClinicalEncounter() {
                     <div className="flex items-center justify-between">
                       <div>
                         <strong className="text-sm text-gray-900">
-                          Consultation on {new Date(hist.visit_date).toLocaleDateString()}
+                          Consultation on {formatDate(hist.visit_date)}
                         </strong>
                         <span className="text-gray-500 ml-2">by Dr. {hist.doctor_first_name} {hist.doctor_last_name}</span>
                       </div>

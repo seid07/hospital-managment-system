@@ -14,9 +14,11 @@ import {
 import { post } from "../services/api";
 import { useAuth } from "../context/useAuth";
 import { useDebounce } from "../hooks/useDebounce";
+import { useCalendar } from "../context/useCalendar";
 
 function LaboratoryOrders() {
   const { user } = useAuth();
+  const { formatDate, formatDateTime } = useCalendar();
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -253,7 +255,7 @@ function LaboratoryOrders() {
                       <strong>{o.order_number}</strong>
                       <br />
                       <small style={{ color: "var(--text-muted)" }}>
-                        {new Date(o.created_at).toLocaleDateString()}
+                        {formatDate(o.created_at)}
                       </small>
                     </td>
                     <td>
@@ -432,7 +434,7 @@ function LaboratoryOrders() {
               <div><strong>Ordered By:</strong> Dr. {resultTarget.doctor_first_name} {resultTarget.doctor_last_name}</div>
               <div><strong>Standard Reference:</strong> {resultTarget.standard_reference_range || "N/A"} {resultTarget.standard_unit || ""}</div>
               {resultTarget.sample_collected_at && (
-                <div><strong>Sample Collected:</strong> {new Date(resultTarget.sample_collected_at).toLocaleTimeString()}</div>
+                <div><strong>Sample Collected:</strong> {formatDateTime(resultTarget.sample_collected_at)}</div>
               )}
             </div>
 
@@ -524,23 +526,23 @@ function LaboratoryOrders() {
             <div style={{ display: "flex", flexDirection: "column", gap: "12px", marginBottom: "20px" }}>
               <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 12px", background: "#f8fafc", borderRadius: "6px" }}>
                 <span>1. Order Placed</span>
-                <strong>{detailOrder.created_at ? new Date(detailOrder.created_at).toLocaleString() : "—"}</strong>
+                <strong>{detailOrder.created_at ? formatDateTime(detailOrder.created_at) : "—"}</strong>
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 12px", background: "#f8fafc", borderRadius: "6px" }}>
                 <span>2. Specimen Collected</span>
-                <strong>{detailOrder.sample_collected_at || detailOrder.specimen_collected_at ? new Date(detailOrder.sample_collected_at || detailOrder.specimen_collected_at).toLocaleString() : "Pending"}</strong>
+                <strong>{detailOrder.sample_collected_at || detailOrder.specimen_collected_at ? formatDateTime(detailOrder.sample_collected_at || detailOrder.specimen_collected_at) : "Pending"}</strong>
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 12px", background: "#f8fafc", borderRadius: "6px" }}>
                 <span>3. Processing Started</span>
-                <strong>{detailOrder.processing_started_at ? new Date(detailOrder.processing_started_at).toLocaleString() : "—"}</strong>
+                <strong>{detailOrder.processing_started_at ? formatDateTime(detailOrder.processing_started_at) : "—"}</strong>
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 12px", background: "#f8fafc", borderRadius: "6px" }}>
                 <span>4. Result Completed</span>
-                <strong>{detailOrder.result_completed_at || detailOrder.resulted_at ? new Date(detailOrder.result_completed_at || detailOrder.resulted_at).toLocaleString() : "Pending"}</strong>
+                <strong>{detailOrder.result_completed_at || detailOrder.resulted_at ? formatDateTime(detailOrder.result_completed_at || detailOrder.resulted_at) : "Pending"}</strong>
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 12px", background: "#f8fafc", borderRadius: "6px" }}>
                 <span>5. Verified & Released</span>
-                <strong>{detailOrder.result_verified_at || detailOrder.verified_at ? new Date(detailOrder.result_verified_at || detailOrder.verified_at).toLocaleString() : "Pending"}</strong>
+                <strong>{detailOrder.result_verified_at || detailOrder.verified_at ? formatDateTime(detailOrder.result_verified_at || detailOrder.verified_at) : "Pending"}</strong>
               </div>
             </div>
 
@@ -567,7 +569,7 @@ function LaboratoryOrders() {
             title="OFFICIAL LABORATORY REPORT"
             subtitle="Department of Pathology & Clinical Diagnostics"
             documentNumber={printTarget.order_number}
-            date={new Date(printTarget.verified_at || printTarget.resulted_at || new Date()).toLocaleDateString()}
+            date={formatDate(printTarget.verified_at || printTarget.resulted_at || new Date())}
           >
             <div style={{ borderBottom: "1px solid #eee", paddingBottom: "12px", marginBottom: "16px" }}>
               <table style={{ width: "100%", fontSize: "13px" }}>

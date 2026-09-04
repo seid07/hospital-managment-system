@@ -8,6 +8,7 @@ import { getInventoryTransactions } from "../services/api";
 import { useAuth } from "../context/useAuth";
 import { formatCurrency } from "../utils/currency";
 import { useDebounce } from "../hooks/useDebounce";
+import { useCalendar } from "../context/useCalendar";
 
 const INITIAL_MED_FORM = {
   name: "",
@@ -21,6 +22,7 @@ const INITIAL_MED_FORM = {
 
 function PharmacyInventory() {
   const { user } = useAuth();
+  const { formatDateTime } = useCalendar();
   const [activeTab, setActiveTab] = useState("CATALOG"); // 'CATALOG', 'LOW_STOCK', 'TRANSACTIONS'
 
   // Medication Catalog State
@@ -377,7 +379,7 @@ function PharmacyInventory() {
                   {transactions.map((tx) => (
                     <tr key={tx.id}>
                       <td style={{ fontSize: "12px", color: "var(--text-muted)" }}>
-                        {new Date(tx.created_at).toLocaleString()}
+                        {formatDateTime(tx.created_at)}
                       </td>
                       <td>
                         <strong>{tx.medicine_name}</strong>

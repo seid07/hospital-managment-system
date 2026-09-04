@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
 import { useAuth } from "../context/useAuth";
+import { useCalendar } from "../context/useCalendar";
 import AppShell from "../components/layout/AppShell";
 import StatCard from "../components/common/StatCard";
 import StatusBadge from "../components/common/StatusBadge";
@@ -18,6 +19,7 @@ function formatRole(role) {
 
 function Dashboard() {
   const { user } = useAuth();
+  const { formatDateTime } = useCalendar();
   const role = user?.role;
   const navigation = getNavigation(role);
 
@@ -468,7 +470,7 @@ function Dashboard() {
                       </td>
                       <td>{log.entity || "—"}</td>
                       <td>{log.username || "System"}</td>
-                      <td>{new Date(log.created_at).toLocaleString()}</td>
+                      <td>{formatDateTime(log.created_at)}</td>
                     </tr>
                   ))}
                 </tbody>

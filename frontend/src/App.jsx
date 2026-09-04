@@ -32,15 +32,17 @@ import AdminAuditLogs from "./pages/AdminAuditLogs";
 import Reports from "./pages/Reports";
 import ReferralQueue from "./pages/ReferralQueue";
 import { ToastProvider } from "./context/ToastContext";
+import { CalendarProvider } from "./context/CalendarContext";
 
 function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <ToastProvider>
-          <Routes>
-            <Route path="/login" element={<Login />} />
-            <Route path="/reset-password" element={<ResetPassword />} />
+        <CalendarProvider>
+          <ToastProvider>
+            <Routes>
+              <Route path="/login" element={<Login />} />
+              <Route path="/reset-password" element={<ResetPassword />} />
 
 
           <Route element={<ProtectedRoute />}>
@@ -106,6 +108,7 @@ function App() {
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
         </ToastProvider>
+        </CalendarProvider>
       </AuthProvider>
     </BrowserRouter>
   );

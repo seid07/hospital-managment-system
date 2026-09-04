@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import AppShell from "../components/layout/AppShell";
 import Modal from "../components/common/Modal";
 import { useAuth } from "../context/useAuth";
+import { useCalendar } from "../context/useCalendar";
 import {
   getReferralQueue,
   getSentReferrals,
@@ -63,6 +64,7 @@ function StatusBadgeItem({ status }) {
 }
 
 export default function ReferralQueue() {
+  const { formatDate, formatDateTime } = useCalendar();
   const [activeTab, setActiveTab] = useState("inbox"); // 'inbox' | 'sent' | 'new'
 
   // Queue state (Inbox)
@@ -573,7 +575,7 @@ export default function ReferralQueue() {
                           <StatusBadgeItem status={referral.status} />
                         </div>
                         <div style={{ fontSize: "13px", color: "var(--text-secondary)" }}>
-                          Referred by <strong>Dr. {referral.referring_first_name} {referral.referring_last_name}</strong> ({referral.referring_specialty || "General Medicine"}) • {new Date(referral.created_at).toLocaleString()}
+                          Referred by <strong>Dr. {referral.referring_first_name} {referral.referring_last_name}</strong> ({referral.referring_specialty || "General Medicine"}) • {formatDateTime(referral.created_at)}
                         </div>
                       </div>
 
@@ -743,7 +745,7 @@ export default function ReferralQueue() {
                           <StatusBadgeItem status={referral.status} />
                         </div>
                         <div style={{ fontSize: "13px", color: "var(--text-secondary)" }}>
-                          Referred to <strong>Dr. {referral.receiving_first_name} {referral.receiving_last_name}</strong> ({referral.receiving_specialty || "Specialist"}) • {new Date(referral.created_at).toLocaleString()}
+                          Referred to <strong>Dr. {referral.receiving_first_name} {referral.receiving_last_name}</strong> ({referral.receiving_specialty || "Specialist"}) • {formatDateTime(referral.created_at)}
                         </div>
                       </div>
 
@@ -1173,11 +1175,7 @@ export default function ReferralQueue() {
                   !prevMsg ||
                   new Date(m.created_at).toDateString() !== new Date(prevMsg.created_at).toDateString();
 
-                const msgDateStr = new Date(m.created_at).toLocaleDateString(undefined, {
-                  weekday: "short",
-                  month: "short",
-                  day: "numeric",
-                });
+                const msgDateStr = formatDate(m.created_at);
 
                 return (
                   <div key={m.id || idx} style={{ display: "flex", flexDirection: "column" }}>

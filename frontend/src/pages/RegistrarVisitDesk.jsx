@@ -15,8 +15,10 @@ import { getAvailability, createAppointment } from "../services/appointmentServi
 import { formatCurrency } from "../utils/currency";
 import { validateEthiopianPhone } from "../utils/phone";
 import { useDebounce } from "../hooks/useDebounce";
+import { useCalendar } from "../context/useCalendar";
 
 export default function RegistrarVisitDesk() {
+  const { formatDate, formatDateTime } = useCalendar();
   const [searchParams] = useSearchParams();
   const tabFromUrl = searchParams.get("tab");
 
@@ -1121,7 +1123,7 @@ export default function RegistrarVisitDesk() {
                             {grp.patient_phone && <span>Phone: <strong>{grp.patient_phone}</strong> • </span>}
                             Last Ordered:{" "}
                             <span style={{ color: "var(--primary-dark)", fontWeight: 600 }}>
-                              {new Date(grp.latest_order_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} ({new Date(grp.latest_order_at).toLocaleDateString()})
+                              {formatDateTime(grp.latest_order_at)}
                             </span>
                           </div>
                         </div>
@@ -1343,7 +1345,7 @@ export default function RegistrarVisitDesk() {
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", color: "var(--text-muted)" }}>
                 <div><strong>Ordering Doctor:</strong> Dr. {selectedPatientForPay.doctor_first_name} {selectedPatientForPay.doctor_last_name} ({selectedPatientForPay.department_name})</div>
-                <div><strong>Date:</strong> {new Date(selectedPatientForPay.created_at).toLocaleDateString()}</div>
+                <div><strong>Date:</strong> {formatDate(selectedPatientForPay.created_at)}</div>
               </div>
             </div>
 

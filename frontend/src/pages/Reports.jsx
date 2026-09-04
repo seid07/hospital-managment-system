@@ -5,6 +5,7 @@ import PrintableDocument from "../components/common/PrintableDocument";
 import Modal from "../components/common/Modal";
 import { getAnalyticsReport } from "../services/reportService";
 import { formatCurrency } from "../utils/currency";
+import { useCalendar } from "../context/useCalendar";
 
 function getInitialStartDate() {
   const d = new Date();
@@ -17,6 +18,7 @@ function getInitialEndDate() {
 }
 
 function Reports() {
+  const { formatDate, todayFormatted } = useCalendar();
   const [reportType, setReportType] = useState("APPOINTMENTS");
   const [startDate, setStartDate] = useState(getInitialStartDate);
   const [endDate, setEndDate] = useState(getInitialEndDate);
@@ -309,12 +311,12 @@ function Reports() {
       <Modal isOpen={showPrintModal} onClose={() => setShowPrintModal(false)} title="Print Hospital Operations Report" maxWidth="800px">
         <PrintableDocument
           title={`HOSPITAL OPERATIONS & ${reportType} REPORT`}
-          subtitle={`Reporting Period: ${startDate} to ${endDate}`}
-          date={new Date().toLocaleDateString()}
+          subtitle={`Reporting Period: ${formatDate(startDate)} to ${formatDate(endDate)}`}
+          date={todayFormatted}
         >
           <div style={{ fontSize: "13px" }}>
             <p>
-              This report summarizes institutional activity across departments for the selected date range ({startDate} to {endDate}).
+              This report summarizes institutional activity across departments for the selected date range ({formatDate(startDate)} to {formatDate(endDate)}).
             </p>
 
             {reportType === "APPOINTMENTS" && data?.doctorUtilization && (

@@ -173,6 +173,14 @@ async function createStaff(req, res) {
       });
     }
 
+    if (error.message?.startsWith("EMAIL_ADDRESS_NOT_FOUND")) {
+      return res.status(400).json({
+        success: false,
+        code: "EMAIL_ADDRESS_NOT_FOUND",
+        message: error.message.replace("EMAIL_ADDRESS_NOT_FOUND: ", ""),
+      });
+    }
+
     if (error.message?.startsWith("EMAIL_DELIVERY_FAILED")) {
       return res.status(400).json({
         success: false,

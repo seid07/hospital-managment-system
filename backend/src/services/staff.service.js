@@ -2,7 +2,13 @@ const crypto = require("crypto");
 const bcrypt = require("bcrypt");
 const pool = require("../config/database");
 const { recordAuditLog } = require("../utils/audit");
-const { validatePasswordStrength, validateEthiopianPhone, normalizeEthiopianPhone, validateEmail } = require("../validators");
+const {
+  validatePasswordStrength,
+  validateEthiopianPhone,
+  normalizeEthiopianPhone,
+  validateEmail,
+  verifyEmailDomainDeliverability,
+} = require("../validators");
 const emailService = require("./email.service");
 
 async function getRoles() {
@@ -16,7 +22,7 @@ async function getRoles() {
 }
 
 /**
- * Check email format and duplicate status in staff records.
+ * Check email format, domain deliverability, and duplicate status in staff records.
  */
 async function checkEmailAvailability(email, excludeStaffId = null) {
   if (!email || typeof email !== "string") {
@@ -33,6 +39,16 @@ async function checkEmailAvailability(email, excludeStaffId = null) {
       available: false,
       reason: "INVALID_FORMAT",
       message: "Enter a valid email address",
+    };
+  }
+
+  // Verify domain DNS / MX deliverability
+  const domainCheck = await verifyEmailDomainDeliverability(cleanEmail);
+  if (!domainCheck.valid) {
+    return {
+      available: false,
+      reason: "ADDRESS_NOT_FOUND",
+      message: domainCheck.message || "Email address domain not found",
     };
   }
 
@@ -56,7 +72,7 @@ async function checkEmailAvailability(email, excludeStaffId = null) {
 
   return {
     available: true,
-    message: "Valid email format",
+    message: "Valid email format and deliverable domain",
   };
 }
 
@@ -163,6 +179,12 @@ async function createStaff(data, createdByUserId) {
   const cleanEmail = data.email.trim().toLowerCase();
   if (!validateEmail(cleanEmail)) {
     throw new Error("INVALID_EMAIL_FORMAT: Enter a valid email address.");
+  }
+
+  // Enforce domain existence / deliverability before staff account creation
+  const domainCheck = await verifyEmailDomainDeliverability(cleanEmail);
+  if (!domainCheck.valid) {
+    throw new Error(`EMAIL_ADDRESS_NOT_FOUND: ${domainCheck.message || "The email address domain could not be found or cannot receive emails. Staff creation restricted."}`);
   }
 
   let phone = data.phone.trim();
@@ -286,20 +308,28 @@ async function createStaff(data, createdByUserId) {
       temporaryPassword: passwordToUse,
     });
 
-    if (
-      !emailResult.sent &&
-      emailResult.method === "SMTP" &&
-      process.env.NODE_ENV !== "test" &&
-      !cleanEmail.endsWith(".local") &&
-      !cleanEmail.endsWith(".test") &&
-      !cleanEmail.endsWith(".example.com")
-    ) {
-      // Rollback staff and user creation if live SMTP rejects delivery
+    if (!emailResult.sent) {
+      // Rollback staff and user creation if email delivery fails or address not found
       await pool.query("DELETE FROM users WHERE staff_id = $1", [staffId]);
       await pool.query("DELETE FROM staff WHERE id = $1", [staffId]);
-      throw new Error("EMAIL_DELIVERY_FAILED: Unable to deliver staff credentials to this email address. Please verify the email address and try again.");
-    }
 
+      const errText = (emailResult.error || "").toLowerCase();
+      const isAddressNotFound =
+        errText.includes("550") ||
+        errText.includes("not found") ||
+        errText.includes("unknown") ||
+        errText.includes("no mailbox") ||
+        errText.includes("recipient") ||
+        errText.includes("invalid address") ||
+        errText.includes("does not exist") ||
+        errText.includes("mailbox unavailable");
+
+      if (isAddressNotFound) {
+        throw new Error(`EMAIL_ADDRESS_NOT_FOUND: Recipient email address not found or mailbox does not exist (${emailResult.error || "550 Address Not Found"}). Staff creation restricted.`);
+      }
+
+      throw new Error(`EMAIL_DELIVERY_FAILED: Staff credentials could not be delivered to ${cleanEmail} (${emailResult.error || "Delivery failed"}). Staff creation restricted.`);
+    }
 
     return {
       staffId,

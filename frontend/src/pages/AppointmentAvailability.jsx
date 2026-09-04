@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import AppShell from "../components/layout/AppShell";
 import PatientSearch from "../components/appointments/PatientSearch";
 import PrintableDocument from "../components/common/PrintableDocument";
+import { useCalendar } from "../context/useCalendar";
 
 import {
   getDoctors,
@@ -13,6 +14,7 @@ import {
 } from "../services/appointmentService";
 
 function AppointmentAvailability() {
+  const { formatDate, todayFormatted } = useCalendar();
   const [mode, setMode] = useState("BY_DOCTOR"); // "BY_DOCTOR" (Option B) or "BY_DATE" (Option A)
   const [doctors, setDoctors] = useState([]);
   const [doctorsLoading, setDoctorsLoading] = useState(true);
@@ -273,7 +275,7 @@ function AppointmentAvailability() {
             title="APPOINTMENT CONFIRMATION SLIP"
             subtitle="Hospital Outpatient Department"
             documentNumber={success.appointment_number}
-            date={new Date().toLocaleDateString()}
+            date={todayFormatted}
           >
             <table style={{ width: "100%", fontSize: "14px", borderSpacing: "0 8px" }}>
               <tbody>
@@ -287,7 +289,7 @@ function AppointmentAvailability() {
                 </tr>
                 <tr>
                   <td><strong>Appointment Date:</strong></td>
-                  <td><strong>{success.date}</strong></td>
+                  <td><strong>{formatDate(success.date)}</strong></td>
                 </tr>
                 <tr>
                   <td><strong>Time Slot:</strong></td>
@@ -418,7 +420,7 @@ function AppointmentAvailability() {
                                   }}
                                 >
                                   <div style={{ fontWeight: 700, fontSize: "13px", color: isActive ? "var(--primary-dark)" : "var(--text)" }}>
-                                    {dayGroup.formattedDate.split(",")[0]} ({dayGroup.date})
+                                    {formatDate(dayGroup.date)}
                                   </div>
                                   <div style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "4px" }}>
                                     {availableSlotCount} available slot{availableSlotCount !== 1 ? "s" : ""}
@@ -439,7 +441,7 @@ function AppointmentAvailability() {
                             }}>
                               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
                                 <strong style={{ fontSize: "13px", color: "var(--primary-dark)" }}>
-                                  Available Time Slots on {activeGroup.formattedDate} ({activeGroup.date}):
+                                  Available Time Slots on {formatDate(activeGroup.date)}:
                                 </strong>
                                 <span style={{ fontSize: "11px", color: "var(--text-secondary)" }}>
                                   Click a time slot to select
@@ -531,11 +533,11 @@ function AppointmentAvailability() {
                 {selectedDoctorId && selectedDate && !availabilityLoading && (
                   <div style={{ marginTop: "16px" }}>
                     <h3 style={{ fontSize: "14px", fontWeight: 700, marginBottom: "10px" }}>
-                      Available Times for Dr. {selectedDoctor?.first_name} {selectedDoctor?.last_name} on {selectedDate}:
+                      Available Times for Dr. {selectedDoctor?.first_name} {selectedDoctor?.last_name} on {formatDate(selectedDate)}:
                     </h3>
 
                     {slots.length === 0 ? (
-                      <div className="empty-state">No slots available for this doctor on {selectedDate}.</div>
+                      <div className="empty-state">No slots available for this doctor on {formatDate(selectedDate)}.</div>
                     ) : (
                       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))", gap: "8px" }}>
                         {slots.map((slot) => {
@@ -609,7 +611,7 @@ function AppointmentAvailability() {
                 <p style={{ margin: 0, fontSize: "14px" }}>
                   Selected Consultation:{" "}
                   <strong style={{ color: "var(--primary-dark)" }}>
-                    {selectedDate} ({selectedSlotTimes.startTime} – {selectedSlotTimes.endTime})
+                    {formatDate(selectedDate)} ({selectedSlotTimes.startTime} – {selectedSlotTimes.endTime})
                   </strong>{" "}
                   with Dr. {selectedDoctor?.first_name} {selectedDoctor?.last_name}
                 </p>

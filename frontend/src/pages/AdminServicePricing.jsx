@@ -3,8 +3,10 @@ import AppShell from "../components/layout/AppShell";
 import Modal from "../components/common/Modal";
 import { get, put, patch, getServicePriceHistory } from "../services/api";
 import { useDebounce } from "../hooks/useDebounce";
+import { useCalendar } from "../context/useCalendar";
 
 function AdminServicePricing() {
+  const { formatDate, formatDateTime } = useCalendar();
   const [services, setServices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -226,7 +228,7 @@ function AdminServicePricing() {
                       </span>
                     </td>
                     <td style={{ fontSize: "12px", color: "var(--text-muted)" }}>
-                      {srv.updated_at ? new Date(srv.updated_at).toLocaleDateString() : "—"}
+                      {srv.updated_at ? formatDate(srv.updated_at) : "—"}
                     </td>
                     <td>
                       <div style={{ display: "flex", gap: "6px" }}>
@@ -364,7 +366,7 @@ function AdminServicePricing() {
                   <tbody>
                     {priceHistory.map((h) => (
                       <tr key={h.id}>
-                        <td>{new Date(h.created_at).toLocaleString()}</td>
+                        <td>{formatDateTime(h.created_at)}</td>
                         <td style={{ color: "var(--text-muted)" }}>{parseFloat(h.old_price).toLocaleString()} ETB</td>
                         <td>
                           <strong style={{ color: "#38bdf8" }}>{parseFloat(h.new_price).toLocaleString()} ETB</strong>

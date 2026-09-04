@@ -5,6 +5,7 @@ import StatusBadge from "../components/common/StatusBadge";
 import { wardService } from "../services/wardService";
 import { formatCurrency } from "../utils/currency";
 import { useToast } from "../context/useToast";
+import { useCalendar } from "../context/useCalendar";
 import {
   Bed,
   CheckCircle2,
@@ -19,6 +20,7 @@ import {
 
 export default function WardInpatient() {
   const toast = useToast();
+  const { formatDate } = useCalendar();
   const [metrics, setMetrics] = useState(null);
   const [beds, setBeds] = useState([]);
   const [queue, setQueue] = useState([]);
@@ -690,7 +692,7 @@ export default function WardInpatient() {
                         </div>
                         {bed.admission_date && (
                           <div style={{ fontSize: "10px", color: "#be123c", marginTop: "4px" }}>
-                            Admitted: {new Date(bed.admission_date).toLocaleDateString()}
+                            Admitted: {formatDate(bed.admission_date)}
                           </div>
                         )}
                       </div>

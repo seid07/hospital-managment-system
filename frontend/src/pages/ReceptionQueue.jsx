@@ -3,8 +3,10 @@ import { Link, useNavigate } from "react-router-dom";
 import AppShell from "../components/layout/AppShell";
 import StatCard from "../components/common/StatCard";
 import { getAppointments, updateAppointmentStatus } from "../services/appointmentService";
+import { useCalendar } from "../context/useCalendar";
 
 function ReceptionQueue() {
+  const { formatDate } = useCalendar();
   const navigate = useNavigate();
   const [appointments, setAppointments] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -129,7 +131,7 @@ function ReceptionQueue() {
           <div className="empty-state">
             <div className="empty-state-icon">□</div>
             <h3>No appointments scheduled today</h3>
-            <p>No appointments booked for date: {today}.</p>
+            <p>No appointments booked for date: {formatDate(today)}.</p>
           </div>
         ) : (
           <div className="table-wrapper">

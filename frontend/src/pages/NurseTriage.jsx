@@ -5,6 +5,7 @@ import StatusBadge from "../components/common/StatusBadge";
 import { nursingService } from "../services/nursingService";
 import { recordVitals } from "../services/vitalsService";
 import { useAuth } from "../context/useAuth";
+import { useCalendar } from "../context/useCalendar";
 
 const INITIAL_VITALS = {
   temperatureCelsius: "",
@@ -21,6 +22,7 @@ const INITIAL_VITALS = {
 
 export default function NurseTriage() {
   const { user } = useAuth();
+  const { formatDate, formatDateTime } = useCalendar();
 
   // Dashboard metrics & list
   const [metrics, setMetrics] = useState(null);
@@ -526,7 +528,7 @@ export default function NurseTriage() {
               </div>
               <div>
                 <span className="text-muted block text-xs">Admission Date</span>
-                <span>{selectedPatient.admission_date ? new Date(selectedPatient.admission_date).toLocaleDateString() : "—"}</span>
+                <span>{selectedPatient.admission_date ? formatDate(selectedPatient.admission_date) : "—"}</span>
               </div>
             </div>
 
@@ -737,7 +739,7 @@ export default function NurseTriage() {
                             <tbody>
                               {overviewData.vitalsTimeline.map((v) => (
                                 <tr key={v.id}>
-                                  <td className="text-muted">{new Date(v.recorded_at).toLocaleString()}</td>
+                                  <td className="text-muted">{formatDateTime(v.recorded_at)}</td>
                                   <td className="font-mono">{v.blood_pressure}</td>
                                   <td>{v.pulse_rate_bpm} bpm</td>
                                   <td className={v.temperature_celsius >= 38.5 ? "text-danger font-bold" : ""}>
@@ -1009,7 +1011,7 @@ export default function NurseTriage() {
                           <div key={n.id} className="p-3 bg-white border rounded text-xs space-y-1">
                             <div className="flex justify-between text-muted">
                               <span className="font-bold text-primary">{n.category}</span>
-                              <span>{new Date(n.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} — {new Date(n.created_at).toLocaleDateString()}</span>
+                              <span>{formatDateTime(n.created_at)}</span>
                             </div>
                             <p className="text-sm">{n.note}</p>
                             <p className="text-xs text-muted">By: {n.nurse_first_name ? `${n.nurse_first_name} ${n.nurse_last_name}` : n.created_by_username || user?.username}</p>

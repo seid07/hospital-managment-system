@@ -17,9 +17,11 @@ import {
 import { useAuth } from "../context/useAuth";
 import { formatCurrency } from "../utils/currency";
 import { useDebounce } from "../hooks/useDebounce";
+import { useCalendar } from "../context/useCalendar";
 
 function BillingInvoices() {
   const { user } = useAuth();
+  const { formatDate, formatDateTime } = useCalendar();
   const [invoices, setInvoices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -399,7 +401,7 @@ function BillingInvoices() {
                       <br />
                       <small style={{ color: "var(--text-muted)" }}>{inv.patient_number}</small>
                     </td>
-                    <td>{new Date(inv.created_at).toLocaleDateString()}</td>
+                    <td>{formatDate(inv.created_at)}</td>
                     <td>{formatCurrency(inv.subtotal)}</td>
                     <td>
                       <small>-{formatCurrency(inv.discount_amount)} / +{formatCurrency(inv.tax_amount)}</small>
@@ -677,7 +679,7 @@ function BillingInvoices() {
             title="HOSPITAL TAX INVOICE"
             subtitle="Financial Accounts Department"
             documentNumber={printTarget.invoice_number}
-            date={new Date(printTarget.created_at).toLocaleDateString()}
+            date={formatDate(printTarget.created_at)}
           >
             <div style={{ borderBottom: "1px solid #eee", paddingBottom: "12px", marginBottom: "16px" }}>
               <table style={{ width: "100%", fontSize: "13px" }}>
@@ -742,7 +744,7 @@ function BillingInvoices() {
                 <ul style={{ fontSize: "12px", margin: 0, paddingLeft: "20px" }}>
                   {printTarget.payments.map((p) => (
                     <li key={p.id}>
-                      Receipt #{p.payment_number}: {formatCurrency(p.amount)} paid via {p.payment_method} on {new Date(p.created_at).toLocaleDateString()}
+                      Receipt #{p.payment_number}: {formatCurrency(p.amount)} paid via {p.payment_method} on {formatDate(p.created_at)}
                     </li>
                   ))}
                 </ul>
@@ -763,10 +765,10 @@ function BillingInvoices() {
           title="HOSPITAL COMPLETE TRANSACTION & CASHIER REVENUE REPORT"
           subtitle="Strict Administrative & Registrar Financial Audit Record"
           documentNumber={`TX-AUDIT-${new Date().toISOString().split("T")[0]}`}
-          date={new Date().toLocaleDateString()}
+          date={formatDate(new Date())}
         >
           <div style={{ marginBottom: "16px", fontSize: "12px", color: "#64748b" }}>
-            <span>Generated on: <strong>{new Date().toLocaleString()}</strong></span> |{" "}
+            <span>Generated on: <strong>{formatDateTime(new Date())}</strong></span> |{" "}
             <span>Authorized by: <strong>{user?.first_name} {user?.last_name} ({user?.role})</strong></span> |{" "}
             <span>Total Transactions: <strong>{transactionsList.length}</strong></span>
           </div>

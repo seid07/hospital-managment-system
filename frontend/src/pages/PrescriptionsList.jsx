@@ -12,9 +12,11 @@ import {
 import { useAuth } from "../context/useAuth";
 import { useDebounce } from "../hooks/useDebounce";
 import { formatCurrency } from "../utils/currency";
+import { useCalendar } from "../context/useCalendar";
 
 function PrescriptionsList() {
   const { user } = useAuth();
+  const { formatDate, formatDateTime } = useCalendar();
   const [prescriptions, setPrescriptions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -387,7 +389,7 @@ function PrescriptionsList() {
                         <div style={{ fontSize: "12px", color: "var(--text-muted)", marginTop: "4px" }}>
                           Doctor: <strong>Dr. {group.doctor_first_name} {group.doctor_last_name}</strong> • Last Ordered:{" "}
                           <span style={{ color: "var(--primary-dark)", fontWeight: 600 }}>
-                            {new Date(group.latest_order_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} ({new Date(group.latest_order_at).toLocaleDateString()})
+                            {formatDateTime(group.latest_order_at)}
                           </span>
                         </div>
                       </div>
@@ -675,7 +677,7 @@ function PrescriptionsList() {
             title="OFFICIAL HOSPITAL MEDICAL PRESCRIPTION"
             subtitle="Department of Pharmacy & Clinical Pharmacology"
             documentNumber={printTarget.prescription_number}
-            date={new Date(printTarget.created_at).toLocaleDateString()}
+            date={formatDate(printTarget.created_at)}
           >
             <div style={{ borderBottom: "1px solid #eee", paddingBottom: "12px", marginBottom: "16px" }}>
               <table style={{ width: "100%", fontSize: "13px" }}>

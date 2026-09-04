@@ -175,10 +175,88 @@ function validateVitals(data) {
   };
 }
 
+const dns = require("dns").promises;
+
 function validateEmail(email) {
   if (!email || typeof email !== "string") return false;
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   return emailRegex.test(email.trim());
+}
+
+async function verifyEmailDomainDeliverability(email) {
+  if (!email || typeof email !== "string") {
+    return { valid: false, reason: "INVALID_FORMAT", message: "Enter a valid email address." };
+  }
+  const cleanEmail = email.trim().toLowerCase();
+  if (!validateEmail(cleanEmail)) {
+    return { valid: false, reason: "INVALID_FORMAT", message: "Enter a valid email address." };
+  }
+
+  const parts = cleanEmail.split("@");
+  const domain = parts[1]?.trim();
+  if (!domain) {
+    return { valid: false, reason: "NO_DOMAIN", message: "No email domain specified." };
+  }
+
+  // Allow standard development / local test domains
+  if (
+    domain.endsWith(".test") ||
+    domain.endsWith(".local") ||
+    domain.endsWith(".example") ||
+    domain.endsWith(".example.com") ||
+    domain === "localhost"
+  ) {
+    return { valid: true, domain };
+  }
+
+  try {
+    const resolvePromise = (async () => {
+      try {
+        const mxRecords = await dns.resolveMx(domain);
+        if (mxRecords && mxRecords.length > 0) {
+          return { valid: true, domain, mx: mxRecords };
+        }
+      } catch {
+        try {
+          const aRecords = await dns.resolve4(domain);
+          if (aRecords && aRecords.length > 0) {
+            return { valid: true, domain, a: aRecords };
+          }
+        } catch {
+          return {
+            valid: false,
+            reason: "ADDRESS_NOT_FOUND",
+            message: `Email domain "${domain}" could not be found or does not exist.`,
+          };
+        }
+      }
+      return {
+        valid: false,
+        reason: "ADDRESS_NOT_FOUND",
+        message: `Email domain "${domain}" has no active mail servers.`,
+      };
+    })();
+
+    const timeoutPromise = new Promise((resolve) =>
+      setTimeout(
+        () =>
+          resolve({
+            valid: false,
+            reason: "ADDRESS_NOT_FOUND",
+            message: `Email domain lookup timed out for "${domain}". Address could not be verified.`,
+          }),
+        3500
+      )
+    );
+
+    return await Promise.race([resolvePromise, timeoutPromise]);
+  } catch {
+    return {
+      valid: false,
+      reason: "ADDRESS_NOT_FOUND",
+      message: `Failed to resolve email domain "${domain}".`,
+    };
+  }
 }
 
 function validateOtp(otp) {
@@ -193,6 +271,7 @@ module.exports = {
   normalizeEthiopianPhone,
   validatePasswordStrength,
   validateEmail,
+  verifyEmailDomainDeliverability,
   validateOtp,
   calculateDobFromAge,
   validateVitals,

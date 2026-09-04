@@ -4,8 +4,10 @@ import StatusBadge from "../components/common/StatusBadge";
 import Pagination from "../components/common/Pagination";
 import Modal from "../components/common/Modal";
 import { getAuditLogs } from "../services/auditService";
+import { useCalendar } from "../context/useCalendar";
 
 function AdminAuditLogs() {
+  const { formatDateTime } = useCalendar();
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -167,7 +169,7 @@ function AdminAuditLogs() {
                   <tr key={log.id}>
                     <td>
                       <small style={{ color: "var(--text-secondary)" }}>
-                        {new Date(log.created_at).toLocaleString()}
+                        {formatDateTime(log.created_at)}
                       </small>
                     </td>
                     <td>
@@ -225,7 +227,7 @@ function AdminAuditLogs() {
               <div><strong>Action:</strong> {selectedLog.action}</div>
               <div><strong>Entity:</strong> {selectedLog.entity} (ID: <code>{selectedLog.entity_id || "—"}</code>)</div>
               <div><strong>User:</strong> {selectedLog.username || "System"} ({selectedLog.user_role})</div>
-              <div><strong>Timestamp:</strong> {new Date(selectedLog.created_at).toLocaleString()}</div>
+              <div><strong>Timestamp:</strong> {formatDateTime(selectedLog.created_at)}</div>
             </div>
 
             <div>

@@ -9,11 +9,13 @@ import { recordVitals } from "../services/vitalsService";
 import { getPatientReferrals } from "../services/referralService";
 import { useAuth } from "../context/useAuth";
 import { formatCurrency } from "../utils/currency";
+import { useCalendar } from "../context/useCalendar";
 
 function PatientDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { formatDate, formatDateTime } = useCalendar();
 
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -303,7 +305,7 @@ function PatientDetail() {
               fontSize: "13px",
             }}
           >
-            <strong>Latest Vitals ({new Date(latestVital.recorded_at).toLocaleDateString()}):</strong>
+            <strong>Latest Vitals ({formatDate(latestVital.recorded_at)}):</strong>
             {latestVital.temperature && <span>Temp: <strong>{latestVital.temperature}°C</strong></span>}
             {latestVital.systolic_bp && (
               <span>
@@ -395,7 +397,7 @@ function PatientDetail() {
                 >
                   <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "10px" }}>
                     <div>
-                      <strong>Visit Date: {enc.visit_date}</strong>
+                      <strong>Visit Date: {formatDate(enc.visit_date)}</strong>
                       <span style={{ marginLeft: "12px", color: "var(--text-secondary)" }}>
                         Physician: Dr. {enc.doctor_first_name} {enc.doctor_last_name} ({enc.doctor_specialty || "General"})
                       </span>
@@ -494,7 +496,7 @@ function PatientDetail() {
                 <tbody>
                   {vitals.map((v) => (
                     <tr key={v.id}>
-                      <td>{new Date(v.recorded_at).toLocaleString()}</td>
+                      <td>{formatDateTime(v.recorded_at)}</td>
                       <td>{v.temperature ? `${v.temperature}°C` : "—"}</td>
                       <td>
                         {v.systolic_bp && v.diastolic_bp ? (
@@ -558,7 +560,7 @@ function PatientDetail() {
                         {p.dispensed_at ? (
                           <span style={{ fontSize: "11px", color: "var(--success)" }}>
                             Dispensed by {p.dispensed_by_username || "Pharmacy"} on{" "}
-                            {new Date(p.dispensed_at).toLocaleDateString()}
+                            {formatDate(p.dispensed_at)}
                           </span>
                         ) : (
                           <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>Awaiting dispensing</span>
@@ -639,7 +641,7 @@ function PatientDetail() {
                       )}
                       {order.verified_by_username && (
                         <div style={{ fontSize: "11px", color: "var(--success)", marginTop: "4px" }}>
-                          ✓ Verified by {order.verified_by_username} on {new Date(order.verified_at).toLocaleString()}
+                          ✓ Verified by {order.verified_by_username} on {formatDateTime(order.verified_at)}
                         </div>
                       )}
                     </div>
@@ -731,7 +733,7 @@ function PatientDetail() {
                   <tbody>
                     {payments.map((p) => (
                       <tr key={p.id}>
-                        <td>{new Date(p.created_at).toLocaleString()}</td>
+                        <td>{formatDateTime(p.created_at)}</td>
                         <td><strong>{p.payment_number || `REC-${p.id.slice(0, 8)}`}</strong></td>
                         <td><span className="badge badge-info">{p.payment_method}</span></td>
                         <td>{p.received_by_username || "Cashier"}</td>
@@ -782,7 +784,7 @@ function PatientDetail() {
                   <tbody>
                     {serviceOrders.map((so) => (
                       <tr key={so.id}>
-                        <td>{new Date(so.created_at).toLocaleDateString()}</td>
+                        <td>{formatDate(so.created_at)}</td>
                         <td><code>{so.order_number}</code></td>
                         <td><strong>{so.service_name}</strong> ({so.service_code})</td>
                         <td><span className="badge badge-info">{so.department_name}</span></td>
@@ -828,7 +830,7 @@ function PatientDetail() {
                   {appointments.map((a) => (
                     <tr key={a.id}>
                       <td><strong>{a.appointment_number}</strong></td>
-                      <td>{a.appointment_date}</td>
+                      <td>{formatDate(a.appointment_date)}</td>
                       <td>{a.start_time} – {a.end_time}</td>
                       <td>Dr. {a.doctor_first_name} {a.doctor_last_name}</td>
                       <td>{a.reason || "—"}</td>
@@ -889,7 +891,7 @@ function PatientDetail() {
                           {r.status}
                         </span>
                         <span style={{ fontSize: "12px", color: "var(--text-secondary)" }}>
-                          {new Date(r.created_at).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" })}
+                          {formatDate(r.created_at)}
                         </span>
                       </div>
                     </div>
@@ -1134,7 +1136,7 @@ function PatientDetail() {
           title="PATIENT MEDICAL RECORD SUMMARY"
           subtitle="Comprehensive Clinical History"
           documentNumber={patient.patient_number}
-          date={new Date().toLocaleDateString()}
+          date={formatDate(new Date())}
         >
           <div style={{ marginBottom: "16px" }}>
             <h3>Patient Demographics</h3>
@@ -1170,7 +1172,7 @@ function PatientDetail() {
               <h4>Clinical Encounters & Diagnoses ({encounters.length})</h4>
               {encounters.map((enc) => (
                 <div key={enc.id} style={{ fontSize: "12px", borderBottom: "1px dashed #ccc", paddingBottom: "6px", marginBottom: "6px" }}>
-                  <strong>{enc.visit_date} (Dr. {enc.doctor_last_name}):</strong> {enc.chief_complaint || "Consultation"}
+                  <strong>{formatDate(enc.visit_date)} (Dr. {enc.doctor_last_name}):</strong> {enc.chief_complaint || "Consultation"}
                   {enc.diagnoses && enc.diagnoses.length > 0 && (
                     <div style={{ color: "#333" }}>
                       Diagnoses: {enc.diagnoses.map((d) => `${d.description} ${d.code ? `(${d.code})` : ""}`).join(", ")}
@@ -1220,7 +1222,7 @@ function PatientDetail() {
           title="FULL FINANCIAL & BILLING STATEMENT"
           subtitle="Hospital Department of Finance & Revenue Operations"
           documentNumber={`STMT-${patient.patient_number}`}
-          date={new Date().toLocaleDateString()}
+          date={formatDate(new Date())}
         >
           <div style={{ padding: "8px 0" }}>
             {/* Patient Header Box */}
@@ -1233,7 +1235,7 @@ function PatientDetail() {
               <div>
                 <strong>Phone:</strong> {patient.phone}<br />
                 <strong>Address:</strong> {patient.address || "—"}<br />
-                <strong>Statement Date:</strong> {new Date().toLocaleString()}
+                <strong>Statement Date:</strong> {formatDateTime(new Date())}
               </div>
             </div>
 
@@ -1276,7 +1278,7 @@ function PatientDetail() {
                   payments.map((p) => (
                     <tr key={p.id}>
                       <td><strong>{p.payment_number || `REC-${p.id.slice(0, 8)}`}</strong></td>
-                      <td>{new Date(p.created_at).toLocaleString()}</td>
+                      <td>{formatDateTime(p.created_at)}</td>
                       <td>{p.payment_method}</td>
                       <td>{p.received_by_username || "Cashier"}</td>
                       <td style={{ textAlign: "right" }}><strong>{formatCurrency(p.amount)}</strong></td>
@@ -1326,7 +1328,7 @@ function PatientDetail() {
             </table>
 
             <div style={{ marginTop: "32px", display: "flex", justifyContent: "space-between", fontSize: "11px", color: "#64748b" }}>
-              <div>Printed on: {new Date().toLocaleString()}</div>
+              <div>Printed on: {formatDateTime(new Date())}</div>
               <div style={{ borderTop: "1px solid #94a3b8", width: "200px", textAlign: "center", paddingTop: "4px" }}>
                 Authorized Finance Officer Signature
               </div>

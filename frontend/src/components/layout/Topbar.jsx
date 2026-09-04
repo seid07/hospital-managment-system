@@ -1,6 +1,9 @@
 import { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { getNotifications, markAsRead, markAllAsRead } from "../../services/notificationService";
+import { useCalendar } from "../../context/useCalendar";
+import { useToast } from "../../context/useToast";
+import { Calendar } from "lucide-react";
 
 function getInitials(user) {
   const first = user?.first_name?.charAt(0) || "";
@@ -18,6 +21,8 @@ function formatRole(role) {
 
 function Topbar({ user, logout, onToggleSidebar }) {
   const navigate = useNavigate();
+  const { calendarSystem, setCalendarSystem, todayFormatted } = useCalendar();
+  const toast = useToast();
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [showNotifications, setShowNotifications] = useState(false);
@@ -213,6 +218,62 @@ function Topbar({ user, logout, onToggleSidebar }) {
           </div>
         </div>
 
+        {/* Real-time Ethiopian / Gregorian Calendar Switcher */}
+        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              background: "#ffffff",
+              border: "1px solid #cbd5e1",
+              borderRadius: "8px",
+              padding: "2px 8px",
+              boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
+            }}
+          >
+            <Calendar size={14} color={calendarSystem === "EC" ? "#059669" : "#0284c7"} style={{ marginRight: "4px" }} />
+            <select
+              value={calendarSystem}
+              onChange={(e) => {
+                const newSys = e.target.value;
+                setCalendarSystem(newSys);
+                toast.info(`Calendar switched to ${newSys === "EC" ? "Ethiopian Calendar (E.C.)" : "Gregorian Calendar (G.C.)"}`, 4000);
+              }}
+              style={{
+                border: "none",
+                background: "transparent",
+                fontWeight: 700,
+                fontSize: "12px",
+                color: "#1e293b",
+                cursor: "pointer",
+                outline: "none",
+                padding: "4px 2px",
+              }}
+              aria-label="Switch System Calendar"
+              title="Toggle between Ethiopian Calendar (EC) and Gregorian Calendar (GC)"
+            >
+              <option value="EC">EC (Ethiopian Calendar)</option>
+              <option value="GC">GC (Gregorian Calendar)</option>
+            </select>
+          </div>
+
+          <span
+            style={{
+              fontSize: "11px",
+              fontWeight: 700,
+              padding: "5px 9px",
+              borderRadius: "6px",
+              background: calendarSystem === "EC" ? "#ecfdf5" : "#f0f9ff",
+              color: calendarSystem === "EC" ? "#065f46" : "#0369a1",
+              border: `1px solid ${calendarSystem === "EC" ? "#a7f3d0" : "#bae6fd"}`,
+              whiteSpace: "nowrap",
+            }}
+            title="Real-time today date in active calendar"
+          >
+            {todayFormatted}
+          </span>
+        </div>
+
         <button
           type="button"
           className="button button-secondary"
@@ -221,7 +282,7 @@ function Topbar({ user, logout, onToggleSidebar }) {
           aria-label="Change Password"
           title="Update your account password"
         >
-          🔑 Change Password
+          Change Password
         </button>
 
         <button
