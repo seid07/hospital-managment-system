@@ -78,10 +78,14 @@ export default function RegistrarVisitDesk() {
 
   // New Patient Modal state
   const [showNewPatientModal, setShowNewPatientModal] = useState(false);
+  const [newPatientModalError, setNewPatientModalError] = useState("");
+  const [newPatientModalSuccess, setNewPatientModalSuccess] = useState("");
+  const [duplicateModalPatient, setDuplicateModalPatient] = useState(null);
   const [newPatient, setNewPatient] = useState({
     firstName: "",
     lastName: "",
     age: "",
+    dateOfBirth: "",
     gender: "Male",
     phone: "09",
     email: "",
@@ -89,6 +93,57 @@ export default function RegistrarVisitDesk() {
     emergencyContactName: "",
     emergencyContactPhone: "",
   });
+
+  function handleNewPatientChange(field, value) {
+    setNewPatientModalError("");
+    setDuplicateModalPatient(null);
+    if (field === "dateOfBirth") {
+      let ageVal = "";
+      if (value) {
+        const birthDate = new Date(value);
+        if (!isNaN(birthDate.getTime())) {
+          const now = new Date();
+          let calculated = now.getFullYear() - birthDate.getFullYear();
+          const monthDiff = now.getMonth() - birthDate.getMonth();
+          if (monthDiff < 0 || (monthDiff === 0 && now.getDate() < birthDate.getDate())) {
+            calculated--;
+          }
+          ageVal = calculated >= 0 ? calculated.toString() : "0";
+        }
+      }
+      setNewPatient((prev) => ({ ...prev, dateOfBirth: value, age: ageVal }));
+    } else if (field === "age") {
+      let dobVal = "";
+      const ageNum = parseInt(value, 10);
+      if (!isNaN(ageNum) && ageNum >= 0) {
+        const currentYear = new Date().getFullYear();
+        const birthYear = currentYear - ageNum;
+        dobVal = `${birthYear}-01-01`;
+      }
+      setNewPatient((prev) => ({ ...prev, age: value, dateOfBirth: dobVal }));
+    } else {
+      setNewPatient((prev) => ({ ...prev, [field]: value }));
+    }
+  }
+
+  function handleOpenNewPatientModal() {
+    setNewPatient({
+      firstName: "",
+      lastName: "",
+      age: "",
+      dateOfBirth: "",
+      gender: "Male",
+      phone: "09",
+      email: "",
+      address: "Addis Ababa",
+      emergencyContactName: "",
+      emergencyContactPhone: "",
+    });
+    setNewPatientModalError("");
+    setNewPatientModalSuccess("");
+    setDuplicateModalPatient(null);
+    setShowNewPatientModal(true);
+  }
 
   // Services Catalog
   const [catalog, setCatalog] = useState([]);
@@ -306,16 +361,37 @@ export default function RegistrarVisitDesk() {
 
   async function handleCreatePatientSubmit(e) {
     e.preventDefault();
-    setErrorMessage("");
+    setNewPatientModalError("");
+    setNewPatientModalSuccess("");
+    setDuplicateModalPatient(null);
 
-    if (!validateEthiopianPhone(newPatient.phone)) {
-      setErrorMessage("Enter a valid Ethiopian phone number starting with 09, 07, or +251.");
+    if (!newPatient.firstName?.trim() || !newPatient.lastName?.trim()) {
+      setNewPatientModalError("First name and last name are required.");
       return;
     }
 
-    const ageNum = parseInt(newPatient.age, 10);
+    if (!validateEthiopianPhone(newPatient.phone)) {
+      setNewPatientModalError("Enter a valid Ethiopian phone number starting with 09, 07, or +251 (e.g. 0912345678).");
+      return;
+    }
+
+    if (newPatient.emergencyContactPhone && !validateEthiopianPhone(newPatient.emergencyContactPhone)) {
+      setNewPatientModalError("Emergency contact phone must be a valid Ethiopian phone number starting with 09, 07, or +251.");
+      return;
+    }
+
+    let ageNum = parseInt(newPatient.age, 10);
     if (isNaN(ageNum) || ageNum < 0 || ageNum > 130) {
-      setErrorMessage("Please enter a valid age.");
+      if (newPatient.dateOfBirth) {
+        const bDate = new Date(newPatient.dateOfBirth);
+        if (!isNaN(bDate.getTime())) {
+          ageNum = new Date().getFullYear() - bDate.getFullYear();
+        }
+      }
+    }
+
+    if (isNaN(ageNum) || ageNum < 0 || ageNum > 130) {
+      setNewPatientModalError("Please enter a valid age between 0 and 130 or select a valid date of birth.");
       return;
     }
 
@@ -323,13 +399,21 @@ export default function RegistrarVisitDesk() {
       setProcessing(true);
       const res = await createPatient({
         ...newPatient,
+        firstName: newPatient.firstName.trim(),
+        lastName: newPatient.lastName.trim(),
         age: ageNum,
+        dateOfBirth: newPatient.dateOfBirth || undefined,
+        email: newPatient.email?.trim() || null,
+        address: newPatient.address?.trim() || null,
+        emergencyContactName: newPatient.emergencyContactName?.trim() || null,
+        emergencyContactPhone: newPatient.emergencyContactPhone?.trim() || null,
       });
       const created = res.data;
       setSelectedPatient(created);
       setIsPatientConfirmed(true);
       setShowNewPatientModal(false);
-      setErrorMessage("");
+      setNewPatientModalError("");
+      setNewPatientModalSuccess("");
 
       // If a registration card order was auto-created, show the card payment popup first
       if (created.registrationOrderId) {
@@ -354,22 +438,13 @@ export default function RegistrarVisitDesk() {
     } catch (err) {
       if (err.code === "DUPLICATE_PATIENT_EXISTS" || err.data?.existingPatient) {
         const existing = err.data?.existingPatient;
-        setShowNewPatientModal(false);
-        setActiveTab("NEW_VISIT");
-        if (existing) {
-          handleSelectPatient(existing);
-          setErrorMessage(
-            `⚠️ Existing Patient Detected (${existing.patient_number} — ${existing.first_name} ${existing.last_name}). Duplicate registration was blocked. Please verify patient identity below and create a new visit/encounter for today.`
-          );
-        } else {
-          setSearchQuery(newPatient.phone || `${newPatient.firstName} ${newPatient.lastName}`);
-          setErrorMessage(
-            err.message || "A patient with these details already exists. Please verify and select the existing record."
-          );
-        }
+        setDuplicateModalPatient(existing);
+        setNewPatientModalError(
+          `⚠️ Duplicate Patient Detected (${existing?.patient_number || "MRN"} — ${existing?.first_name || ""} ${existing?.last_name || ""}). The registrar should not create another patient record.`
+        );
         return;
       }
-      setErrorMessage(err.message || "Failed to register patient.");
+      setNewPatientModalError(err.message || "Failed to register patient.");
     } finally {
       setProcessing(false);
     }
@@ -749,7 +824,7 @@ export default function RegistrarVisitDesk() {
         <div className="page-actions" style={{ display: "flex", gap: "8px" }}>
           <button
             type="button"
-            onClick={() => setShowNewPatientModal(true)}
+            onClick={handleOpenNewPatientModal}
             className="button button-primary button-large"
           >
             + Register New Patient
@@ -774,25 +849,25 @@ export default function RegistrarVisitDesk() {
           to="/reception/queue"
         />
         <StatCard
-          label="Registered Today"
-          value={kpis?.registeredToday ?? "—"}
-          icon="+"
-          description="New patient intakes today"
-          to="/patients?registered=today"
+          label="Services Rendered"
+          value={kpis?.completedEncounters ?? "—"}
+          icon="✓"
+          description="Completed encounters today"
+          to="/doctor/consultation-records"
         />
         <StatCard
-          label="Pending Doctor Orders"
-          value={kpis?.pendingDoctorOrders ?? pendingOrders.length}
-          icon="⏳"
-          description="Doctor orders awaiting cashier"
+          label="Pending Cashier Orders"
+          value={pendingOrders.length}
+          icon="💳"
+          description="Doctor orders awaiting payment"
           onClick={() => setActiveTab("PENDING_ORDERS")}
         />
       </section>
 
       {errorMessage && <div className="alert alert-error">{errorMessage}</div>}
 
-      {/* Navigation Tabs between Returning Intake vs Doctor Orders Queue */}
-      <div style={{ display: "flex", gap: "10px", marginBottom: "18px", borderBottom: "1px solid var(--border)", paddingBottom: "10px" }}>
+      {/* Navigation Desk Tabs */}
+      <div className="tab-group" style={{ marginBottom: "16px", display: "flex", gap: "8px" }}>
         <button
           type="button"
           className={`button ${activeTab === "NEW_VISIT" ? "button-primary" : "button-secondary"}`}
@@ -803,7 +878,7 @@ export default function RegistrarVisitDesk() {
         <button
           type="button"
           className="button button-secondary"
-          onClick={() => setShowNewPatientModal(true)}
+          onClick={handleOpenNewPatientModal}
         >
           + Register New Patient
         </button>
@@ -950,7 +1025,7 @@ export default function RegistrarVisitDesk() {
                         type="button"
                         className="button button-secondary"
                         style={{ fontSize: "12px" }}
-                        onClick={() => setShowNewPatientModal(true)}
+                        onClick={handleOpenNewPatientModal}
                       >
                         + Register as New Patient
                       </button>
@@ -1126,7 +1201,7 @@ export default function RegistrarVisitDesk() {
                 <button
                   type="button"
                   className="button button-primary"
-                  onClick={() => setShowNewPatientModal(true)}
+                  onClick={handleOpenNewPatientModal}
                 >
                   + Register New Patient Profile
                 </button>
@@ -1868,46 +1943,131 @@ export default function RegistrarVisitDesk() {
       {/* New Patient Registration Modal */}
       <Modal
         isOpen={showNewPatientModal}
-        onClose={() => setShowNewPatientModal(false)}
+        onClose={() => {
+          setShowNewPatientModal(false);
+          setNewPatientModalError("");
+          setNewPatientModalSuccess("");
+          setDuplicateModalPatient(null);
+        }}
         title="Register New Patient"
+        size="lg"
       >
+        {newPatientModalError && (
+          <div className="alert alert-error" style={{ marginBottom: "16px" }}>
+            {newPatientModalError}
+          </div>
+        )}
+
+        {newPatientModalSuccess && (
+          <div className="alert alert-success" style={{ marginBottom: "16px" }}>
+            {newPatientModalSuccess}
+          </div>
+        )}
+
+        {duplicateModalPatient && (
+          <div
+            style={{
+              background: "#fef2f2",
+              border: "1px solid #fecaca",
+              borderRadius: "8px",
+              padding: "14px",
+              marginBottom: "16px",
+            }}
+          >
+            <strong style={{ color: "#991b1b", display: "block", marginBottom: "6px" }}>
+              ⚠️ Patient Already Registered in Database (MRN: {duplicateModalPatient.patient_number})
+            </strong>
+            <p style={{ margin: "0 0 10px", fontSize: "13px", color: "#7f1d1d" }}>
+              <strong>
+                {duplicateModalPatient.first_name} {duplicateModalPatient.last_name}
+              </strong>{" "}
+              (Phone: {duplicateModalPatient.phone}, Age: {duplicateModalPatient.age || "—"} yrs) already exists. The
+              registrar should not create another patient record.
+            </p>
+            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+              <button
+                type="button"
+                className="button button-primary"
+                style={{ fontSize: "12px", padding: "6px 14px" }}
+                onClick={() => {
+                  const pat = duplicateModalPatient;
+                  setShowNewPatientModal(false);
+                  setDuplicateModalPatient(null);
+                  setNewPatientModalError("");
+                  handleSelectPatient(pat);
+                  setActiveTab("NEW_VISIT");
+                }}
+              >
+                🔄 Switch to Returning Patient Intake & Create Today&apos;s Visit →
+              </button>
+              <button
+                type="button"
+                className="button button-secondary"
+                style={{ fontSize: "12px", padding: "6px 14px" }}
+                onClick={() => setDuplicateModalPatient(null)}
+              >
+                Review Form
+              </button>
+            </div>
+          </div>
+        )}
+
         <form onSubmit={handleCreatePatientSubmit}>
           <div className="form-grid">
             <div className="form-field">
-              <label>First Name *</label>
+              <label htmlFor="regFirstName">First Name *</label>
               <input
+                id="regFirstName"
                 type="text"
                 required
+                placeholder="e.g. Abebe"
                 value={newPatient.firstName}
-                onChange={(e) => setNewPatient({ ...newPatient, firstName: e.target.value })}
-              />
-            </div>
-            <div className="form-field">
-              <label>Last Name *</label>
-              <input
-                type="text"
-                required
-                value={newPatient.lastName}
-                onChange={(e) => setNewPatient({ ...newPatient, lastName: e.target.value })}
+                onChange={(e) => handleNewPatientChange("firstName", e.target.value)}
               />
             </div>
 
             <div className="form-field">
-              <label>Age (Years) *</label>
+              <label htmlFor="regLastName">Last Name *</label>
               <input
+                id="regLastName"
+                type="text"
+                required
+                placeholder="e.g. Kebede"
+                value={newPatient.lastName}
+                onChange={(e) => handleNewPatientChange("lastName", e.target.value)}
+              />
+            </div>
+
+            <div className="form-field">
+              <label htmlFor="regDob">Date of Birth</label>
+              <input
+                id="regDob"
+                type="date"
+                value={newPatient.dateOfBirth || ""}
+                onChange={(e) => handleNewPatientChange("dateOfBirth", e.target.value)}
+              />
+            </div>
+
+            <div className="form-field">
+              <label htmlFor="regAge">Age (Years) *</label>
+              <input
+                id="regAge"
                 type="number"
                 min="0"
                 max="130"
                 required
+                placeholder="e.g. 35"
                 value={newPatient.age}
-                onChange={(e) => setNewPatient({ ...newPatient, age: e.target.value })}
+                onChange={(e) => handleNewPatientChange("age", e.target.value)}
               />
             </div>
+
             <div className="form-field">
-              <label>Gender *</label>
+              <label htmlFor="regGender">Gender *</label>
               <select
+                id="regGender"
                 value={newPatient.gender}
-                onChange={(e) => setNewPatient({ ...newPatient, gender: e.target.value })}
+                onChange={(e) => handleNewPatientChange("gender", e.target.value)}
               >
                 <option value="Male">Male</option>
                 <option value="Female">Female</option>
@@ -1916,30 +2076,72 @@ export default function RegistrarVisitDesk() {
             </div>
 
             <div className="form-field">
-              <label>Phone Number (Ethiopian) *</label>
+              <label htmlFor="regPhone">Phone Number (Ethiopian) *</label>
               <input
+                id="regPhone"
                 type="text"
                 required
-                placeholder="09XXXXXXXX or +2519XXXXXXXX"
+                placeholder="09XXXXXXXX, 07XXXXXXXX, or +251..."
                 value={newPatient.phone}
-                onChange={(e) => setNewPatient({ ...newPatient, phone: e.target.value })}
+                onChange={(e) => handleNewPatientChange("phone", e.target.value)}
               />
             </div>
+
             <div className="form-field">
-              <label>Address / Sub-City</label>
+              <label htmlFor="regEmail">Email Address</label>
               <input
+                id="regEmail"
+                type="email"
+                placeholder="patient@example.com"
+                value={newPatient.email}
+                onChange={(e) => handleNewPatientChange("email", e.target.value)}
+              />
+            </div>
+
+            <div className="form-field">
+              <label htmlFor="regAddress">Address / Sub-City</label>
+              <input
+                id="regAddress"
                 type="text"
+                placeholder="e.g. Bole Sub-City, Addis Ababa"
                 value={newPatient.address}
-                onChange={(e) => setNewPatient({ ...newPatient, address: e.target.value })}
+                onChange={(e) => handleNewPatientChange("address", e.target.value)}
+              />
+            </div>
+
+            <div className="form-field">
+              <label htmlFor="regEmergencyName">Emergency Contact Name</label>
+              <input
+                id="regEmergencyName"
+                type="text"
+                placeholder="Next of kin full name"
+                value={newPatient.emergencyContactName}
+                onChange={(e) => handleNewPatientChange("emergencyContactName", e.target.value)}
+              />
+            </div>
+
+            <div className="form-field">
+              <label htmlFor="regEmergencyPhone">Emergency Contact Phone</label>
+              <input
+                id="regEmergencyPhone"
+                type="text"
+                placeholder="09XXXXXXXX or +251..."
+                value={newPatient.emergencyContactPhone}
+                onChange={(e) => handleNewPatientChange("emergencyContactPhone", e.target.value)}
               />
             </div>
           </div>
 
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px", marginTop: "20px" }}>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px", marginTop: "20px", borderTop: "1px solid var(--border)", paddingTop: "14px" }}>
             <button
               type="button"
               className="button button-secondary"
-              onClick={() => setShowNewPatientModal(false)}
+              onClick={() => {
+                setShowNewPatientModal(false);
+                setNewPatientModalError("");
+                setNewPatientModalSuccess("");
+                setDuplicateModalPatient(null);
+              }}
             >
               Cancel
             </button>

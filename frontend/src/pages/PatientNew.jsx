@@ -14,6 +14,7 @@ import { useToast } from "../context/useToast";
 const INITIAL_FORM = {
   firstName: "",
   lastName: "",
+  dateOfBirth: "",
   age: "",
   gender: "Male",
   phone: "09",
@@ -59,9 +60,48 @@ function PatientNew() {
 
   const today = new Date().toISOString().split("T")[0];
 
-  function handleChange(field, value) {
-    setForm((prev) => ({ ...prev, [field]: value }));
+  function handleChange(e, directValue) {
     if (error) setError("");
+    let name = "";
+    let value = "";
+
+    if (e && e.target) {
+      name = e.target.name;
+      value = e.target.value;
+    } else if (typeof e === "string") {
+      name = e;
+      value = directValue;
+    }
+
+    if (!name) return;
+
+    if (name === "dateOfBirth") {
+      let ageVal = "";
+      if (value) {
+        const birthDate = new Date(value);
+        if (!isNaN(birthDate.getTime())) {
+          const now = new Date();
+          let calculated = now.getFullYear() - birthDate.getFullYear();
+          const monthDiff = now.getMonth() - birthDate.getMonth();
+          if (monthDiff < 0 || (monthDiff === 0 && now.getDate() < birthDate.getDate())) {
+            calculated--;
+          }
+          ageVal = calculated >= 0 ? calculated.toString() : "0";
+        }
+      }
+      setForm((prev) => ({ ...prev, dateOfBirth: value, age: ageVal }));
+    } else if (name === "age") {
+      let dobVal = "";
+      const ageNum = parseInt(value, 10);
+      if (!isNaN(ageNum) && ageNum >= 0) {
+        const currentYear = new Date().getFullYear();
+        const birthYear = currentYear - ageNum;
+        dobVal = `${birthYear}-01-01`;
+      }
+      setForm((prev) => ({ ...prev, age: value, dateOfBirth: dobVal }));
+    } else {
+      setForm((prev) => ({ ...prev, [name]: value }));
+    }
   }
 
   // Load today's doctors helper
@@ -324,6 +364,17 @@ function PatientNew() {
                 onChange={handleChange}
                 placeholder="e.g. Kebede"
                 required
+              />
+            </div>
+
+            <div className="form-field">
+              <label htmlFor="dateOfBirth">Date of Birth</label>
+              <input
+                id="dateOfBirth"
+                name="dateOfBirth"
+                type="date"
+                value={form.dateOfBirth || ""}
+                onChange={handleChange}
               />
             </div>
 
