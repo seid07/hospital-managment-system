@@ -2,6 +2,18 @@ const db = require("../config/database");
 const { recordAuditLog } = require("../utils/audit");
 const { generateVisitNumber } = require("../utils/number-generators");
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+async function resolveValidUserId(clientOrPool, userId) {
+  if (!userId || typeof userId !== "string" || !UUID_REGEX.test(userId)) return null;
+  try {
+    const res = await clientOrPool.query("SELECT id FROM users WHERE id = $1 LIMIT 1", [userId]);
+    return res.rows.length > 0 ? res.rows[0].id : null;
+  } catch {
+    return null;
+  }
+}
+
 async function createVisit(data, userId) {
   const {
     patientId,
@@ -22,9 +34,10 @@ async function createVisit(data, userId) {
       throw new Error("Patient not found.");
     }
 
+    const validUserId = await resolveValidUserId(client, userId);
     const visitNumber = await generateVisitNumber(client);
 
-    const overrideAuthBy = emergencyOverride ? userId : null;
+    const overrideAuthBy = emergencyOverride ? validUserId : null;
     const overrideAuthAt = emergencyOverride ? new Date() : null;
 
     const result = await client.query(
@@ -47,7 +60,7 @@ async function createVisit(data, userId) {
         overrideAuthBy,
         overrideAuthAt,
         notes,
-        userId,
+        validUserId,
       ]
     );
 
@@ -64,7 +77,7 @@ async function createVisit(data, userId) {
     await recordAuditLog(
       client,
       {
-        userId,
+        userId: validUserId,
         action: emergencyOverride ? "EMERGENCY_VISIT_CREATED" : "VISIT_CREATED",
         entity: "visits",
         entityId: visit.id,

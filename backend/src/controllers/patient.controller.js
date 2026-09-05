@@ -39,15 +39,25 @@ async function createPatient(req, res) {
       });
     }
     console.error("Create patient error:", error);
+    if (error.code === "DUPLICATE_PATIENT_EXISTS" || error.message === "DUPLICATE_PATIENT_EXISTS") {
+      return res.status(409).json({
+        success: false,
+        code: "DUPLICATE_PATIENT_EXISTS",
+        message: error.userMessage || "A patient with this phone number or identity already exists. Please use the Returning Patient workflow to create a visit for today.",
+        data: {
+          existingPatient: error.existingPatient || null,
+        },
+      });
+    }
     if (error.code === "23505") {
       return res.status(409).json({
         success: false,
         message: "A patient with this phone or patient number already exists.",
       });
     }
-    return res.status(500).json({
+    return res.status(error.status || 400).json({
       success: false,
-      message: "Unable to create patient.",
+      message: error.message || "Unable to create patient.",
     });
   }
 }

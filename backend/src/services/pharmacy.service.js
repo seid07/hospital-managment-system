@@ -3,6 +3,18 @@ const { generatePrescriptionNumber, generatePaymentNumber } = require("../utils/
 const { recordAuditLog } = require("../utils/audit");
 const { parsePagination } = require("../validators");
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+async function resolveValidUserId(clientOrPool, userId) {
+  if (!userId || typeof userId !== "string" || !UUID_REGEX.test(userId)) return null;
+  try {
+    const res = await clientOrPool.query("SELECT id FROM users WHERE id = $1 LIMIT 1", [userId]);
+    return res.rows.length > 0 ? res.rows[0].id : null;
+  } catch {
+    return null;
+  }
+}
+
 async function createPrescription({
   encounterId,
   patientId,
@@ -139,6 +151,7 @@ async function recordPharmacyPayment({
     }
     const rx = rxRes.rows[0];
 
+    const validReceivedBy = await resolveValidUserId(client, receivedBy);
     const paymentNumber = await generatePaymentNumber(client);
 
     const paymentRes = await client.query(
@@ -160,7 +173,7 @@ async function recordPharmacyPayment({
         paymentMethod,
         transactionReference || null,
         notes ? `Pharmacy Medication Payment: ${notes}` : "Pharmacy Medication Payment",
-        receivedBy,
+        validReceivedBy,
       ]
     );
 
@@ -413,6 +426,7 @@ async function dispenseMultiplePrescriptions(
     }
 
     if (totalPaid > 0 && paymentMethod) {
+      const validUserId = await resolveValidUserId(client, userId);
       const paymentNumber = await generatePaymentNumber(client);
       const patientId = dispensedRxList[0].patient_id;
       await client.query(
@@ -426,7 +440,7 @@ async function dispenseMultiplePrescriptions(
           paymentMethod,
           transactionReference || null,
           `Pharmacy counter payment for ${dispensedRxList.length} medications`,
-          userId,
+          validUserId,
         ]
       );
     }

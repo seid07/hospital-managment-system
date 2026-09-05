@@ -26,7 +26,12 @@ async function request(endpoint, options = {}) {
   }
 
   if (!response.ok) {
-    throw new Error(data?.message || "Request failed.");
+    const error = new Error(data?.message || "Request failed.");
+    error.status = response.status;
+    error.code = data?.code;
+    error.data = data?.data;
+    error.response = { status: response.status, data };
+    throw error;
   }
 
   return data;

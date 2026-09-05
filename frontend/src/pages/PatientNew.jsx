@@ -29,6 +29,7 @@ function PatientNew() {
   const [form, setForm] = useState(INITIAL_FORM);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [duplicatePatient, setDuplicatePatient] = useState(null);
 
   // Post-Registration Card Payment Modal (Requirement 1)
   const [createdPatient, setCreatedPatient] = useState(null);
@@ -55,12 +56,15 @@ function PatientNew() {
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [bookingAppointment, setBookingAppointment] = useState(false);
   const [appointmentSuccess, setAppointmentSuccess] = useState(null);
+  const [appointmentReason, setAppointmentReason] = useState("First Visit / General Consultation");
+  const [appointmentNotes, setAppointmentNotes] = useState("");
+  const [appointmentError, setAppointmentError] = useState("");
 
   const today = new Date().toISOString().split("T")[0];
 
-  function handleChange(e) {
-    const { name, value } = e.target;
-    setForm((prev) => ({ ...prev, [name]: value }));
+  function handleChange(field, value) {
+    setForm((prev) => ({ ...prev, [field]: value }));
+    if (error) setError("");
   }
 
   // Load today's doctors helper
@@ -82,6 +86,7 @@ function PatientNew() {
   async function handleSubmit(e) {
     e.preventDefault();
     setError("");
+    setDuplicatePatient(null);
 
     if (!form.firstName || !form.lastName || form.age === "" || !form.phone) {
       setError("Please fill in all required fields (Name, Age, Phone).");
@@ -133,6 +138,14 @@ function PatientNew() {
 
       await openAppointmentOffer();
     } catch (err) {
+      if (err.code === "DUPLICATE_PATIENT_EXISTS" || err.data?.existingPatient) {
+        const existing = err.data?.existingPatient;
+        setDuplicatePatient(existing);
+        const warnMsg = `⚠️ Existing Patient Detected: ${existing?.first_name || ""} ${existing?.last_name || ""} (MRN: ${existing?.patient_number || "MRN"}). The registrar should not create another patient record. Please verify identity and create a visit/encounter for today.`;
+        setError(warnMsg);
+        toast.warning(warnMsg, 7000);
+        return;
+      }
       const errMsg = err.message || "Failed to register patient.";
       setError(errMsg);
       toast.error(errMsg, 5000);
@@ -854,6 +867,114 @@ function PatientNew() {
                 </div>
               </div>
             )}
+          </div>
+        )}
+      </Modal>
+
+      {/* Duplicate Patient Alert Modal (Requirement 3) */}
+      <Modal
+        isOpen={Boolean(duplicatePatient)}
+        onClose={() => setDuplicatePatient(null)}
+        title="⚠️ Existing Patient Record Found"
+        size="md"
+      >
+        {duplicatePatient && (
+          <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+            <div
+              style={{
+                padding: "14px",
+                borderRadius: "8px",
+                background: "#fef2f2",
+                border: "1px solid #fecaca",
+                color: "#991b1b",
+                fontSize: "14px",
+                lineHeight: "1.5",
+              }}
+            >
+              <strong>Duplicate Patient Registration Blocked</strong>
+              <p style={{ margin: "6px 0 0" }}>
+                A patient record with matching information already exists in the hospital database. The registrar should not create another patient record.
+              </p>
+            </div>
+
+            <div
+              style={{
+                background: "#f8fafc",
+                border: "1px solid #e2e8f0",
+                borderRadius: "8px",
+                padding: "14px",
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: "10px",
+                fontSize: "13px",
+              }}
+            >
+              <div>
+                <span style={{ color: "#64748b", display: "block" }}>Patient Number (MRN)</span>
+                <strong style={{ color: "#0f172a", fontSize: "14px" }}>{duplicatePatient.patient_number}</strong>
+              </div>
+              <div>
+                <span style={{ color: "#64748b", display: "block" }}>Full Name</span>
+                <strong style={{ color: "#0f172a", fontSize: "14px" }}>
+                  {duplicatePatient.first_name} {duplicatePatient.last_name}
+                </strong>
+              </div>
+              <div>
+                <span style={{ color: "#64748b", display: "block" }}>Phone Number</span>
+                <strong style={{ color: "#0f172a" }}>{duplicatePatient.phone}</strong>
+              </div>
+              <div>
+                <span style={{ color: "#64748b", display: "block" }}>Age / Gender</span>
+                <strong style={{ color: "#0f172a" }}>
+                  {duplicatePatient.age || "—"} yrs • {duplicatePatient.gender}
+                </strong>
+              </div>
+            </div>
+
+            <div
+              style={{
+                padding: "12px 14px",
+                background: "#f0fdf4",
+                border: "1px solid #bbf7d0",
+                borderRadius: "8px",
+                color: "#166534",
+                fontSize: "13px",
+              }}
+            >
+              <strong>Recommended Workflow:</strong>
+              <p style={{ margin: "4px 0 0" }}>
+                Open the existing patient record in the <strong>Registrar Desk</strong>, verify the patient's identity, and create a <strong>new visit/encounter for today</strong>.
+              </p>
+            </div>
+
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "flex-end",
+                gap: "10px",
+                paddingTop: "8px",
+                borderTop: "1px solid #e2e8f0",
+              }}
+            >
+              <button
+                type="button"
+                className="button button-secondary"
+                onClick={() => setDuplicatePatient(null)}
+              >
+                Close & Review
+              </button>
+              <button
+                type="button"
+                className="button button-primary"
+                onClick={() => {
+                  const pat = duplicatePatient;
+                  setDuplicatePatient(null);
+                  navigate("/registrar", { state: { existingPatient: pat } });
+                }}
+              >
+                🔄 Switch to Returning Patient Intake →
+              </button>
+            </div>
           </div>
         )}
       </Modal>

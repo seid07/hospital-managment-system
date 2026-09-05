@@ -4,6 +4,18 @@ const { recordAuditLog } = require("../utils/audit");
 const { parsePagination } = require("../validators");
 const { generateQueueNumber } = require("./serviceOrder.service");
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+async function resolveValidUserId(clientOrPool, userId) {
+  if (!userId || typeof userId !== "string" || !UUID_REGEX.test(userId)) return null;
+  try {
+    const res = await clientOrPool.query("SELECT id FROM users WHERE id = $1 LIMIT 1", [userId]);
+    return res.rows.length > 0 ? res.rows[0].id : null;
+  } catch {
+    return null;
+  }
+}
+
 async function getBillableServices(query = {}) {
   const { page, limit, offset } = parsePagination(query);
   const search = query.search ? query.search.trim() : null;
@@ -315,6 +327,9 @@ async function recordSelectivePayment({
     const effectiveVisitId = visitId || ordersRes.rows[0].visit_id;
     const effectiveInvoiceId = invoiceId || ordersRes.rows[0].invoice_id;
 
+    // Validate receivedBy to prevent foreign key violations (payments_received_by_fkey)
+    const validReceivedBy = await resolveValidUserId(client, receivedBy);
+
     // 2. Generate payment record
     const paymentNumber = await generatePaymentNumber(client);
 
@@ -341,7 +356,7 @@ async function recordSelectivePayment({
         paymentMethod || "CASH",
         transactionReference || null,
         notes || `Selective service payment for ${ordersRes.rows.length} item(s)`,
-        receivedBy,
+        validReceivedBy,
       ]
     );
 
@@ -365,7 +380,7 @@ async function recordSelectivePayment({
           updated_at = CURRENT_TIMESTAMP
         WHERE id = $4
         `,
-        [orderPrice, authorizedAt, receivedBy, order.id]
+        [orderPrice, authorizedAt, validReceivedBy, order.id]
       );
 
       // Record allocation
@@ -519,6 +534,9 @@ async function recordPayment({
     const newBalance = parseFloat(Math.max(0, parseFloat(invoice.total_amount) - newPaid).toFixed(2));
     const newStatus = newBalance === 0 ? "PAID" : "PARTIALLY_PAID";
 
+    // Validate receivedBy to prevent foreign key violations (payments_received_by_fkey)
+    const validReceivedBy = await resolveValidUserId(client, receivedBy);
+
     const paymentNumber = await generatePaymentNumber(client);
 
     const paymentRes = await client.query(
@@ -544,7 +562,7 @@ async function recordPayment({
         paymentMethod || "CASH",
         transactionReference || null,
         notes || null,
-        receivedBy,
+        validReceivedBy,
       ]
     );
 
@@ -580,7 +598,7 @@ async function recordPayment({
             updated_at = CURRENT_TIMESTAMP
           WHERE id = $4
           `,
-          [order.price, authorizedAt, receivedBy, order.id]
+          [order.price, authorizedAt, validReceivedBy, order.id]
         );
 
         await client.query(

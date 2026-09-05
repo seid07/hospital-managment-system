@@ -58,6 +58,45 @@ async function createPatient(data, userId) {
       throw new Error("AGE_OR_DOB_REQUIRED");
     }
 
+    let validUserId = null;
+    if (userId) {
+      try {
+        const userCheck = await client.query("SELECT id FROM users WHERE id = $1", [userId]);
+        if (userCheck.rows.length > 0) {
+          validUserId = userId;
+        }
+      } catch {
+        validUserId = null;
+      }
+    }
+
+    // Duplicate patient check: phone match OR (first_name + last_name + DOB) match
+    const dupCheckRes = await client.query(
+      `
+      SELECT p.*,
+             (SELECT MAX(created_at) FROM visits WHERE patient_id = p.id) AS last_visit_date,
+             (SELECT count(*)::int FROM visits WHERE patient_id = p.id) AS total_visits
+      FROM patients p
+      WHERE p.is_active = TRUE
+        AND (
+          p.phone = $1
+          OR (LOWER(TRIM(p.first_name)) = LOWER(TRIM($2)) AND LOWER(TRIM(p.last_name)) = LOWER(TRIM($3)) AND p.date_of_birth = $4)
+        )
+      LIMIT 1
+      `,
+      [normalizedPhone, data.firstName.trim(), data.lastName.trim(), dob]
+    );
+
+    if (dupCheckRes.rows.length > 0) {
+      const existing = attachAgeToPatient(dupCheckRes.rows[0]);
+      await client.query("ROLLBACK");
+      const err = new Error("DUPLICATE_PATIENT_EXISTS");
+      err.code = "DUPLICATE_PATIENT_EXISTS";
+      err.existingPatient = existing;
+      err.userMessage = `A patient already exists with this phone or identity: ${existing.first_name} ${existing.last_name} (MRN: ${existing.patient_number}). The registrar should not create another patient record. Please verify identity and create a new visit/encounter for today.`;
+      throw err;
+    }
+
     const patientNumber = await generatePatientNumber(client);
 
     const result = await client.query(
@@ -91,14 +130,14 @@ async function createPatient(data, userId) {
         data.address ? data.address.trim() : null,
         data.emergencyContactName ? data.emergencyContactName.trim() : null,
         normalizedEmergencyPhone,
-        userId || null,
+        validUserId,
       ]
     );
 
     const patient = attachAgeToPatient(result.rows[0]);
 
     await recordAuditLog(client, {
-      userId,
+      userId: validUserId,
       action: "PATIENT_CREATED",
       entity: "patients",
       entityId: patient.id,
@@ -127,7 +166,7 @@ async function createPatient(data, userId) {
              emergency_override, notes, created_by
            ) VALUES ($1, $2, NULL, 'OPEN', 'OUTPATIENT', FALSE, 'Registration card visit', $3)
            RETURNING id`,
-          [visitNumber, patient.id, userId || null]
+          [visitNumber, patient.id, validUserId]
         );
         const visitId = visitRes.rows[0].id;
 
@@ -139,7 +178,7 @@ async function createPatient(data, userId) {
              price, status, created_by
            ) VALUES ($1, $2, $3, $4, $5, $6, 'WAITING_PAYMENT', $7)
            RETURNING id`,
-          [orderNumber, visitId, patient.id, svc.service_id, svc.department_id, svc.price, userId || null]
+          [orderNumber, visitId, patient.id, svc.service_id, svc.department_id, svc.price, validUserId]
         );
         registrationOrderId = orderRes.rows[0]?.id || null;
       }
@@ -320,13 +359,21 @@ async function deletePatient(id, userId) {
 
 async function searchPatients(search, paginationQuery = {}, doctorStaffId = null) {
   const { page, limit, offset } = parsePagination(paginationQuery);
-  const term = `%${search.trim()}%`;
+  const trimmed = search.trim();
+  const term = `%${trimmed}%`;
+  const phoneDigits = trimmed.replace(/\D/g, "");
+  const strippedPhone = phoneDigits.startsWith("0")
+    ? phoneDigits.slice(1)
+    : phoneDigits.startsWith("251")
+    ? phoneDigits.slice(3)
+    : phoneDigits;
+  const phoneTerm = `%${strippedPhone || trimmed}%`;
 
   const conditions = [
     "is_active = TRUE",
-    `(patient_number ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1 OR phone ILIKE $1)`,
+    `(patient_number ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1 OR phone ILIKE $1 OR phone ILIKE $2)`,
   ];
-  const params = [term];
+  const params = [term, phoneTerm];
 
   if (doctorStaffId) {
     params.push(doctorStaffId);
@@ -351,21 +398,40 @@ async function searchPatients(search, paginationQuery = {}, doctorStaffId = null
   const result = await pool.query(
     `
       SELECT
-        id,
-        patient_number,
-        first_name,
-        last_name,
-        date_of_birth,
-        gender,
-        phone,
-        email,
-        address,
-        emergency_contact_name,
-        emergency_contact_phone,
-        created_at
-      FROM patients
-      ${whereClause}
-      ORDER BY created_at DESC
+        p.id,
+        p.patient_number,
+        p.first_name,
+        p.last_name,
+        p.date_of_birth,
+        p.gender,
+        p.phone,
+        p.email,
+        p.address,
+        p.emergency_contact_name,
+        p.emergency_contact_phone,
+        p.created_at,
+        COALESCE(v_stats.total_visits, 0)::int AS total_visits_count,
+        v_stats.last_visit_date,
+        v_active.id AS active_visit_id,
+        v_active.visit_number AS active_visit_number
+      FROM patients p
+      LEFT JOIN LATERAL (
+        SELECT
+          COUNT(*) AS total_visits,
+          MAX(v.created_at) AS last_visit_date
+        FROM visits v
+        WHERE v.patient_id = p.id
+      ) v_stats ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT id, visit_number
+        FROM visits v
+        WHERE v.patient_id = p.id
+          AND v.status IN ('OPEN', 'registered', 'waiting', 'triaged', 'in_progress', 'admitted')
+        ORDER BY created_at DESC
+        LIMIT 1
+      ) v_active ON TRUE
+      ${whereClause.replace(/\bpatients\b/g, "p")}
+      ORDER BY p.created_at DESC
       LIMIT $${params.length - 1} OFFSET $${params.length}
     `,
     params
@@ -385,35 +451,42 @@ async function getPatients(query = {}) {
   const search = query.search ? query.search.trim() : null;
   const doctorStaffId = query.doctorStaffId || null;
 
-  const conditions = ["is_active = TRUE"];
+  const conditions = ["p.is_active = TRUE"];
   const params = [];
 
   if (search) {
+    const phoneDigits = search.replace(/\D/g, "");
+    const strippedPhone = phoneDigits.startsWith("0")
+      ? phoneDigits.slice(1)
+      : phoneDigits.startsWith("251")
+      ? phoneDigits.slice(3)
+      : phoneDigits;
     params.push(`%${search}%`);
-    conditions.push(`(patient_number ILIKE $${params.length} OR first_name ILIKE $${params.length} OR last_name ILIKE $${params.length} OR phone ILIKE $${params.length})`);
+    params.push(`%${strippedPhone || search}%`);
+    conditions.push(`(p.patient_number ILIKE $${params.length - 1} OR p.first_name ILIKE $${params.length - 1} OR p.last_name ILIKE $${params.length - 1} OR p.phone ILIKE $${params.length - 1} OR p.phone ILIKE $${params.length})`);
   }
 
   if (query.date === "today" || query.registered === "today") {
     const today = new Date().toISOString().split("T")[0];
     params.push(today);
-    conditions.push(`DATE(created_at) = $${params.length}`);
+    conditions.push(`DATE(p.created_at) = $${params.length}`);
   } else if (query.date) {
     params.push(query.date);
-    conditions.push(`DATE(created_at) = $${params.length}`);
+    conditions.push(`DATE(p.created_at) = $${params.length}`);
   }
 
   if (doctorStaffId) {
     params.push(doctorStaffId);
     conditions.push(`(
-      EXISTS (SELECT 1 FROM appointments a WHERE a.patient_id = patients.id AND a.doctor_id = $${params.length})
-      OR EXISTS (SELECT 1 FROM referrals r WHERE r.patient_id = patients.id AND (r.receiving_doctor_id = $${params.length} OR r.referring_doctor_id = $${params.length}))
-      OR EXISTS (SELECT 1 FROM encounters ce WHERE ce.patient_id = patients.id AND ce.doctor_id = $${params.length})
+      EXISTS (SELECT 1 FROM appointments a WHERE a.patient_id = p.id AND a.doctor_id = $${params.length})
+      OR EXISTS (SELECT 1 FROM referrals r WHERE r.patient_id = p.id AND (r.receiving_doctor_id = $${params.length} OR r.referring_doctor_id = $${params.length}))
+      OR EXISTS (SELECT 1 FROM encounters ce WHERE ce.patient_id = p.id AND ce.doctor_id = $${params.length})
     )`);
   }
 
   const whereClause = `WHERE ${conditions.join(" AND ")}`;
 
-  const countQuery = `SELECT COUNT(*) AS total FROM patients ${whereClause}`;
+  const countQuery = `SELECT COUNT(*) AS total FROM patients p ${whereClause}`;
   const countResult = await pool.query(countQuery, params);
   const total = parseInt(countResult.rows[0].total, 10);
 
@@ -422,19 +495,38 @@ async function getPatients(query = {}) {
 
   const listQuery = `
     SELECT
-      id,
-      patient_number,
-      first_name,
-      last_name,
-      date_of_birth,
-      gender,
-      phone,
-      email,
-      address,
-      created_at
-    FROM patients
+      p.id,
+      p.patient_number,
+      p.first_name,
+      p.last_name,
+      p.date_of_birth,
+      p.gender,
+      p.phone,
+      p.email,
+      p.address,
+      p.created_at,
+      COALESCE(v_stats.total_visits, 0)::int AS total_visits_count,
+      v_stats.last_visit_date,
+      v_active.id AS active_visit_id,
+      v_active.visit_number AS active_visit_number
+    FROM patients p
+    LEFT JOIN LATERAL (
+      SELECT
+        COUNT(*) AS total_visits,
+        MAX(v.created_at) AS last_visit_date
+      FROM visits v
+      WHERE v.patient_id = p.id
+    ) v_stats ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT id, visit_number
+      FROM visits v
+      WHERE v.patient_id = p.id
+        AND v.status IN ('OPEN', 'registered', 'waiting', 'triaged', 'in_progress', 'admitted')
+      ORDER BY created_at DESC
+      LIMIT 1
+    ) v_active ON TRUE
     ${whereClause}
-    ORDER BY created_at DESC
+    ORDER BY p.created_at DESC
     LIMIT $${params.length - 1} OFFSET $${params.length}
   `;
 
@@ -452,10 +544,30 @@ async function getPatients(query = {}) {
 async function getPatientById(id) {
   const result = await pool.query(
     `
-      SELECT *
-      FROM patients
-      WHERE id = $1
-      AND is_active = TRUE
+      SELECT
+        p.*,
+        COALESCE(v_stats.total_visits, 0)::int AS total_visits_count,
+        v_stats.last_visit_date,
+        v_active.id AS active_visit_id,
+        v_active.visit_number AS active_visit_number
+      FROM patients p
+      LEFT JOIN LATERAL (
+        SELECT
+          COUNT(*) AS total_visits,
+          MAX(v.created_at) AS last_visit_date
+        FROM visits v
+        WHERE v.patient_id = p.id
+      ) v_stats ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT id, visit_number
+        FROM visits v
+        WHERE v.patient_id = p.id
+          AND v.status IN ('OPEN', 'registered', 'waiting', 'triaged', 'in_progress', 'admitted')
+        ORDER BY created_at DESC
+        LIMIT 1
+      ) v_active ON TRUE
+      WHERE p.id = $1
+      AND p.is_active = TRUE
     `,
     [id]
   );
