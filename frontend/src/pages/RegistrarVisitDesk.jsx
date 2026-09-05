@@ -20,6 +20,7 @@ import { useCalendar } from "../context/useCalendar";
 export default function RegistrarVisitDesk() {
   const { formatDate, formatDateTime } = useCalendar();
   const [searchParams] = useSearchParams();
+  const location = useLocation();
   const tabFromUrl = searchParams.get("tab");
 
   // Active Tab
@@ -45,6 +46,16 @@ export default function RegistrarVisitDesk() {
   const debouncedSearch = useDebounce(searchQuery, 300);
   const [searchResults, setSearchResults] = useState([]);
   const [selectedPatient, setSelectedPatient] = useState(null);
+
+  // Sync incoming pre-selected patient from router state during render phase
+  const [prevLocationPatient, setPrevLocationPatient] = useState(null);
+  const incomingPatient = location.state?.existingPatient;
+  if (incomingPatient && incomingPatient !== prevLocationPatient) {
+    setPrevLocationPatient(incomingPatient);
+    setSelectedPatient(incomingPatient);
+    setIsPatientConfirmed(false);
+    setActiveTab("NEW_VISIT");
+  }
 
   // Returning Patient Verification & Demographics Editing
   const [isPatientConfirmed, setIsPatientConfirmed] = useState(false);
@@ -218,17 +229,6 @@ export default function RegistrarVisitDesk() {
       cancelled = true;
     };
   }, [debouncedSearch, selectedPatient]);
-
-  const location = useLocation();
-  useEffect(() => {
-    if (location.state?.existingPatient) {
-      handleSelectPatient(location.state.existingPatient);
-      setActiveTab("NEW_VISIT");
-      setErrorMessage(
-        `⚠️ Existing Patient Loaded (${location.state.existingPatient.patient_number} — ${location.state.existingPatient.first_name} ${location.state.existingPatient.last_name}). Please verify identity below and create today's visit/encounter.`
-      );
-    }
-  }, [location.state]);
 
   function handleSelectPatient(pat) {
     setSelectedPatient(pat);

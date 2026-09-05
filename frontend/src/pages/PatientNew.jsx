@@ -56,9 +56,6 @@ function PatientNew() {
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [bookingAppointment, setBookingAppointment] = useState(false);
   const [appointmentSuccess, setAppointmentSuccess] = useState(null);
-  const [appointmentReason, setAppointmentReason] = useState("First Visit / General Consultation");
-  const [appointmentNotes, setAppointmentNotes] = useState("");
-  const [appointmentError, setAppointmentError] = useState("");
 
   const today = new Date().toISOString().split("T")[0];
 
